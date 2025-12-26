@@ -38,7 +38,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		return errors.New("writer cannot be nil")
 	}
 	// Header
-	fmt.Fprintf(w, "\n🔍 Scanning %s... found %d dependencies\n\n", result.Manifest, result.Summary.TotalDependencies)
+	fmt.Fprintf(w, "\nScanning %s... found %d dependencies\n\n", result.Manifest, result.Summary.TotalDependencies)
 
 	// Check if there are any crypto findings
 	hasCrypto := false
@@ -50,7 +50,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 	}
 
 	if !hasCrypto {
-		fmt.Fprintln(w, "✅ No cryptographic usage detected in dependencies.")
+		fmt.Fprintln(w, "[OK] No cryptographic usage detected in dependencies.")
 		fmt.Fprintln(w)
 		return nil
 	}
@@ -92,19 +92,19 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 	// Summary
 	fmt.Fprintln(w, strings.Repeat("═", 90))
 	if hasReachability {
-		fmt.Fprintf(w, "📊 SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n",
+		fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n",
 			result.Summary.TotalDependencies,
 			result.Summary.WithCrypto,
 			result.Summary.QuantumVulnerable,
 			result.Summary.QuantumPartial,
 		)
-		fmt.Fprintf(w, "🎯 REACHABILITY: %d confirmed | %d reachable | %d available-only\n\n",
+		fmt.Fprintf(w, "REACHABILITY: %d confirmed | %d reachable | %d available-only\n\n",
 			result.Summary.ConfirmedCrypto,
 			result.Summary.ReachableCrypto,
 			result.Summary.AvailableCrypto,
 		)
 	} else {
-		fmt.Fprintf(w, "📊 SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n\n",
+		fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n\n",
 			result.Summary.TotalDependencies,
 			result.Summary.WithCrypto,
 			result.Summary.QuantumVulnerable,
@@ -130,12 +130,12 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 
 	// Info for deep-analyzed packages
 	if deepAnalyzed > 0 {
-		fmt.Fprintf(w, "✓ %d packages analyzed via AST (--deep)\n", deepAnalyzed)
+		fmt.Fprintf(w, "[*] %d packages analyzed via AST (--deep)\n", deepAnalyzed)
 	}
 
 	// Warning for packages not analyzed
 	if notAnalyzed > 0 {
-		fmt.Fprintf(w, "⚠ %d packages not in database (use --deep to analyze)\n", notAnalyzed)
+		fmt.Fprintf(w, "[!] %d packages not in database (use --deep to analyze)\n", notAnalyzed)
 	}
 
 	if deepAnalyzed > 0 || notAnalyzed > 0 {
@@ -159,13 +159,13 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 
 	// Print CONFIRMED section (most important) - with call traces
 	if len(confirmed) > 0 {
-		fmt.Fprintln(w, "🚨 CONFIRMED - Actually used by your code (requires action):")
+		fmt.Fprintln(w, "CONFIRMED - Actually used by your code (requires action):")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range confirmed {
 			icon := riskIcon(c.risk)
 			timeline := getTimeline(c.algorithm)
 			effort := getEffort(c.algorithm)
-			fmt.Fprintf(w, "  %s %-14s %-12s  ⏱ %-12s  💪 %s\n",
+			fmt.Fprintf(w, "  %s %-14s %-12s  [%s]  Effort: %s\n",
 				icon, c.algorithm, formatRisk(c.risk), timeline, effort)
 			fmt.Fprintf(w, "     └─ %s\n", c.dependency)
 
@@ -175,7 +175,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 					if len(trace.Path) > 0 {
 						// Show entry point (user's function)
 						entryFunc := shortenFuncName(trace.EntryPoint)
-						fmt.Fprintf(w, "        📍 Called from: %s\n", entryFunc)
+						fmt.Fprintf(w, "        > Called from: %s\n", entryFunc)
 					}
 				}
 			}
@@ -185,7 +185,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 
 	// Print REACHABLE section
 	if len(reachable) > 0 {
-		fmt.Fprintln(w, "⚡ REACHABLE - In call graph from your code:")
+		fmt.Fprintln(w, "REACHABLE - In call graph from your code:")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range reachable {
 			icon := riskIcon(c.risk)
@@ -196,7 +196,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 
 	// Print AVAILABLE section (lower priority) - condensed
 	if len(available) > 0 {
-		fmt.Fprintln(w, "📦 AVAILABLE - In dependencies but not called (lower priority):")
+		fmt.Fprintln(w, "AVAILABLE - In dependencies but not called (lower priority):")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 
 		// Group available by dependency for cleaner output
@@ -221,7 +221,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDetail) {
 	sortByRisk(allCrypto)
 
-	fmt.Fprintln(w, "🔐 CRYPTO ALGORITHMS FOUND:")
+	fmt.Fprintln(w, "CRYPTO ALGORITHMS FOUND:")
 	fmt.Fprintln(w, strings.Repeat("─", 90))
 	fmt.Fprintf(w, "  %-14s %-12s %-12s %s\n", "ALGORITHM", "RISK", "TIMELINE", "DEPENDENCY")
 	for _, c := range allCrypto {
@@ -233,95 +233,105 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 }
 
 // printDetailedRemediation prints actionable remediation guidance.
+// Shows remediation for CONFIRMED findings first, then PLANNING for available vulnerable algorithms.
 func (f *TableFormatter) printDetailedRemediation(w io.Writer, allCrypto []cryptoDetail, ecosystem types.Ecosystem) {
-	// Only show remediation for vulnerable/partial algorithms, prioritizing confirmed
 	seen := make(map[string]bool)
-	var toShow []cryptoDetail
+	var confirmed []cryptoDetail
+	var planning []cryptoDetail
 
-	// First pass: confirmed vulnerable/partial
+	// First pass: CONFIRMED vulnerable/partial (requires action)
 	for _, c := range allCrypto {
 		if seen[c.algorithm] {
 			continue
 		}
 		if c.reachability == types.ReachabilityConfirmed &&
 			(c.risk == types.RiskVulnerable || c.risk == types.RiskPartial) {
-			toShow = append(toShow, c)
+			confirmed = append(confirmed, c)
 			seen[c.algorithm] = true
 		}
 	}
 
-	// Second pass: other vulnerable (not confirmed but still important)
+	// Second pass: AVAILABLE vulnerable (for future planning)
 	for _, c := range allCrypto {
 		if seen[c.algorithm] {
 			continue
 		}
-		if c.risk == types.RiskVulnerable {
-			toShow = append(toShow, c)
+		if c.reachability == types.ReachabilityAvailable && c.risk == types.RiskVulnerable {
+			planning = append(planning, c)
 			seen[c.algorithm] = true
 		}
 	}
 
-	if len(toShow) == 0 {
+	// Sort both by risk
+	sort.Slice(confirmed, func(i, j int) bool {
+		return riskPriority(confirmed[i].risk) > riskPriority(confirmed[j].risk)
+	})
+	sort.Slice(planning, func(i, j int) bool {
+		return riskPriority(planning[i].risk) > riskPriority(planning[j].risk)
+	})
+
+	// Print CONFIRMED remediation (requires action)
+	if len(confirmed) > 0 {
+		fmt.Fprintln(w, "REMEDIATION - Action Required:")
+		fmt.Fprintln(w, strings.Repeat("═", 90))
+
+		for _, c := range confirmed {
+			f.printRemediationItem(w, c, ecosystem)
+		}
+		fmt.Fprintln(w)
+	}
+
+	// Print PLANNING section (available but not used - for future reference)
+	if len(planning) > 0 {
+		fmt.Fprintln(w, "PLANNING - Available in Dependencies (not currently used):")
+		fmt.Fprintln(w, strings.Repeat("─", 90))
+		fmt.Fprintln(w, "These algorithms exist in your dependencies but aren't called by your code.")
+		fmt.Fprintln(w, "Review if you plan to use these features in the future.")
+		fmt.Fprintln(w)
+
+		for _, c := range planning {
+			f.printRemediationItem(w, c, ecosystem)
+		}
+		fmt.Fprintln(w)
+	}
+}
+
+// printRemediationItem prints a single remediation entry.
+func (f *TableFormatter) printRemediationItem(w io.Writer, c cryptoDetail, ecosystem types.Ecosystem) {
+	r := crypto.GetDetailedRemediation(c.algorithm, "", ecosystem)
+	if r == nil {
 		return
 	}
 
-	// Sort: confirmed first, then by risk
-	sort.Slice(toShow, func(i, j int) bool {
-		if toShow[i].reachability == types.ReachabilityConfirmed && toShow[j].reachability != types.ReachabilityConfirmed {
-			return true
-		}
-		if toShow[i].reachability != types.ReachabilityConfirmed && toShow[j].reachability == types.ReachabilityConfirmed {
-			return false
-		}
-		return riskPriority(toShow[i].risk) > riskPriority(toShow[j].risk)
-	})
+	fmt.Fprintf(w, "\n%s %s\n", riskIcon(c.risk), c.algorithm)
+	fmt.Fprintln(w, strings.Repeat("─", 50))
 
-	fmt.Fprintln(w, "🛠️  REMEDIATION GUIDANCE:")
-	fmt.Fprintln(w, strings.Repeat("═", 90))
+	// Summary and replacement
+	fmt.Fprintf(w, "  Action:      %s\n", r.Summary)
+	if r.Replacement != "" && r.Replacement != "No change needed" {
+		fmt.Fprintf(w, "  Replace:     %s\n", r.Replacement)
+	}
 
-	for _, c := range toShow {
-		r := crypto.GetDetailedRemediation(c.algorithm, "", ecosystem)
-		if r == nil {
-			continue
-		}
+	// NIST Standard
+	if r.NISTStandard != "" {
+		fmt.Fprintf(w, "  NIST:        %s\n", r.NISTStandard)
+	}
 
-		priorityTag := ""
-		if c.reachability == types.ReachabilityConfirmed {
-			priorityTag = " 🎯 PRIORITY"
-		}
+	// Timeline and effort
+	fmt.Fprintf(w, "  Timeline:    %s\n", formatTimeline(r.Timeline))
+	fmt.Fprintf(w, "  Effort:      %s\n", formatEffort(r.Effort))
 
-		fmt.Fprintf(w, "\n%s %s%s\n", riskIcon(c.risk), c.algorithm, priorityTag)
-		fmt.Fprintln(w, strings.Repeat("─", 50))
-
-		// Summary and replacement
-		fmt.Fprintf(w, "  📋 Action:      %s\n", r.Summary)
-		if r.Replacement != "" && r.Replacement != "No change needed" {
-			fmt.Fprintf(w, "  🔄 Replace with: %s\n", r.Replacement)
-		}
-
-		// NIST Standard
-		if r.NISTStandard != "" {
-			fmt.Fprintf(w, "  📜 NIST:         %s\n", r.NISTStandard)
-		}
-
-		// Timeline and effort
-		fmt.Fprintf(w, "  ⏱️  Timeline:     %s\n", formatTimeline(r.Timeline))
-		fmt.Fprintf(w, "  💪 Effort:       %s\n", formatEffort(r.Effort))
-
-		// Libraries for the ecosystem
-		if r.Libraries != nil {
-			if libs, ok := r.Libraries[ecosystem]; ok && len(libs) > 0 {
-				fmt.Fprintf(w, "  📦 Libraries:    %s\n", strings.Join(libs, ", "))
-			}
-		}
-
-		// Notes
-		if r.Notes != "" {
-			fmt.Fprintf(w, "  💡 Note:         %s\n", r.Notes)
+	// Libraries for the ecosystem
+	if r.Libraries != nil {
+		if libs, ok := r.Libraries[ecosystem]; ok && len(libs) > 0 {
+			fmt.Fprintf(w, "  Libraries:   %s\n", strings.Join(libs, ", "))
 		}
 	}
 
-	fmt.Fprintln(w)
+	// Notes
+	if r.Notes != "" {
+		fmt.Fprintf(w, "  Note:        %s\n", r.Notes)
+	}
 }
 
 // Helper functions
@@ -345,13 +355,13 @@ func sortByRisk(crypto []cryptoDetail) {
 func riskIcon(risk types.QuantumRisk) string {
 	switch risk {
 	case types.RiskVulnerable:
-		return "🔴"
+		return "[!]"
 	case types.RiskPartial:
-		return "🟡"
+		return "[~]"
 	case types.RiskSafe:
-		return "🟢"
+		return "[OK]"
 	default:
-		return "⚪"
+		return "[?]"
 	}
 }
 
@@ -400,13 +410,13 @@ func getEffort(algorithm string) string {
 func formatTimeline(timeline string) string {
 	switch timeline {
 	case "immediate":
-		return "🔴 Immediate"
+		return "Immediate"
 	case "short-term":
-		return "🟠 Short-term (1-2 years)"
+		return "Short-term (1-2 years)"
 	case "medium-term":
-		return "🟡 Medium-term (2-5 years)"
+		return "Medium-term (2-5 years)"
 	case "none":
-		return "🟢 No action needed"
+		return "No action needed"
 	default:
 		return timeline
 	}

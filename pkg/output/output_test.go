@@ -34,11 +34,12 @@ func testScanResult() *types.ScanResult {
 					Ecosystem: types.EcosystemGo,
 					Crypto: []types.CryptoUsage{
 						{
-							Algorithm:   "RSA",
-							Type:        "encryption",
-							QuantumRisk: types.RiskVulnerable,
-							Severity:    types.SeverityHigh,
-							Remediation: "Migrate to ML-KEM",
+							Algorithm:    "RSA",
+							Type:         "encryption",
+							QuantumRisk:  types.RiskVulnerable,
+							Severity:     types.SeverityHigh,
+							Remediation:  "Migrate to ML-KEM",
+							Reachability: types.ReachabilityConfirmed,
 						},
 						{
 							Algorithm:   "AES-256",

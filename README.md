@@ -4,214 +4,343 @@
 [![Go Report Card](https://img.shields.io/badge/go%20report-A-brightgreen)](https://goreportcard.com/report/github.com/csnp/qramm-cryptodeps)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-## Overview
+**Quantum-safe dependency scanner that finds cryptographic vulnerabilities in your software supply chain.**
 
-QRAMM CryptoDeps is an open-source command-line tool that identifies quantum-vulnerable cryptographic algorithms hiding in your software dependencies. Your code might be quantum-safe, but what about the **hundreds of dependencies** in your project? Most cryptographic vulnerabilities lurk in the dependency tree — libraries you didn't write and rarely audit.
+CryptoDeps analyzes your project dependencies to identify quantum-vulnerable cryptographic algorithms, showing you exactly which crypto is actually used by your code versus what's merely available in libraries. Stop guessing — know precisely where your quantum risk lies.
 
-Part of the [QRAMM (Quantum Readiness Assurance Maturity Model)](https://qramm.org) toolkit, developed by the [Cyber Security Non-Profit (CSNP)](https://csnp.org).
+Part of the [QRAMM (Quantum Readiness Assurance Maturity Model)](https://qramm.org) toolkit by [CSNP](https://csnp.org).
 
-## Why Dependency Crypto Analysis Matters
+---
 
-- **Hidden Attack Surface**: The average project has 300-1000+ transitive dependencies, each potentially using vulnerable cryptography
-- **Harvest Now, Decrypt Later (HNDL)**: Adversaries are collecting encrypted data today to decrypt once quantum computers become available
-- **CNSA 2.0 Compliance**: NSA's timeline requires hybrid PQC by 2027 — dependencies with RSA/ECDSA will block compliance
-- **Supply Chain Risk**: Third-party libraries with vulnerable crypto create exposure beyond your direct control
-- **OMB M-23-02**: Federal agencies must inventory all cryptographic assets, including those in dependencies
+## Table of Contents
+
+- [Why CryptoDeps?](#why-cryptodeps)
+- [Key Features](#key-features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Reachability Analysis](#reachability-analysis)
+- [Understanding the Output](#understanding-the-output)
+- [Output Formats](#output-formats)
+- [CI/CD Integration](#cicd-integration)
+- [Command Reference](#command-reference)
+- [Quantum Risk Classification](#quantum-risk-classification)
+- [Remediation Guidance](#remediation-guidance)
+- [FAQ](#faq)
+- [Architecture](#architecture)
+- [Contributing](#contributing)
+- [References](#references)
+- [License](#license)
+
+---
+
+## Why CryptoDeps?
+
+Your code might be quantum-safe, but what about your **dependencies**?
+
+The average software project has 300-1000+ transitive dependencies. Each one potentially uses cryptographic algorithms that quantum computers will break. Traditional security scanners miss this — they focus on known CVEs, not cryptographic readiness.
+
+### The Problem
+
+| Challenge | Impact |
+|-----------|--------|
+| **Hidden Crypto** | RSA, ECDSA, Ed25519 buried deep in dependency trees |
+| **Harvest Now, Decrypt Later** | Adversaries collecting encrypted data today for future quantum decryption |
+| **CNSA 2.0 Timeline** | NSA requires hybrid PQC by 2027 — non-compliant dependencies block migration |
+| **Supply Chain Blind Spots** | Third-party crypto creates risk beyond your direct control |
+| **False Positives** | Most tools flag all crypto, not just what you actually use |
+
+### The Solution
+
+CryptoDeps solves this with **reachability analysis** — it doesn't just find crypto in your dependencies, it tells you:
+
+- **CONFIRMED**: Crypto your code actually calls (requires action)
+- **REACHABLE**: Crypto in your call graph (monitor closely)
+- **AVAILABLE**: Crypto that exists but isn't used (lower priority)
+
+This means you focus remediation effort on what matters, not chase phantom vulnerabilities.
+
+---
+
+## Key Features
+
+### Reachability Analysis (Go)
+Builds a call graph from your code to identify which cryptographic functions are actually invoked — not just present in dependencies.
+
+### Multi-Ecosystem Support
+| Ecosystem | Manifest Files |
+|-----------|----------------|
+| Go | `go.mod`, `go.sum` |
+| npm | `package.json`, `package-lock.json` |
+| Python | `requirements.txt`, `pyproject.toml`, `Pipfile` |
+| Maven | `pom.xml` |
+
+### Smart Remediation
+Context-aware recommendations that consider:
+- Token lifetimes (short-lived JWTs vs long-lived certificates)
+- Industry standards (wait for PQ-JWT vs migrate now)
+- Migration effort (simple change vs architectural overhaul)
+
+### Compliance-Ready Output
+- **CycloneDX CBOM** for OMB M-23-02 compliance
+- **SARIF** for GitHub Security integration
+- **JSON** for automation pipelines
+- **Markdown** for documentation
+
+---
+
+## Installation
+
+### Pre-built Binaries (Recommended)
+
+Download from [GitHub Releases](https://github.com/csnp/qramm-cryptodeps/releases):
+
+```bash
+# macOS (Apple Silicon)
+curl -LO https://github.com/csnp/qramm-cryptodeps/releases/latest/download/cryptodeps-darwin-arm64
+chmod +x cryptodeps-darwin-arm64
+sudo mv cryptodeps-darwin-arm64 /usr/local/bin/cryptodeps
+
+# macOS (Intel)
+curl -LO https://github.com/csnp/qramm-cryptodeps/releases/latest/download/cryptodeps-darwin-amd64
+chmod +x cryptodeps-darwin-amd64
+sudo mv cryptodeps-darwin-amd64 /usr/local/bin/cryptodeps
+
+# Linux (x86_64)
+curl -LO https://github.com/csnp/qramm-cryptodeps/releases/latest/download/cryptodeps-linux-amd64
+chmod +x cryptodeps-linux-amd64
+sudo mv cryptodeps-linux-amd64 /usr/local/bin/cryptodeps
+
+# Windows (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/csnp/qramm-cryptodeps/releases/latest/download/cryptodeps-windows-amd64.exe" -OutFile "cryptodeps.exe"
+```
+
+### Build from Source
+
+Requires Go 1.21+:
+
+```bash
+git clone https://github.com/csnp/qramm-cryptodeps.git
+cd qramm-cryptodeps
+go build -o cryptodeps ./cmd/cryptodeps
+```
+
+### Go Install
+
+```bash
+go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
+```
+
+---
 
 ## Quick Start
 
 ```bash
-# Clone and build (requires Go 1.21+)
-git clone https://github.com/csnp/qramm-cryptodeps.git
-cd qramm-cryptodeps
-go build -o cryptodeps ./cmd/cryptodeps
+# Analyze current directory
+cryptodeps analyze .
 
-# Analyze your project
-./cryptodeps analyze .
+# Analyze a specific project
+cryptodeps analyze /path/to/project
 
-# Expected output: Dependency crypto inventory with quantum risk classification
-# - VULNERABLE: RSA, ECDSA, Ed25519 (broken by quantum)
-# - PARTIAL: AES-128, SHA-256 (reduced security)
-# - SAFE: AES-256, ChaCha20 (quantum-resistant)
+# Analyze a GitHub repository directly
+cryptodeps analyze hashicorp/vault
+cryptodeps analyze https://github.com/golang-jwt/jwt
+
+# Generate CBOM for compliance
+cryptodeps analyze . --format cbom > crypto-bom.json
+
+# CI/CD: Fail on quantum-vulnerable crypto
+cryptodeps analyze . --fail-on vulnerable
 ```
 
-Don't have Go? Download pre-built binaries from [Releases](https://github.com/csnp/qramm-cryptodeps/releases).
+---
 
-## Features
+## Reachability Analysis
 
-### Dependency Analysis
+CryptoDeps goes beyond simple dependency scanning by analyzing your code's call graph to determine which cryptographic algorithms are actually used.
 
-| Feature | Description |
-|---------|-------------|
-| Multi-Ecosystem Support | Go (go.mod), npm (package.json), Python (requirements.txt, pyproject.toml), Maven (pom.xml) |
-| Transitive Scanning | Analyzes entire dependency tree, not just direct dependencies |
-| Database Lookup | Millisecond lookups for 72+ known crypto-using packages |
-| On-Demand Analysis | AST-based source code analysis for unknown packages (`--deep`) |
+### How It Works
 
-### Quantum Risk Assessment
+1. **Parses your source code** — Builds an AST of your Go files
+2. **Identifies entry points** — `main()`, `init()`, exported functions
+3. **Traces call paths** — Follows function calls to crypto imports
+4. **Classifies reachability** — Marks each crypto usage as CONFIRMED, REACHABLE, or AVAILABLE
 
-| Feature | Description |
-|---------|-------------|
-| Algorithm Classification | Categorizes all detected crypto as VULNERABLE, PARTIAL, or SAFE |
-| Risk Scoring | Quantifies quantum exposure across your dependency tree |
-| Remediation Guidance | Actionable recommendations for each vulnerable dependency |
-| CNSA 2.0 Alignment | Maps findings to NSA's post-quantum migration timeline |
+### Reachability Levels
 
-### Compliance & Reporting
+| Level | Meaning | Action |
+|-------|---------|--------|
+| **CONFIRMED** | Your code directly calls this crypto | Immediate remediation required |
+| **REACHABLE** | In call graph from your code | Monitor and plan migration |
+| **AVAILABLE** | In dependency but not called | Lower priority (future planning) |
 
-| Feature | Description |
-|---------|-------------|
-| CycloneDX CBOM | Generate Cryptographic Bill of Materials (OMB M-23-02 compliant) |
-| SARIF Output | Native GitHub Security tab integration |
-| CI/CD Exit Codes | Fail builds on quantum-vulnerable dependencies |
-| Multiple Formats | Table, JSON, Markdown, SARIF, CBOM output options |
+### Example
 
-## Usage
+```
+CONFIRMED - Actually used by your code (requires action):
+──────────────────────────────────────────────────────────────────────────────────────────
+  [!] Ed25519        VULNERABLE    [short-term]  Effort: Low (simple change)
+     └─ golang.org/x/crypto@v0.31.0
+        > Called from: crypto.GenerateEd25519KeyPair
+        > Called from: crypto.SignMessage
+        > Called from: crypto.VerifySignature
 
-### Output Formats
+  [~] HS256          PARTIAL       [medium-term]  Effort: Low (simple change)
+     └─ github.com/golang-jwt/jwt/v5@v5.3.0
+        > Called from: auth.JWTService.GenerateAccessToken
+        > Called from: auth.JWTService.GenerateRefreshToken
+
+AVAILABLE - In dependencies but not called (lower priority):
+──────────────────────────────────────────────────────────────────────────────────────────
+  golang.org/x/crypto@v0.31.0
+     └─ [!] X25519, [OK] ChaCha20-Poly1305, [OK] Argon2
+  github.com/golang-jwt/jwt/v5@v5.3.0
+     └─ [!] RS256, [!] ES256, [~] HS384, [OK] HS512
+```
+
+### Disabling Reachability
+
+Reachability analysis is enabled by default for Go projects. To disable:
 
 ```bash
-./cryptodeps analyze .                          # Human-readable table (default)
-./cryptodeps analyze . --format json            # JSON for automation
-./cryptodeps analyze . --format cbom            # CycloneDX CBOM
-./cryptodeps analyze . --format sarif           # SARIF for GitHub Security
-./cryptodeps analyze . --format markdown        # Markdown reports
+cryptodeps analyze . --reachability=false
 ```
 
-### Analysis Modes
+---
+
+## Understanding the Output
+
+### Risk Indicators
+
+| Symbol | Risk Level | Meaning |
+|--------|------------|---------|
+| `[!]` | VULNERABLE | Broken by quantum computers (Shor's algorithm) |
+| `[~]` | PARTIAL | Weakened by quantum computers (Grover's algorithm) |
+| `[OK]` | SAFE | Quantum-resistant with current parameters |
+
+### Sample Output
+
+```
+Scanning go.mod... found 36 dependencies
+
+CONFIRMED - Actually used by your code (requires action):
+──────────────────────────────────────────────────────────────────────────────────────────
+  [!] Ed25519        VULNERABLE    [short-term]  Effort: Low (simple change)
+     └─ golang.org/x/crypto@v0.31.0
+        > Called from: application.AgentService.CreateAgent
+        > Called from: crypto.ED25519Service.Sign
+  [~] HS256          PARTIAL       [medium-term]  Effort: Low (simple change)
+     └─ github.com/golang-jwt/jwt/v5@v5.3.0
+        > Called from: auth.JWTService.GenerateAccessToken
+  [OK] bcrypt         SAFE          [none]  Effort: None
+     └─ golang.org/x/crypto@v0.31.0
+        > Called from: auth.HashPassword
+
+══════════════════════════════════════════════════════════════════════════════════════════
+SUMMARY: 36 deps | 2 with crypto | 8 vulnerable | 2 partial
+REACHABILITY: 3 confirmed | 0 reachable | 11 available-only
+
+REMEDIATION - Action Required:
+══════════════════════════════════════════════════════════════════════════════════════════
+
+[!] Ed25519
+──────────────────────────────────────────────────
+  Action:      Plan migration to ML-DSA; prioritize if signing long-lived data
+  Replace:     ML-DSA-65 (FIPS 204)
+  NIST:        FIPS 204
+  Timeline:    Short-term (1-2 years)
+  Effort:      Low (simple change)
+  Libraries:   github.com/cloudflare/circl/sign/mldsa
+  Note:        Priority depends on what you're signing: long-lived certificates
+               need migration soon, short-lived auth tokens are lower priority.
+
+[~] HS256
+──────────────────────────────────────────────────
+  Action:      Adequate for most use cases; upgrade to HS512 for defense-in-depth
+  Replace:     HS512 (optional)
+  Timeline:    Medium-term (2-5 years)
+  Effort:      Low (simple change)
+  Note:        HMAC-SHA256 provides ~128-bit post-quantum security. Sufficient
+               for most applications.
+
+PLANNING - Available in Dependencies (not currently used):
+──────────────────────────────────────────────────────────────────────────────────────────
+These algorithms exist in your dependencies but aren't called by your code.
+Review if you plan to use these features in the future.
+
+[!] RS256
+──────────────────────────────────────────────────
+  Action:      Wait for PQ-JWT standards; use HS256/HS512 if symmetric acceptable
+  Replace:     HS256/HS512 (now) or PQ-JWT algorithms (when standardized)
+  Timeline:    Short-term (1-2 years)
+  Note:        For short-lived tokens, the quantum threat is not immediate.
+               IETF is developing PQ-JWT standards.
+```
+
+---
+
+## Output Formats
+
+### Table (Default)
+
+Human-readable terminal output with colors and formatting:
 
 ```bash
-./cryptodeps analyze ./go.mod                   # Specific manifest file
-./cryptodeps analyze . --deep                   # On-demand analysis for unknown packages
-./cryptodeps analyze . --offline                # Use only local database
-./cryptodeps analyze . --risk vulnerable        # Filter by risk level
+cryptodeps analyze .
 ```
 
-### GitHub Repository Scanning
+### JSON
 
-Scan any public GitHub repository directly without cloning:
+Machine-readable output for automation:
 
 ```bash
-# Full URL
-./cryptodeps analyze https://github.com/hashicorp/vault
-
-# Shorthand (owner/repo)
-./cryptodeps analyze hashicorp/vault
-
-# With branch/path
-./cryptodeps analyze https://github.com/owner/repo/tree/main/subdir
+cryptodeps analyze . --format json
+cryptodeps analyze . --format json | jq '.dependencies[] | select(.analysis.crypto != null)'
 ```
 
-Example scanning HashiCorp Vault:
+### CycloneDX CBOM
 
-```
-$ cryptodeps analyze hashicorp/vault
-Fetching hashicorp/vault from GitHub...
-
-Scanning go.mod... found 541 dependencies
-
-DEPENDENCY                                    CRYPTO               RISK
-────────────────────────────────────────────────────────────────────────────────
-github.com/ProtonMail/go-crypto v1.2.0        RSA, ECDSA, Ed25...  VULNERABLE
-github.com/go-jose/go-jose/v3 v3.0.4          RS256, ES256, A2...  VULNERABLE
-github.com/golang-jwt/jwt/v4 v4.5.2           RS256, RS384, RS...  VULNERABLE
-github.com/cloudflare/circl v1.6.2            ML-KEM, ML-DSA, ...  VULNERABLE
-golang.org/x/crypto v0.45.0                   Ed25519, ChaCha2...  VULNERABLE
-────────────────────────────────────────────────────────────────────────────────
-SUMMARY: 541 deps | 9 use crypto | 28 vulnerable | 8 partial
-```
-
-### CI/CD Integration
+Cryptographic Bill of Materials for compliance (OMB M-23-02, CNSA 2.0):
 
 ```bash
-./cryptodeps analyze . --fail-on vulnerable     # Exit 1 on quantum-broken crypto
-./cryptodeps analyze . --fail-on partial        # Exit 3 on reduced-security crypto
-./cryptodeps analyze . --fail-on any            # Exit non-zero on any crypto
-./cryptodeps analyze . --fail-on none           # Never fail (report only)
+cryptodeps analyze . --format cbom > crypto-bom.json
 ```
 
-## Example Output
+### SARIF
 
-Sample terminal output:
+GitHub Security tab integration:
 
-```
-═══════════════════════════════════════════════════════════════════════════════
-  QRAMM CryptoDeps - Dependency Crypto Analyzer
-═══════════════════════════════════════════════════════════════════════════════
-
-  Project: my-application
-  Manifest: go.mod
-  Scanned: 2025-01-15 10:30:00 UTC
-
-───────────────────────────────────────────────────────────────────────────────
-  SCAN RESULTS
-───────────────────────────────────────────────────────────────────────────────
-
-  Total Dependencies:    47
-  Using Crypto:          12
-  Quantum Vulnerable:     4
-  Partial Risk:           3
-
-  DEPENDENCY                              ALGORITHM        RISK         SEVERITY
-  ──────────────────────────────────────────────────────────────────────────────
-  golang.org/x/crypto v0.17.0             Ed25519          VULNERABLE   HIGH
-                                          X25519           VULNERABLE   HIGH
-                                          ChaCha20         SAFE         -
-  github.com/golang-jwt/jwt/v5 v5.2.0     RS256            VULNERABLE   HIGH
-                                          ES256            VULNERABLE   HIGH
-                                          HS256            PARTIAL      MEDIUM
-  github.com/go-sql-driver/mysql v1.7.1   SHA-256          PARTIAL      LOW
-
-───────────────────────────────────────────────────────────────────────────────
-  REMEDIATION
-───────────────────────────────────────────────────────────────────────────────
-
-  VULNERABLE (4 findings)
-    Ed25519, X25519, RS256, ES256
-    → Migrate to ML-KEM for key exchange, ML-DSA for signatures
-    → Timeline: Complete by 2027 for CNSA 2.0 compliance
-
-  PARTIAL (3 findings)
-    SHA-256, HS256
-    → Upgrade to SHA-384 or SHA-512 for long-term security
-    → Consider SHA-3 for new implementations
-
-───────────────────────────────────────────────────────────────────────────────
-  2 packages not in database. Use --deep to analyze source code.
-───────────────────────────────────────────────────────────────────────────────
+```bash
+cryptodeps analyze . --format sarif > results.sarif
+# Upload to GitHub Security
+gh api repos/{owner}/{repo}/code-scanning/sarifs -f sarif=@results.sarif
 ```
 
-Other formats: `--format json` for automation, `--format cbom` for CycloneDX CBOM, `--format sarif` for GitHub Security.
+### Markdown
 
-## Quantum Risk Classification
+Documentation and reports:
 
-### Risk Levels
+```bash
+cryptodeps analyze . --format markdown > crypto-report.md
+```
 
-| Risk | Score Impact | Description | Examples |
-|------|--------------|-------------|----------|
-| **VULNERABLE** | Critical | Completely broken by quantum computers | RSA, ECDSA, Ed25519, DH, DSA |
-| **PARTIAL** | Medium | Security reduced by Grover's algorithm | AES-128, SHA-256, HMAC-SHA256 |
-| **SAFE** | None | Quantum-resistant with current key sizes | AES-256, SHA-384, SHA-512, ChaCha20 |
-
-### Algorithm Classification
-
-| Status | Description | Examples |
-|--------|-------------|----------|
-| **Approved** | CNSA 2.0 approved | ML-KEM, ML-DSA, SLH-DSA, AES-256, SHA-384+ |
-| **Transitional** | Allowed until 2027-2030 | RSA-3072+, ECDSA-P384 (hybrid only) |
-| **Deprecated** | Phase out immediately | RSA-2048, ECDSA-P256 |
-| **Prohibited** | Never use | DES, 3DES, RC4, MD5, SHA-1 |
+---
 
 ## CI/CD Integration
 
 ### GitHub Actions
 
 ```yaml
-name: Crypto Security Scan
-on: [push, pull_request]
+name: Quantum Security Scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
 
 permissions:
   security-events: write
+  contents: read
 
 jobs:
   cryptodeps:
@@ -219,13 +348,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Scan for Quantum-Vulnerable Crypto
-        uses: csnp/qramm-cryptodeps@v1
+      - name: Setup Go
+        uses: actions/setup-go@v5
         with:
-          path: '.'
-          fail-on: 'vulnerable'
-          format: 'table'
-          sarif-file: 'cryptodeps.sarif'
+          go-version: '1.22'
+
+      - name: Install CryptoDeps
+        run: go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
+
+      - name: Run Crypto Analysis
+        run: cryptodeps analyze . --format sarif > cryptodeps.sarif
+        continue-on-error: true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: cryptodeps.sarif
+
+      - name: Fail on Vulnerable Crypto
+        run: cryptodeps analyze . --fail-on vulnerable
 ```
 
 ### GitLab CI
@@ -233,148 +374,281 @@ jobs:
 ```yaml
 cryptodeps:
   stage: security
-  image: golang:1.22-alpine
-  before_script:
-    - go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
+  image: golang:1.22
   script:
+    - go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
     - cryptodeps analyze . --fail-on vulnerable
+  allow_failure: false
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+```
+
+### Jenkins
+
+```groovy
+pipeline {
+    agent any
+    stages {
+        stage('Crypto Scan') {
+            steps {
+                sh 'go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest'
+                sh 'cryptodeps analyze . --format json > crypto-report.json'
+                sh 'cryptodeps analyze . --fail-on vulnerable'
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'crypto-report.json'
+                }
+            }
+        }
+    }
+}
 ```
 
 ### Exit Codes
 
-| Code | Meaning | When |
-|------|---------|------|
-| **0** | Success | No quantum-vulnerable findings |
-| **1** | Vulnerable | Quantum-vulnerable crypto detected |
-| **2** | Error | Analysis failed |
-| **3** | Partial | Partial-risk crypto detected (with `--fail-on partial`) |
+| Code | Meaning | Trigger |
+|------|---------|---------|
+| `0` | Success | No findings matching `--fail-on` threshold |
+| `1` | Vulnerable | Quantum-vulnerable crypto detected |
+| `2` | Error | Analysis failed (invalid manifest, network error) |
+| `3` | Partial | Partial-risk crypto detected (with `--fail-on partial`) |
 
-## CLI Reference
+---
+
+## Command Reference
 
 ```
 USAGE:
-  cryptodeps [command] [flags]
+  cryptodeps <command> [flags]
 
 COMMANDS:
-  analyze     Analyze dependencies for cryptographic usage
+  analyze     Analyze project dependencies for cryptographic usage
   update      Download latest crypto knowledge database
   status      Show database statistics and cache info
   version     Print version information
 
 ANALYZE FLAGS:
   -f, --format string       Output format: table, json, cbom, sarif, markdown (default "table")
-      --fail-on string      Exit non-zero when risk found: vulnerable, partial, any, none
-      --offline             Only use local database, no auto-updates
-      --deep                Force on-demand analysis for unknown packages
-      --risk string         Filter by risk level: vulnerable, partial, all
+      --fail-on string      Fail threshold: vulnerable, partial, any, none (default "vulnerable")
+      --reachability        Analyze call graph for actual crypto usage (default true, Go only)
+      --deep                Force AST analysis for packages not in database
+      --offline             Use only local database, skip auto-updates
+      --risk string         Filter by risk: vulnerable, partial, all
       --min-severity string Minimum severity to report
-  -o, --output string       Output file (default: stdout)
-  -h, --help                Help for cryptodeps
+
+UPDATE FLAGS:
+      --url string          Custom database URL
+  -v, --verbose             Verbose output
+
+EXAMPLES:
+  cryptodeps analyze .                              # Analyze current directory
+  cryptodeps analyze ./go.mod                       # Specific manifest
+  cryptodeps analyze hashicorp/vault                # GitHub repository
+  cryptodeps analyze . --format cbom                # Generate CBOM
+  cryptodeps analyze . --fail-on vulnerable         # CI/CD gate
+  cryptodeps analyze . --reachability=false         # Skip call graph analysis
+  cryptodeps update                                 # Update crypto database
 ```
+
+---
+
+## Quantum Risk Classification
+
+### Risk Levels
+
+| Risk | Quantum Threat | Description | Examples |
+|------|----------------|-------------|----------|
+| **VULNERABLE** | Shor's Algorithm | Completely broken by quantum computers | RSA, ECDSA, Ed25519, ECDH, DH, DSA |
+| **PARTIAL** | Grover's Algorithm | Security reduced (halved key strength) | AES-128, SHA-256, HMAC-SHA256 |
+| **SAFE** | Resistant | Maintains security against known quantum attacks | AES-256, SHA-384+, ChaCha20, Argon2 |
+
+### CNSA 2.0 Compliance
+
+| Timeline | Requirement |
+|----------|-------------|
+| **2025** | Begin hybrid implementations |
+| **2027** | Complete hybrid transition for key establishment |
+| **2030** | Complete migration to pure PQC |
+| **2033** | Sunset classical algorithms |
+
+### NIST Post-Quantum Standards
+
+| Standard | Algorithm | Use Case |
+|----------|-----------|----------|
+| FIPS 203 | ML-KEM (Kyber) | Key encapsulation |
+| FIPS 204 | ML-DSA (Dilithium) | Digital signatures |
+| FIPS 205 | SLH-DSA (SPHINCS+) | Stateless hash-based signatures |
+
+---
+
+## Remediation Guidance
+
+CryptoDeps provides intelligent, context-aware remediation recommendations:
+
+### For JWT Algorithms
+
+| Current | Recommendation |
+|---------|----------------|
+| RS256/RS384/RS512 | Wait for PQ-JWT standards; use HS256/HS512 if symmetric is acceptable |
+| ES256/ES384/ES512 | Same as above — ECDSA is quantum-vulnerable |
+| HS256 | Adequate for most use cases; optionally upgrade to HS512 |
+| HS512 | Already quantum-safe, no action needed |
+
+### For Signatures
+
+| Current | Recommendation | NIST Standard |
+|---------|----------------|---------------|
+| RSA | Migrate to ML-DSA | FIPS 204 |
+| ECDSA | Migrate to ML-DSA | FIPS 204 |
+| Ed25519 | Plan migration to ML-DSA; prioritize long-lived signatures | FIPS 204 |
+
+### For Key Exchange
+
+| Current | Recommendation | NIST Standard |
+|---------|----------------|---------------|
+| RSA-KEM | Migrate to ML-KEM | FIPS 203 |
+| ECDH | Migrate to ML-KEM or hybrid X25519+ML-KEM | FIPS 203 |
+| X25519 | Use hybrid X25519+ML-KEM during transition | FIPS 203 |
+
+### Recommended Libraries
+
+| Ecosystem | Library |
+|-----------|---------|
+| Go | `github.com/cloudflare/circl` |
+| JavaScript/npm | `@noble/post-quantum` |
+| Python | `pqcrypto`, `liboqs-python` |
+| Java | `org.bouncycastle:bcprov-jdk18on` |
+
+---
+
+## FAQ
+
+### Why focus on dependencies instead of my own code?
+
+Most cryptographic vulnerabilities hide in dependencies — libraries you didn't write and rarely audit. Your code might use `bcrypt` for passwords (quantum-safe), but a dependency three levels deep might use RSA for certificate validation (quantum-vulnerable).
+
+### What makes CryptoDeps different from other scanners?
+
+**Reachability analysis.** Most tools flag every crypto algorithm in your dependency tree, creating noise. CryptoDeps traces your code's call graph to show what's actually used versus what's merely present.
+
+### Does it work with private repositories?
+
+Yes. For local projects, just point it at your directory:
+```bash
+cryptodeps analyze /path/to/private/project
+```
+
+For private GitHub repos, set up authentication:
+```bash
+export GITHUB_TOKEN=your_token
+cryptodeps analyze https://github.com/your-org/private-repo
+```
+
+### How often should I run this?
+
+- **PR/MR checks**: Every pull request that changes dependencies
+- **Scheduled**: Weekly or monthly full scans
+- **Release gates**: Before major releases
+
+### What about false positives?
+
+CryptoDeps minimizes false positives through:
+1. **Reachability analysis** — Only flags crypto your code actually uses
+2. **Curated database** — 72+ packages with verified crypto signatures
+3. **AST-based detection** — Analyzes actual code, not just package names
+
+### Is reachability analysis perfect?
+
+No static analysis is perfect. Reachability analysis may miss:
+- Dynamic dispatch / reflection
+- Plugin systems
+- Runtime code generation
+
+When in doubt, use `--reachability=false` for a complete inventory.
+
+---
 
 ## Architecture
 
 ```
 qramm-cryptodeps/
-├── cmd/
-│   └── cryptodeps/
-│       └── main.go              # CLI entry point, flag parsing
+├── cmd/cryptodeps/           # CLI entry point
 ├── internal/
 │   ├── analyzer/
-│   │   ├── analyzer.go          # Core analysis orchestration
-│   │   ├── ast/                  # AST-based source code analysis
-│   │   │   ├── go.go            # Go crypto detection
-│   │   │   ├── javascript.go    # JavaScript/npm crypto detection
-│   │   │   ├── python.go        # Python crypto detection
-│   │   │   └── java.go          # Java/Maven crypto detection
-│   │   ├── ondemand/            # On-demand package analysis
-│   │   └── source/              # Source code fetching
-│   ├── database/
-│   │   ├── database.go          # Crypto knowledge database
-│   │   └── updater.go           # Database auto-updates
-│   └── manifest/
-│       ├── gomod.go             # go.mod parser
-│       ├── npm.go               # package.json parser
-│       ├── python.go            # requirements.txt, pyproject.toml parser
-│       └── maven.go             # pom.xml parser
+│   │   ├── analyzer.go       # Core orchestration
+│   │   ├── ast/              # Language-specific AST analysis
+│   │   ├── ondemand/         # Source code fetching & analysis
+│   │   ├── reachability/     # Call graph analysis (Go)
+│   │   └── source/           # Package source resolution
+│   ├── database/             # Crypto knowledge database
+│   └── manifest/             # Dependency manifest parsers
 ├── pkg/
-│   ├── crypto/
-│   │   ├── patterns.go          # Crypto detection patterns
-│   │   ├── quantum.go           # Quantum risk classification
-│   │   └── remediation.go       # Remediation recommendations
-│   ├── output/
-│   │   ├── table.go             # Terminal output
-│   │   ├── json.go              # JSON output
-│   │   ├── cbom.go              # CycloneDX CBOM
-│   │   ├── sarif.go             # SARIF output
-│   │   └── markdown.go          # Markdown output
-│   └── types/
-│       └── types.go             # Shared types and structures
-└── data/
-    └── packages/                # Curated crypto database (72+ packages)
+│   ├── crypto/               # Algorithm patterns & remediation
+│   ├── output/               # Formatters (table, JSON, CBOM, SARIF)
+│   └── types/                # Shared types
+└── data/packages/            # Curated crypto database (72+ packages)
 ```
-
-## About QRAMM
-
-QRAMM (Quantum Readiness Assurance Maturity Model) is an evidence-based framework designed to help enterprises systematically prepare for the quantum computing threat to current cryptographic systems. QRAMM provides structured evaluation across quantum readiness dimensions.
-
-Visit [qramm.org](https://qramm.org) to learn more about:
-- Quantum readiness assessment
-- Migration planning resources
-- Implementation guidance
-- Industry benchmarks
-
-### QRAMM Toolkit
-
-This analyzer is part of the QRAMM open-source toolkit:
-
-| Tool | Description |
-|------|-------------|
-| [TLS Analyzer](https://github.com/csnp/qramm-tls-analyzer) | TLS/SSL configuration analysis with quantum readiness |
-| [CryptoScan](https://github.com/csnp/qramm-cryptoscan) | Cryptographic discovery scanner for source code |
-| **CryptoDeps** | Dependency cryptographic analysis (this tool) |
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
-
-### Contributing Package Data
-
-Help expand the database by contributing crypto analysis for packages:
-
-```bash
-# Analyze an unknown package and export findings
-cryptodeps analyze . --deep --export-unknown
-
-# Submit the generated YAML to the database
-# See CONTRIBUTING.md for details
-```
-
-## References
-
-- [NSA CNSA 2.0 Guidance](https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF) - Commercial National Security Algorithm Suite 2.0
-- [NIST Post-Quantum Cryptography](https://csrc.nist.gov/projects/post-quantum-cryptography) - PQC Standardization
-- [FIPS 203: ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) - Module-Lattice Key Encapsulation
-- [FIPS 204: ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) - Module-Lattice Digital Signatures
-- [CycloneDX CBOM](https://cyclonedx.org/capabilities/cbom/) - Cryptographic Bill of Materials
-- [OMB M-23-02](https://www.whitehouse.gov/wp-content/uploads/2022/11/M-23-02-M-Memo-on-Migrating-to-Post-Quantum-Cryptography.pdf) - Federal Crypto Inventory Requirements
-
-## License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- NSA's CNSA 2.0 guidance for post-quantum cryptography standards
-- NIST for PQC algorithm standardization (ML-KEM, ML-DSA, SLH-DSA)
-- CycloneDX for the CBOM specification
-- The Go team for excellent tooling support
-- Our contributors and the open-source community
 
 ---
 
-Built with purpose by [CSNP](https://csnp.org)
+## Contributing
 
-[QRAMM](https://qramm.org) | [CSNP](https://csnp.org) | [Report Bug](https://github.com/csnp/qramm-cryptodeps/issues) | [Request Feature](https://github.com/csnp/qramm-cryptodeps/issues)
+We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Areas for Contribution
+
+- **Package database**: Add crypto analysis for popular packages
+- **Language support**: Improve AST analysis for npm, Python, Maven
+- **Reachability**: Extend call graph analysis to other languages
+- **Output formats**: Add new compliance formats
+
+### Development Setup
+
+```bash
+git clone https://github.com/csnp/qramm-cryptodeps.git
+cd qramm-cryptodeps
+go mod download
+go test ./...
+go build -o cryptodeps ./cmd/cryptodeps
+```
+
+---
+
+## References
+
+### Standards & Guidance
+
+- [NIST FIPS 203: ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) — Module-Lattice Key Encapsulation
+- [NIST FIPS 204: ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) — Module-Lattice Digital Signatures
+- [NIST FIPS 205: SLH-DSA](https://csrc.nist.gov/pubs/fips/205/final) — Stateless Hash-Based Signatures
+- [NSA CNSA 2.0](https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF) — Commercial National Security Algorithm Suite
+- [OMB M-23-02](https://www.whitehouse.gov/wp-content/uploads/2022/11/M-23-02-M-Memo-on-Migrating-to-Post-Quantum-Cryptography.pdf) — Federal PQC Migration Requirements
+- [CycloneDX CBOM](https://cyclonedx.org/capabilities/cbom/) — Cryptographic Bill of Materials
+
+### QRAMM Toolkit
+
+| Tool | Description |
+|------|-------------|
+| **CryptoDeps** | Dependency cryptographic analysis (this tool) |
+| [TLS Analyzer](https://github.com/csnp/qramm-tls-analyzer) | TLS/SSL configuration analysis |
+| [CryptoScan](https://github.com/csnp/qramm-cryptoscan) | Source code cryptographic discovery |
+
+---
+
+## License
+
+Apache License 2.0 — See [LICENSE](LICENSE) for details.
+
+---
+
+## About
+
+Built by the [Cyber Security Non-Profit (CSNP)](https://csnp.org) as part of the [QRAMM](https://qramm.org) quantum readiness framework.
+
+**CSNP Mission**: Advancing cybersecurity through education, research, and open-source tools.
+
+---
+
+[Website](https://qramm.org) | [Documentation](https://docs.qramm.org) | [Report Bug](https://github.com/csnp/qramm-cryptodeps/issues) | [Request Feature](https://github.com/csnp/qramm-cryptodeps/issues)

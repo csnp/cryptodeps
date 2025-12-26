@@ -30,10 +30,10 @@ func TestGetDetailedRemediation(t *testing.T) {
 		{"Ed25519", "Ed25519", "signature", types.EcosystemGo, "ML-DSA", "FIPS 204"},
 		{"DSA", "DSA", "signature", types.EcosystemGo, "ML-DSA", "FIPS 204"},
 
-		// JWT algorithms - RS/ES migrate to ML-DSA
-		{"RS256", "RS256", "signature", types.EcosystemNPM, "ML-DSA", ""},
-		{"ES256", "ES256", "signature", types.EcosystemNPM, "ML-DSA", ""},
-		{"HS256", "HS256", "signature", types.EcosystemNPM, "HS512", ""},
+		// JWT algorithms - Wait for PQ-JWT standards for asymmetric, HS is adequate
+		{"RS256", "RS256", "signature", types.EcosystemNPM, "Wait for PQ-JWT", ""},
+		{"ES256", "ES256", "signature", types.EcosystemNPM, "Wait for PQ-JWT", ""},
+		{"HS256", "HS256", "signature", types.EcosystemNPM, "Adequate", ""},
 
 		// Hash algorithms
 		{"SHA-256", "SHA-256", "hash", types.EcosystemPyPI, "SHA-384", ""},
