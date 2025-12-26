@@ -163,17 +163,18 @@ release:
   extra_files:
     - glob: ./data/crypto-database.json
 
-# Sign releases
-signs:
-  - cmd: cosign
-    env:
-      - COSIGN_EXPERIMENTAL=1
-    certificate: '${artifact}.pem'
-    args:
-      - sign-blob
-      - '--output-certificate=${certificate}'
-      - '--output-signature=${signature}'
-      - '${artifact}'
-      - '--yes'
-    artifacts: checksum
-    output: true
+# TODO: Enable cosign signing once properly configured
+# Sign releases with cosign
+# signs:
+#   - cmd: cosign
+#     env:
+#       - COSIGN_EXPERIMENTAL=1
+#     certificate: '${artifact}.pem'
+#     args:
+#       - sign-blob
+#       - '--output-certificate=${certificate}'
+#       - '--output-signature=${signature}'
+#       - '${artifact}'
+#       - '--yes'
+#     artifacts: checksum
+#     output: true

@@ -1,4 +1,4 @@
-# Binaries (only in root)
+# Binaries
 /cryptodeps
 *.exe
 *.exe~
@@ -38,3 +38,9 @@ Thumbs.db
 
 # Downloaded package sources (cache)
 .cache/
+
+# GoReleaser
+dist/
+
+# Internal roadmap and planning docs
+ROADMAP.md
