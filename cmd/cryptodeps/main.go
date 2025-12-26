@@ -82,7 +82,7 @@ var versionCmd = &cobra.Command{
 }
 
 var analyzeCmd = &cobra.Command{
-	Use:   "analyze [path]",
+	Use:   "analyze [path|url]",
 	Short: "Analyze dependencies for cryptographic usage",
 	Long: `Analyze a project's dependencies to identify cryptographic algorithms
 and assess their quantum computing vulnerability.
@@ -91,6 +91,8 @@ The path can be:
   - A directory containing a manifest file (go.mod, package.json, etc.)
   - A specific manifest file
   - "." for the current directory
+  - A GitHub URL (https://github.com/owner/repo)
+  - A GitHub shorthand (owner/repo)
 
 Exit codes (for CI/CD):
   0 - No quantum-vulnerable findings
@@ -102,6 +104,8 @@ Examples:
   cryptodeps analyze .
   cryptodeps analyze ./go.mod
   cryptodeps analyze /path/to/project --format json
+  cryptodeps analyze https://github.com/golang-jwt/jwt
+  cryptodeps analyze golang-jwt/jwt
   cryptodeps analyze . --fail-on vulnerable --format sarif`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAnalyze,
@@ -151,6 +155,23 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	path := "."
 	if len(args) > 0 {
 		path = args[0]
+	}
+
+	// Check if path is a GitHub URL
+	var tempDir string
+	if analyzer.IsGitHubURL(path) {
+		repo, err := analyzer.ParseGitHubURL(path)
+		if err != nil {
+			return err
+		}
+
+		fmt.Fprintf(os.Stderr, "Fetching %s/%s from GitHub...\n", repo.Owner, repo.Repo)
+		tempDir, err = analyzer.FetchGitHubManifests(repo)
+		if err != nil {
+			return fmt.Errorf("failed to fetch from GitHub: %w", err)
+		}
+		defer analyzer.CleanupTempDir(tempDir)
+		path = tempDir
 	}
 
 	// Parse output format

@@ -17,9 +17,8 @@ import (
 )
 
 const (
-	// DefaultDatabaseURL is the default URL to fetch the database from GitHub releases.
-	// This points to the latest release artifact for fast, reliable downloads.
-	DefaultDatabaseURL = "https://github.com/csnp/qramm-cryptodeps/releases/latest/download/crypto-database.json"
+	// DefaultRepoAPI is the GitHub API endpoint for the releases.
+	DefaultRepoAPI = "https://api.github.com/repos/csnp/qramm-cryptodeps/releases"
 
 	// DatabaseFileName is the name of the locally cached database file.
 	DatabaseFileName = "crypto-database.json"
@@ -51,7 +50,7 @@ type UpdateConfig struct {
 func DefaultUpdateConfig() *UpdateConfig {
 	homeDir, _ := os.UserHomeDir()
 	return &UpdateConfig{
-		URL:      DefaultDatabaseURL,
+		URL:      "", // Empty means auto-discover from GitHub releases
 		CacheDir: filepath.Join(homeDir, CacheDir),
 		Timeout:  30 * time.Second,
 		Verbose:  false,
@@ -103,23 +102,36 @@ func (u *Updater) Update() (*UpdateResult, error) {
 		return nil, fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	// Fetch the database
+	// Determine the URL to fetch from
+	fetchURL := u.config.URL
+	if fetchURL == "" {
+		// Find database URL from GitHub releases
+		if u.config.Verbose {
+			fmt.Println("Looking up latest database release...")
+		}
+		url, err := u.findDatabaseURL()
+		if err != nil {
+			return nil, fmt.Errorf("failed to find database: %w", err)
+		}
+		fetchURL = url
+	}
+
 	if u.config.Verbose {
-		fmt.Printf("Fetching database from %s...\n", u.config.URL)
+		fmt.Printf("Fetching database from %s...\n", fetchURL)
 	}
 
 	var body []byte
 	var err error
 
 	// Support local files for testing (starts with / or .)
-	if strings.HasPrefix(u.config.URL, "/") || strings.HasPrefix(u.config.URL, "./") {
-		body, err = os.ReadFile(u.config.URL)
+	if strings.HasPrefix(fetchURL, "/") || strings.HasPrefix(fetchURL, "./") {
+		body, err = os.ReadFile(fetchURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read local database: %w", err)
 		}
 	} else {
 		// Fetch from HTTP(S)
-		resp, err := u.client.Get(u.config.URL)
+		resp, err := u.client.Get(fetchURL)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch database: %w", err)
 		}
@@ -158,6 +170,67 @@ func (u *Updater) Update() (*UpdateResult, error) {
 	}
 
 	return result, nil
+}
+
+// findDatabaseURL searches GitHub releases to find the crypto-database.json asset.
+// It looks for releases with the database file attached, preferring db-* tagged releases.
+func (u *Updater) findDatabaseURL() (string, error) {
+	req, err := http.NewRequest("GET", DefaultRepoAPI, nil)
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("User-Agent", "CryptoDeps/1.0")
+
+	// Use GitHub token if available for higher rate limits
+	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := u.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch releases: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GitHub API error: HTTP %d", resp.StatusCode)
+	}
+
+	var releases []struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return "", fmt.Errorf("failed to parse releases: %w", err)
+	}
+
+	// Find the first release with crypto-database.json, preferring db-* tags
+	for _, release := range releases {
+		if strings.HasPrefix(release.TagName, "db-") {
+			for _, asset := range release.Assets {
+				if asset.Name == DatabaseFileName {
+					return asset.BrowserDownloadURL, nil
+				}
+			}
+		}
+	}
+
+	// Fallback: check any release for the file
+	for _, release := range releases {
+		for _, asset := range release.Assets {
+			if asset.Name == DatabaseFileName {
+				return asset.BrowserDownloadURL, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("no database release found")
 }
 
 // GetCachePath returns the path to the cached database file.

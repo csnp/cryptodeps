@@ -18,8 +18,9 @@ import (
 func TestDefaultUpdateConfig(t *testing.T) {
 	config := DefaultUpdateConfig()
 
-	if config.URL != DefaultDatabaseURL {
-		t.Errorf("URL = %q, want %q", config.URL, DefaultDatabaseURL)
+	// URL defaults to empty (auto-discover from GitHub releases)
+	if config.URL != "" {
+		t.Errorf("URL = %q, want empty (auto-discover)", config.URL)
 	}
 	if config.Timeout != 30*time.Second {
 		t.Errorf("Timeout = %v, want 30s", config.Timeout)
@@ -35,8 +36,9 @@ func TestNewUpdater(t *testing.T) {
 	if u == nil {
 		t.Fatal("NewUpdater returned nil")
 	}
-	if u.config.URL != DefaultDatabaseURL {
-		t.Errorf("Default URL not set")
+	// URL defaults to empty (auto-discover)
+	if u.config.URL != "" {
+		t.Errorf("Default URL should be empty for auto-discover")
 	}
 
 	// With custom config
