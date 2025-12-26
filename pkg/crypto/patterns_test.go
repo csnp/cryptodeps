@@ -42,7 +42,7 @@ func TestGetPatternsForEcosystem(t *testing.T) {
 
 func TestGetPatternsForUnknownEcosystem(t *testing.T) {
 	patterns := GetPatternsForEcosystem("unknown")
-	if patterns != nil && len(patterns) > 0 {
+	if len(patterns) > 0 {
 		t.Errorf("GetPatternsForEcosystem(unknown) = %v, want empty/nil", patterns)
 	}
 }

@@ -219,7 +219,7 @@ func TestGetLibraryRecommendations(t *testing.T) {
 func TestGetLibraryRecommendationsUnknown(t *testing.T) {
 	libs := GetLibraryRecommendations("UNKNOWN_ALGO", types.EcosystemGo)
 	// Should return nil or empty for unknown algorithms
-	if libs != nil && len(libs) > 0 {
+	if len(libs) > 0 {
 		t.Errorf("GetLibraryRecommendations(unknown) = %v, want nil/empty", libs)
 	}
 }

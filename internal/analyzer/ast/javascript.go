@@ -31,9 +31,8 @@ var (
 	importDynPattern  = regexp.MustCompile(`import\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 
 	// Function detection patterns
-	jsFuncDeclPattern   = regexp.MustCompile(`(?:async\s+)?function\s+(\w+)\s*\(`)
-	jsMethodPattern     = regexp.MustCompile(`(\w+)\s*\([^)]*\)\s*{`)
-	jsArrowFuncPattern  = regexp.MustCompile(`(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>`)
+	jsFuncDeclPattern  = regexp.MustCompile(`(?:async\s+)?function\s+(\w+)\s*\(`)
+	jsArrowFuncPattern = regexp.MustCompile(`(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>`)
 	jsClassMethodPattern = regexp.MustCompile(`(?:async\s+)?(\w+)\s*\([^)]*\)\s*{`)
 	jsExportPattern     = regexp.MustCompile(`^(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)|module\.exports\s*[.=]|exports\.(\w+))`)
 	jsClassPattern      = regexp.MustCompile(`class\s+(\w+)`)
