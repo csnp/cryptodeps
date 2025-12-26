@@ -5,6 +5,7 @@ package source
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -522,5 +523,185 @@ func TestFetchNpmEmptyVersion(t *testing.T) {
 
 	if dir != cachedDir {
 		t.Errorf("Expected %s, got %s", cachedDir, dir)
+	}
+}
+
+// ============================================================================
+// Network Integration Tests (require network access)
+// Run with: go test -v -run TestIntegration
+// ============================================================================
+
+func TestIntegration_FetchGoModule(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	tmpDir, _ := os.MkdirTemp("", "fetcher-go-integration")
+	defer os.RemoveAll(tmpDir)
+
+	f := NewFetcher(tmpDir)
+
+	// Fetch a small, real Go module
+	dir, err := f.Fetch(types.Dependency{
+		Name:      "golang.org/x/text",
+		Version:   "v0.14.0",
+		Ecosystem: types.EcosystemGo,
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to fetch Go module: %v", err)
+	}
+
+	// Verify directory exists and contains Go files
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		t.Error("Expected module directory to exist")
+	}
+
+	// Check for expected files
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("Failed to read module directory: %v", err)
+	}
+
+	if len(entries) == 0 {
+		t.Error("Expected module directory to contain files")
+	}
+
+	// Verify go.mod exists
+	if _, err := os.Stat(filepath.Join(dir, "go.mod")); os.IsNotExist(err) {
+		t.Error("Expected go.mod file in fetched module")
+	}
+}
+
+func TestIntegration_FetchNpmPackage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Check if npm is available
+	if _, err := exec.LookPath("npm"); err != nil {
+		t.Skip("npm not available, skipping test")
+	}
+
+	tmpDir, _ := os.MkdirTemp("", "fetcher-npm-integration")
+	defer os.RemoveAll(tmpDir)
+
+	f := NewFetcher(tmpDir)
+
+	// Fetch a small, common npm package
+	dir, err := f.Fetch(types.Dependency{
+		Name:      "is-odd",
+		Version:   "3.0.1",
+		Ecosystem: types.EcosystemNPM,
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to fetch npm package: %v", err)
+	}
+
+	// Verify directory exists
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		t.Error("Expected package directory to exist")
+	}
+
+	// Check for package.json
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); os.IsNotExist(err) {
+		t.Error("Expected package.json in fetched package")
+	}
+}
+
+func TestIntegration_FetchPyPIPackage(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Check if pip is available
+	if _, err := exec.LookPath("pip"); err != nil {
+		t.Skip("pip not available, skipping test")
+	}
+
+	tmpDir, _ := os.MkdirTemp("", "fetcher-pypi-integration")
+	defer os.RemoveAll(tmpDir)
+
+	f := NewFetcher(tmpDir)
+
+	// Fetch a small Python package
+	dir, err := f.Fetch(types.Dependency{
+		Name:      "six",
+		Version:   "1.16.0",
+		Ecosystem: types.EcosystemPyPI,
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to fetch PyPI package: %v", err)
+	}
+
+	// Verify directory exists
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		t.Error("Expected package directory to exist")
+	}
+
+	// Check that directory is not empty
+	entries, _ := os.ReadDir(dir)
+	if len(entries) == 0 {
+		t.Error("Expected package directory to contain files")
+	}
+}
+
+func TestIntegration_FetchMavenArtifact(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Check if curl is available
+	if _, err := exec.LookPath("curl"); err != nil {
+		t.Skip("curl not available, skipping test")
+	}
+	if _, err := exec.LookPath("unzip"); err != nil {
+		t.Skip("unzip not available, skipping test")
+	}
+
+	tmpDir, _ := os.MkdirTemp("", "fetcher-maven-integration")
+	defer os.RemoveAll(tmpDir)
+
+	f := NewFetcher(tmpDir)
+
+	// Fetch a small Maven artifact with sources
+	dir, err := f.Fetch(types.Dependency{
+		Name:      "com.google.code.gson:gson",
+		Version:   "2.10.1",
+		Ecosystem: types.EcosystemMaven,
+	})
+
+	if err != nil {
+		t.Fatalf("Failed to fetch Maven artifact: %v", err)
+	}
+
+	// Verify directory exists
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		t.Error("Expected artifact directory to exist")
+	}
+
+	// Check that directory contains Java files
+	entries, _ := os.ReadDir(dir)
+	if len(entries) == 0 {
+		t.Error("Expected artifact directory to contain files")
+	}
+
+	// Look for .java files
+	hasJava := false
+	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if filepath.Ext(path) == ".java" {
+			hasJava = true
+			return filepath.SkipDir
+		}
+		return nil
+	})
+
+	if !hasJava {
+		t.Log("Note: No .java files found - sources JAR may not be available")
 	}
 }
