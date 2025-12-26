@@ -86,22 +86,22 @@ changelog:
     - title: 'Other'
       order: 999
 
-# Homebrew tap
-brews:
-  - name: cryptodeps
-    repository:
-      owner: csnp
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
-    homepage: "https://github.com/csnp/qramm-cryptodeps"
-    description: "Analyze dependencies for quantum-vulnerable cryptographic algorithms"
-    license: "Apache-2.0"
-    skip_upload: auto
-    test: |
-      system "#{bin}/cryptodeps", "version"
-    install: |
-      bin.install "cryptodeps"
+# TODO: Add Homebrew tap in future release
+# brews:
+#   - name: cryptodeps
+#     repository:
+#       owner: csnp
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+#     directory: Formula
+#     homepage: "https://github.com/csnp/qramm-cryptodeps"
+#     description: "Analyze dependencies for quantum-vulnerable cryptographic algorithms"
+#     license: "Apache-2.0"
+#     skip_upload: auto
+#     test: |
+#       system "#{bin}/cryptodeps", "version"
+#     install: |
+#       bin.install "cryptodeps"
 
 # Docker images
 dockers:
@@ -135,11 +135,6 @@ release:
     Analyze your dependencies for quantum-vulnerable cryptographic algorithms.
 
     ### Installation
-
-    **macOS (Homebrew):**
-    ```bash
-    brew install csnp/tap/cryptodeps
-    ```
 
     **Linux/macOS (Binary):**
     ```bash
