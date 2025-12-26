@@ -73,7 +73,7 @@ Copy and paste this entire block:
 ```bash
 git clone https://github.com/csnp/qramm-cryptodeps.git
 cd qramm-cryptodeps
-go build -o cryptodeps ./cmd/cryptodeps
+make build
 sudo mv cryptodeps /usr/local/bin/
 cd .. && rm -rf qramm-cryptodeps
 cryptodeps version
@@ -119,7 +119,7 @@ This repository includes a sample vulnerable project for testing:
 # Clone and build
 git clone https://github.com/csnp/qramm-cryptodeps.git
 cd qramm-cryptodeps
-go build -o cryptodeps ./cmd/cryptodeps
+make build
 
 # Scan the sample project
 ./cryptodeps analyze ./examples/vulnerable-demo
