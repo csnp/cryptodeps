@@ -136,7 +136,7 @@ func init() {
 	analyzeCmd.Flags().StringVarP(&formatFlag, "format", "f", "table", "Output format (table, json, cbom, sarif, markdown)")
 	analyzeCmd.Flags().BoolVar(&offlineFlag, "offline", false, "Only use local database, no downloads")
 	analyzeCmd.Flags().BoolVar(&deepFlag, "deep", false, "Force on-demand analysis for unknown packages")
-	analyzeCmd.Flags().BoolVar(&reachabilityFlag, "reachability", false, "Analyze call graph to find actually-used crypto (Go only)")
+	analyzeCmd.Flags().BoolVar(&reachabilityFlag, "reachability", true, "Analyze call graph to find actually-used crypto (Go only, use --reachability=false to disable)")
 	analyzeCmd.Flags().StringVar(&riskFilter, "risk", "", "Filter by risk level (vulnerable, partial, all)")
 	analyzeCmd.Flags().StringVar(&minSeverity, "min-severity", "", "Minimum severity to report")
 	analyzeCmd.Flags().StringVar(&failOn, "fail-on", "vulnerable", "Exit non-zero when risk found (vulnerable, partial, any, none)")
