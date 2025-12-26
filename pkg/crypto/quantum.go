@@ -61,9 +61,15 @@ var algorithmDatabase = map[string]AlgorithmInfo{
 	"poly1305":    {Name: "Poly1305", Type: "hash", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Poly1305 MAC"},
 
 	// HMAC algorithms
-	"hs256": {Name: "HS256", Type: "signature", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC with SHA-256"},
-	"hs384": {Name: "HS384", Type: "signature", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC with SHA-384"},
-	"hs512": {Name: "HS512", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "HMAC with SHA-512"},
+	"hs256":       {Name: "HS256", Type: "signature", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC with SHA-256"},
+	"hs384":       {Name: "HS384", Type: "signature", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC with SHA-384"},
+	"hs512":       {Name: "HS512", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "HMAC with SHA-512"},
+	"hmac":        {Name: "HMAC", Type: "mac", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC"},
+	"hmac-md5":    {Name: "HMAC-MD5", Type: "mac", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "HMAC with MD5"},
+	"hmac-sha1":   {Name: "HMAC-SHA1", Type: "mac", QuantumRisk: types.RiskPartial, Severity: types.SeverityMedium, Description: "HMAC with SHA-1"},
+	"hmac-sha256": {Name: "HMAC-SHA256", Type: "mac", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC with SHA-256"},
+	"hmac-sha384": {Name: "HMAC-SHA384", Type: "mac", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "HMAC with SHA-384"},
+	"hmac-sha512": {Name: "HMAC-SHA512", Type: "mac", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "HMAC with SHA-512"},
 
 	// Hash functions - PARTIAL (Grover's reduces collision resistance)
 	"sha-1":   {Name: "SHA-1", Type: "hash", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "SHA-1 (broken classically)"},

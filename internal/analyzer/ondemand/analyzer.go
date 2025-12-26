@@ -74,16 +74,14 @@ func (a *Analyzer) analyzeGo(sourceDir string) ([]types.CryptoUsage, error) {
 
 // analyzeJavaScript analyzes JavaScript source code.
 func (a *Analyzer) analyzeJavaScript(sourceDir string) ([]types.CryptoUsage, error) {
-	// TODO: Implement JavaScript AST analysis using tree-sitter
-	// For now, return empty - we'll add this in Phase 3
-	return nil, nil
+	analyzer := ast.NewJavaScriptAnalyzer()
+	return analyzer.AnalyzeDirectory(sourceDir)
 }
 
 // analyzePython analyzes Python source code.
 func (a *Analyzer) analyzePython(sourceDir string) ([]types.CryptoUsage, error) {
-	// TODO: Implement Python AST analysis using tree-sitter
-	// For now, return empty - we'll add this in Phase 3
-	return nil, nil
+	analyzer := ast.NewPythonAnalyzer()
+	return analyzer.AnalyzeDirectory(sourceDir)
 }
 
 // analyzeJava analyzes Java source code.
