@@ -110,7 +110,7 @@ dockers:
       - "ghcr.io/csnp/cryptodeps:v{{ .Major }}"
       - "ghcr.io/csnp/cryptodeps:v{{ .Major }}.{{ .Minor }}"
       - "ghcr.io/csnp/cryptodeps:latest"
-    dockerfile: Dockerfile.goreleaser
+    dockerfile: build/Dockerfile
     build_flag_templates:
       - "--pull"
       - "--label=org.opencontainers.image.created={{.Date}}"
