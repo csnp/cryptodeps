@@ -60,7 +60,8 @@ checksum:
   algorithm: sha256
 
 snapshot:
-  version_template: "{{ incpatch .Version }}-next"
+  # Use commit-based versioning to handle non-semver tags (like db-*)
+  version_template: "snapshot-{{ .ShortCommit }}"
 
 changelog:
   sort: asc
