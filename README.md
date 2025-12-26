@@ -87,6 +87,40 @@ Don't have Go? Download pre-built binaries from [Releases](https://github.com/cs
 ./cryptodeps analyze . --risk vulnerable        # Filter by risk level
 ```
 
+### GitHub Repository Scanning
+
+Scan any public GitHub repository directly without cloning:
+
+```bash
+# Full URL
+./cryptodeps analyze https://github.com/hashicorp/vault
+
+# Shorthand (owner/repo)
+./cryptodeps analyze hashicorp/vault
+
+# With branch/path
+./cryptodeps analyze https://github.com/owner/repo/tree/main/subdir
+```
+
+Example scanning HashiCorp Vault:
+
+```
+$ cryptodeps analyze hashicorp/vault
+Fetching hashicorp/vault from GitHub...
+
+Scanning go.mod... found 541 dependencies
+
+DEPENDENCY                                    CRYPTO               RISK
+────────────────────────────────────────────────────────────────────────────────
+github.com/ProtonMail/go-crypto v1.2.0        RSA, ECDSA, Ed25...  VULNERABLE
+github.com/go-jose/go-jose/v3 v3.0.4          RS256, ES256, A2...  VULNERABLE
+github.com/golang-jwt/jwt/v4 v4.5.2           RS256, RS384, RS...  VULNERABLE
+github.com/cloudflare/circl v1.6.2            ML-KEM, ML-DSA, ...  VULNERABLE
+golang.org/x/crypto v0.45.0                   Ed25519, ChaCha2...  VULNERABLE
+────────────────────────────────────────────────────────────────────────────────
+SUMMARY: 541 deps | 9 use crypto | 28 vulnerable | 8 partial
+```
+
 ### CI/CD Integration
 
 ```bash
