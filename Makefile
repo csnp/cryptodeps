@@ -1,4 +1,4 @@
-.PHONY: build test lint clean install run help
+.PHONY: build test lint clean install run help generate-db update-db db-stats release release-snapshot release-check
 
 # Binary name
 BINARY=cryptodeps
@@ -56,6 +56,37 @@ run: build
 deps:
 	go mod download
 	go mod tidy
+
+## generate-db: Generate data/crypto-database.json for GitHub releases
+generate-db:
+	@echo "Generating crypto-database.json..."
+	@go run cmd/gendb/main.go 2>/dev/null > data/crypto-database.json
+	@echo "Done. Database saved to data/crypto-database.json"
+	@echo "Packages: $$(jq '.packages | length' data/crypto-database.json)"
+
+## update-db: Update local database cache from GitHub releases
+update-db:
+	./$(BINARY) update || go run ./cmd/cryptodeps update
+
+## db-stats: Show database statistics
+db-stats:
+	./$(BINARY) status || go run ./cmd/cryptodeps status
+
+## release-check: Validate goreleaser configuration
+release-check:
+	goreleaser check
+
+## release-snapshot: Build a snapshot release (no publish)
+release-snapshot:
+	goreleaser release --snapshot --clean
+
+## release: Build and publish a release (requires GITHUB_TOKEN)
+release:
+	goreleaser release --clean
+
+## docker-build: Build Docker image locally
+docker-build: build
+	docker build -t cryptodeps:local -f Dockerfile.goreleaser .
 
 ## help: Show this help
 help:

@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto

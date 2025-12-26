@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ast provides AST-based analysis for crypto detection.
@@ -103,10 +103,19 @@ func (a *GoAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
 
 // cryptoVisitor walks the AST looking for crypto-related code.
 type cryptoVisitor struct {
-	fset     *token.FileSet
-	filename string
-	imports  map[string]string // alias -> import path
-	usages   []types.CryptoUsage
+	fset      *token.FileSet
+	filename  string
+	imports   map[string]string // alias -> import path
+	usages    []types.CryptoUsage
+	funcStack []*funcContext // stack of function contexts
+}
+
+// funcContext tracks a function context during AST traversal.
+type funcContext struct {
+	Name       string // function or method name
+	Receiver   string // receiver type for methods (empty for functions)
+	IsExported bool   // whether the function is exported (uppercase first letter)
+	EndPos     token.Pos // position where function ends
 }
 
 func (v *cryptoVisitor) Visit(node ast.Node) ast.Visitor {
@@ -114,7 +123,16 @@ func (v *cryptoVisitor) Visit(node ast.Node) ast.Visitor {
 		return nil
 	}
 
+	// Pop any functions that have ended
+	v.popCompletedFuncs(node)
+
 	switch n := node.(type) {
+	case *ast.FuncDecl:
+		// Track function context
+		v.pushFunction(n)
+	case *ast.FuncLit:
+		// Track function literal (closure)
+		v.pushFuncLit(n)
 	case *ast.CallExpr:
 		v.checkCallExpr(n)
 	case *ast.SelectorExpr:
@@ -122,6 +140,86 @@ func (v *cryptoVisitor) Visit(node ast.Node) ast.Visitor {
 	}
 
 	return v
+}
+
+// pushFunction pushes a FuncDecl onto the function stack.
+func (v *cryptoVisitor) pushFunction(fn *ast.FuncDecl) {
+	ctx := &funcContext{
+		Name:       fn.Name.Name,
+		IsExported: ast.IsExported(fn.Name.Name),
+		EndPos:     fn.End(),
+	}
+
+	// Check for method receiver
+	if fn.Recv != nil && len(fn.Recv.List) > 0 {
+		recv := fn.Recv.List[0]
+		ctx.Receiver = v.formatReceiverType(recv.Type)
+	}
+
+	v.funcStack = append(v.funcStack, ctx)
+}
+
+// pushFuncLit pushes a function literal onto the function stack.
+func (v *cryptoVisitor) pushFuncLit(fn *ast.FuncLit) {
+	ctx := &funcContext{
+		Name:       "<closure>",
+		IsExported: false,
+		EndPos:     fn.End(),
+	}
+	v.funcStack = append(v.funcStack, ctx)
+}
+
+// popCompletedFuncs removes any functions from the stack that have ended.
+func (v *cryptoVisitor) popCompletedFuncs(node ast.Node) {
+	if node == nil {
+		return
+	}
+	nodePos := node.Pos()
+	for len(v.funcStack) > 0 {
+		top := v.funcStack[len(v.funcStack)-1]
+		if nodePos > top.EndPos {
+			v.funcStack = v.funcStack[:len(v.funcStack)-1]
+		} else {
+			break
+		}
+	}
+}
+
+// currentFunc returns the current function context, or nil if not in a function.
+func (v *cryptoVisitor) currentFunc() *funcContext {
+	if len(v.funcStack) == 0 {
+		return nil
+	}
+	return v.funcStack[len(v.funcStack)-1]
+}
+
+// formatReceiverType formats a receiver type as a string.
+func (v *cryptoVisitor) formatReceiverType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		if ident, ok := t.X.(*ast.Ident); ok {
+			return "*" + ident.Name
+		}
+	}
+	return ""
+}
+
+// buildCallPath builds a call path string for the current context.
+func (v *cryptoVisitor) buildCallPath(funcName string) []string {
+	path := []string{}
+
+	if fn := v.currentFunc(); fn != nil {
+		if fn.Receiver != "" {
+			path = append(path, fmt.Sprintf("(%s).%s()", fn.Receiver, fn.Name))
+		} else {
+			path = append(path, fn.Name+"()")
+		}
+	}
+
+	path = append(path, funcName+"()")
+	return path
 }
 
 // checkCallExpr checks function calls for crypto usage.
@@ -169,7 +267,19 @@ func (v *cryptoVisitor) checkSelectorExpr(sel *ast.SelectorExpr) {
 							File: v.filename,
 							Line: pos.Line,
 						},
+						CallPath: v.buildCallPath(typeName),
 					}
+
+					// Add function context if available
+					if fn := v.currentFunc(); fn != nil {
+						usage.InExported = fn.IsExported
+						if fn.Receiver != "" {
+							usage.Function = fmt.Sprintf("(%s).%s", fn.Receiver, fn.Name)
+						} else {
+							usage.Function = fn.Name
+						}
+					}
+
 					v.usages = append(v.usages, usage)
 				}
 			}
@@ -202,7 +312,7 @@ func (v *cryptoVisitor) createUsage(call *ast.CallExpr, importPath, funcName str
 		}
 	}
 
-	return &types.CryptoUsage{
+	usage := &types.CryptoUsage{
 		Algorithm:   info.Name,
 		Type:        info.Type,
 		QuantumRisk: info.QuantumRisk,
@@ -211,8 +321,20 @@ func (v *cryptoVisitor) createUsage(call *ast.CallExpr, importPath, funcName str
 			File: v.filename,
 			Line: pos.Line,
 		},
-		CallPath: []string{funcName + "()"},
+		CallPath: v.buildCallPath(funcName),
 	}
+
+	// Add function context if available
+	if fn := v.currentFunc(); fn != nil {
+		usage.InExported = fn.IsExported
+		if fn.Receiver != "" {
+			usage.Function = fmt.Sprintf("(%s).%s", fn.Receiver, fn.Name)
+		} else {
+			usage.Function = fn.Name
+		}
+	}
+
+	return usage
 }
 
 // detectAlgorithmFromFunc detects the algorithm from a function name.

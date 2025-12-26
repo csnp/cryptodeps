@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package source provides functionality for fetching package source code.
@@ -206,11 +206,64 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 	return "", fmt.Errorf("could not find Python package archive")
 }
 
-// fetchMavenArtifact downloads a Maven artifact.
+// fetchMavenArtifact downloads a Maven artifact sources from Maven Central.
 func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
-	// Maven artifacts are trickier - we need to parse groupId:artifactId
-	// For now, return an error indicating this is not yet supported
-	return "", fmt.Errorf("Maven source fetching not yet implemented")
+	// Parse groupId:artifactId from dep.Name
+	parts := strings.Split(dep.Name, ":")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid Maven coordinate: %s (expected groupId:artifactId)", dep.Name)
+	}
+	groupID := parts[0]
+	artifactID := parts[1]
+
+	// Create cache directory for this artifact
+	safeName := strings.ReplaceAll(dep.Name, ":", "_")
+	packageDir := filepath.Join(f.cacheDir, "maven", safeName, dep.Version)
+
+	// Check if already cached
+	extractDir := filepath.Join(packageDir, "extracted")
+	if _, err := os.Stat(extractDir); err == nil {
+		return extractDir, nil
+	}
+
+	// Ensure cache directory exists
+	if err := os.MkdirAll(packageDir, 0755); err != nil {
+		return "", fmt.Errorf("failed to create cache dir: %w", err)
+	}
+
+	// Build Maven Central URL for sources JAR
+	// https://repo1.maven.org/maven2/{groupId path}/{artifactId}/{version}/{artifactId}-{version}-sources.jar
+	groupPath := strings.ReplaceAll(groupID, ".", "/")
+	sourcesURL := fmt.Sprintf("https://repo1.maven.org/maven2/%s/%s/%s/%s-%s-sources.jar",
+		groupPath, artifactID, dep.Version, artifactID, dep.Version)
+
+	// Download the sources JAR
+	jarPath := filepath.Join(packageDir, artifactID+"-"+dep.Version+"-sources.jar")
+
+	// Use curl to download (available on most systems)
+	cmd := exec.Command("curl", "-sL", "-o", jarPath, "-f", sourcesURL)
+	if err := cmd.Run(); err != nil {
+		// Try without -sources suffix (main jar) as fallback
+		mainURL := fmt.Sprintf("https://repo1.maven.org/maven2/%s/%s/%s/%s-%s.jar",
+			groupPath, artifactID, dep.Version, artifactID, dep.Version)
+		jarPath = filepath.Join(packageDir, artifactID+"-"+dep.Version+".jar")
+		cmd = exec.Command("curl", "-sL", "-o", jarPath, "-f", mainURL)
+		if err := cmd.Run(); err != nil {
+			os.RemoveAll(packageDir)
+			return "", fmt.Errorf("failed to download Maven artifact: %w (tried sources and main JAR)", err)
+		}
+	}
+
+	// Extract the JAR (it's a zip file)
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		return "", err
+	}
+	extractCmd := exec.Command("unzip", "-q", jarPath, "-d", extractDir)
+	if err := extractCmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to extract JAR: %w", err)
+	}
+
+	return extractDir, nil
 }
 
 // CacheDir returns the cache directory path.

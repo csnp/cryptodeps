@@ -1,10 +1,11 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 package output
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"time"
 
@@ -57,6 +58,12 @@ type cycloneDXAlgorithmProperties struct {
 
 // Format writes the scan result as CycloneDX CBOM.
 func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	if result == nil {
+		return errors.New("result cannot be nil")
+	}
+	if w == nil {
+		return errors.New("writer cannot be nil")
+	}
 	bom := cycloneDXBOM{
 		BOMFormat:    "CycloneDX",
 		SpecVersion:  "1.6",

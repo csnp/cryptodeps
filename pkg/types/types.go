@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package types defines the core data structures used throughout CryptoDeps.
@@ -66,6 +66,9 @@ type CryptoUsage struct {
 	Severity    Severity    `json:"severity" yaml:"severity"`
 	Location    Location    `json:"location" yaml:"location"`
 	CallPath    []string    `json:"callPath,omitempty" yaml:"callPath,omitempty"` // trace from public API to crypto
+	InExported  bool        `json:"inExported,omitempty" yaml:"inExported,omitempty"` // whether in exported/public function
+	Function    string      `json:"function,omitempty" yaml:"function,omitempty"` // containing function name
+	Remediation string      `json:"remediation,omitempty" yaml:"remediation,omitempty"` // migration guidance
 }
 
 // AnalysisMetadata contains information about how the analysis was performed.

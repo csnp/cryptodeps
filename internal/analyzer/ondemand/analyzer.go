@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ondemand provides on-demand cryptographic analysis of packages.
@@ -86,9 +86,8 @@ func (a *Analyzer) analyzePython(sourceDir string) ([]types.CryptoUsage, error) 
 
 // analyzeJava analyzes Java source code.
 func (a *Analyzer) analyzeJava(sourceDir string) ([]types.CryptoUsage, error) {
-	// TODO: Implement Java AST analysis using tree-sitter
-	// For now, return empty - we'll add this in Phase 3
-	return nil, nil
+	analyzer := ast.NewJavaAnalyzer()
+	return analyzer.AnalyzeDirectory(sourceDir)
 }
 
 // deduplicateUsages removes duplicate crypto usages and ensures consistent classification.
@@ -96,19 +95,25 @@ func (a *Analyzer) deduplicateUsages(usages []types.CryptoUsage) []types.CryptoU
 	seen := make(map[string]types.CryptoUsage)
 
 	for _, usage := range usages {
-		key := fmt.Sprintf("%s:%s:%d", usage.Algorithm, usage.Location.File, usage.Location.Line)
+		// Normalize algorithm name for consistent deduplication
+		normalizedAlg := crypto.NormalizeAlgorithmName(usage.Algorithm)
+		usage.Algorithm = normalizedAlg
+
+		key := fmt.Sprintf("%s:%s:%d", normalizedAlg, usage.Location.File, usage.Location.Line)
 
 		if existing, ok := seen[key]; ok {
-			// Keep the one with more detail
-			if len(usage.CallPath) > len(existing.CallPath) {
+			// Keep the one with more detail (longer call path, more function context)
+			if len(usage.CallPath) > len(existing.CallPath) ||
+				(usage.Function != "" && existing.Function == "") {
 				seen[key] = usage
 			}
 		} else {
-			// Ensure proper classification
+			// Ensure proper classification and remediation
 			if info, found := crypto.ClassifyAlgorithm(usage.Algorithm); found {
 				usage.Type = info.Type
 				usage.QuantumRisk = info.QuantumRisk
 				usage.Severity = info.Severity
+				usage.Remediation = info.Remediation
 			}
 			seen[key] = usage
 		}

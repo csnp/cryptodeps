@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ast provides AST-based analysis for crypto detection.
@@ -28,6 +28,10 @@ var (
 	// Import patterns
 	pyImportPattern     = regexp.MustCompile(`^\s*import\s+([a-zA-Z0-9_., ]+)`)
 	pyFromImportPattern = regexp.MustCompile(`^\s*from\s+([a-zA-Z0-9_.]+)\s+import`)
+
+	// Function/class detection patterns
+	pyFuncDefPattern  = regexp.MustCompile(`^(\s*)(?:async\s+)?def\s+(\w+)\s*\(`)
+	pyClassDefPattern = regexp.MustCompile(`^(\s*)class\s+(\w+)`)
 
 	// Cryptography library patterns
 	cryptographyPattern = regexp.MustCompile(`(Fernet|AES|DES|TripleDES|RSA|DSA|ECDSA|Ed25519|X25519|SECP256K1|SECP384R1|SECP521R1|SHA256|SHA384|SHA512|SHA1|MD5|HMAC|PBKDF2|Scrypt|hashes\.(SHA|MD)|padding\.(PKCS|OAEP)|serialization\.)`)
@@ -128,6 +132,14 @@ func (a *PythonAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, erro
 	return allUsages, err
 }
 
+// pyFuncContext tracks function context during Python file analysis.
+type pyFuncContext struct {
+	Name       string
+	ClassName  string // for methods within classes
+	IsPublic   bool   // Python uses leading underscore convention for private
+	Indent     int    // indentation level where function starts
+}
+
 // AnalyzeFile analyzes a single Python file for cryptographic usage.
 func (a *PythonAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
 	file, err := os.Open(filename)
@@ -138,6 +150,11 @@ func (a *PythonAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, erro
 
 	var usages []types.CryptoUsage
 	imports := make(map[string]bool)
+	var funcStack []*pyFuncContext
+	var classStack []struct {
+		name   string
+		indent int
+	}
 
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
@@ -146,15 +163,103 @@ func (a *PythonAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, erro
 		lineNum++
 		line := scanner.Text()
 
+		// Skip empty lines and comments for scope tracking
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			// Still check for crypto usage in comments (unlikely but possible)
+			continue
+		}
+
+		// Calculate current indentation
+		currentIndent := a.getIndentLevel(line)
+
+		// Pop class contexts that have ended based on indentation
+		for len(classStack) > 0 && currentIndent <= classStack[len(classStack)-1].indent {
+			classStack = classStack[:len(classStack)-1]
+		}
+
+		// Pop function contexts that have ended based on indentation
+		for len(funcStack) > 0 && currentIndent <= funcStack[len(funcStack)-1].Indent {
+			funcStack = funcStack[:len(funcStack)-1]
+		}
+
+		// Check for class definitions
+		if matches := pyClassDefPattern.FindStringSubmatch(line); len(matches) > 2 {
+			className := matches[2]
+			classStack = append(classStack, struct {
+				name   string
+				indent int
+			}{name: className, indent: currentIndent})
+		}
+
+		// Check for function definitions
+		if matches := pyFuncDefPattern.FindStringSubmatch(line); len(matches) > 2 {
+			funcName := matches[2]
+			var currentClass string
+			if len(classStack) > 0 {
+				currentClass = classStack[len(classStack)-1].name
+			}
+
+			// Python public/private convention: no leading underscore = public
+			isPublic := !strings.HasPrefix(funcName, "_")
+			// Methods in a public class are considered public if they don't start with _
+			// __init__ and similar are special but still "public" in a sense
+
+			funcStack = append(funcStack, &pyFuncContext{
+				Name:      funcName,
+				ClassName: currentClass,
+				IsPublic:  isPublic,
+				Indent:    currentIndent,
+			})
+		}
+
 		// Check for crypto imports
 		a.checkImports(line, imports)
 
-		// Check for crypto usage
-		lineUsages := a.checkCryptoUsage(line, lineNum, filename, imports)
+		// Check for crypto usage with function context
+		var currentFunc *pyFuncContext
+		if len(funcStack) > 0 {
+			currentFunc = funcStack[len(funcStack)-1]
+		}
+		lineUsages := a.checkCryptoUsageWithContext(line, lineNum, filename, imports, currentFunc)
 		usages = append(usages, lineUsages...)
 	}
 
 	return usages, scanner.Err()
+}
+
+// getIndentLevel returns the indentation level (number of leading spaces/tabs).
+func (a *PythonAnalyzer) getIndentLevel(line string) int {
+	indent := 0
+	for _, c := range line {
+		if c == ' ' {
+			indent++
+		} else if c == '\t' {
+			indent += 4 // Treat tabs as 4 spaces
+		} else {
+			break
+		}
+	}
+	return indent
+}
+
+// checkCryptoUsageWithContext checks a line for crypto function calls with function context.
+func (a *PythonAnalyzer) checkCryptoUsageWithContext(line string, lineNum int, filename string, imports map[string]bool, funcCtx *pyFuncContext) []types.CryptoUsage {
+	usages := a.checkCryptoUsage(line, lineNum, filename, imports)
+
+	// Add function context to all usages
+	if funcCtx != nil {
+		for i := range usages {
+			if funcCtx.ClassName != "" {
+				usages[i].Function = funcCtx.ClassName + "." + funcCtx.Name
+			} else {
+				usages[i].Function = funcCtx.Name
+			}
+			usages[i].InExported = funcCtx.IsPublic
+		}
+	}
+
+	return usages
 }
 
 // checkImports checks a line for crypto-related imports.

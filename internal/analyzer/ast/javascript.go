@@ -1,4 +1,4 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ast provides AST-based analysis for crypto detection.
@@ -29,6 +29,14 @@ var (
 	requirePattern    = regexp.MustCompile(`require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 	importPattern     = regexp.MustCompile(`import\s+.*?\s+from\s+['"]([^'"]+)['"]`)
 	importDynPattern  = regexp.MustCompile(`import\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+
+	// Function detection patterns
+	jsFuncDeclPattern   = regexp.MustCompile(`(?:async\s+)?function\s+(\w+)\s*\(`)
+	jsMethodPattern     = regexp.MustCompile(`(\w+)\s*\([^)]*\)\s*{`)
+	jsArrowFuncPattern  = regexp.MustCompile(`(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>`)
+	jsClassMethodPattern = regexp.MustCompile(`(?:async\s+)?(\w+)\s*\([^)]*\)\s*{`)
+	jsExportPattern     = regexp.MustCompile(`^(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)|module\.exports\s*[.=]|exports\.(\w+))`)
+	jsClassPattern      = regexp.MustCompile(`class\s+(\w+)`)
 
 	// Crypto function call patterns
 	cryptoMethodPattern = regexp.MustCompile(`crypto\.(createCipher|createDecipher|createCipheriv|createDecipheriv|createSign|createVerify|createHash|createHmac|generateKeyPair|generateKeyPairSync|randomBytes|scrypt|scryptSync|pbkdf2|pbkdf2Sync)\s*\(`)
@@ -136,6 +144,14 @@ func (a *JavaScriptAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, 
 	return allUsages, err
 }
 
+// jsFuncContext tracks function context during JavaScript file analysis.
+type jsFuncContext struct {
+	Name       string
+	ClassName  string // for methods within classes
+	IsExported bool
+	BraceDepth int // brace depth when function started
+}
+
 // AnalyzeFile analyzes a single JavaScript file for cryptographic usage.
 func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
 	file, err := os.Open(filename)
@@ -146,6 +162,10 @@ func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, 
 
 	var usages []types.CryptoUsage
 	imports := make(map[string]bool)
+	var funcStack []*jsFuncContext
+	var currentClass string
+	braceDepth := 0
+	exportedNames := make(map[string]bool)
 
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
@@ -153,16 +173,154 @@ func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, 
 	for scanner.Scan() {
 		lineNum++
 		line := scanner.Text()
+		trimmedLine := strings.TrimSpace(line)
+
+		// Track brace depth changes
+		braceChange := strings.Count(line, "{") - strings.Count(line, "}")
+
+		// Check for exports (to track which functions are exported)
+		a.checkExports(trimmedLine, exportedNames)
+
+		// Check for class declarations
+		if matches := jsClassPattern.FindStringSubmatch(trimmedLine); len(matches) > 1 {
+			currentClass = matches[1]
+		}
+
+		// Check for function declarations
+		if ctx := a.detectFunctionDecl(trimmedLine, currentClass, braceDepth, exportedNames); ctx != nil {
+			funcStack = append(funcStack, ctx)
+		}
+
+		// Update brace depth after function detection
+		braceDepth += braceChange
+
+		// Pop functions that have ended (brace depth decreased below their start)
+		for len(funcStack) > 0 && braceDepth < funcStack[len(funcStack)-1].BraceDepth {
+			funcStack = funcStack[:len(funcStack)-1]
+		}
+
+		// Clear class context when exiting class scope
+		if currentClass != "" && braceDepth == 0 {
+			currentClass = ""
+		}
 
 		// Check for crypto imports
 		a.checkImports(line, imports)
 
-		// Check for crypto usage
-		lineUsages := a.checkCryptoUsage(line, lineNum, filename, imports)
+		// Check for crypto usage with function context
+		var currentFunc *jsFuncContext
+		if len(funcStack) > 0 {
+			currentFunc = funcStack[len(funcStack)-1]
+		}
+		lineUsages := a.checkCryptoUsageWithContext(line, lineNum, filename, imports, currentFunc)
 		usages = append(usages, lineUsages...)
 	}
 
 	return usages, scanner.Err()
+}
+
+// checkExports checks for export declarations and tracks exported names.
+func (a *JavaScriptAnalyzer) checkExports(line string, exportedNames map[string]bool) {
+	// Check for module.exports = functionName
+	if strings.HasPrefix(line, "module.exports") {
+		// Track that we have module-level exports
+		exportedNames["__module__"] = true
+		// Try to find specific name: module.exports = someName
+		if idx := strings.Index(line, "="); idx > 0 {
+			rest := strings.TrimSpace(line[idx+1:])
+			if match := regexp.MustCompile(`^(\w+)`).FindStringSubmatch(rest); len(match) > 1 {
+				exportedNames[match[1]] = true
+			}
+		}
+	}
+
+	// Check for exports.functionName
+	if strings.HasPrefix(line, "exports.") {
+		if match := regexp.MustCompile(`^exports\.(\w+)`).FindStringSubmatch(line); len(match) > 1 {
+			exportedNames[match[1]] = true
+		}
+	}
+
+	// Check for export function/class/const
+	if strings.HasPrefix(line, "export ") {
+		if match := jsExportPattern.FindStringSubmatch(line); len(match) > 1 {
+			if match[1] != "" {
+				exportedNames[match[1]] = true
+			}
+			if match[2] != "" {
+				exportedNames[match[2]] = true
+			}
+		}
+	}
+}
+
+// detectFunctionDecl detects function declarations and returns context if found.
+func (a *JavaScriptAnalyzer) detectFunctionDecl(line, currentClass string, braceDepth int, exportedNames map[string]bool) *jsFuncContext {
+	var name string
+	isExported := false
+
+	// Check for function declaration
+	if matches := jsFuncDeclPattern.FindStringSubmatch(line); len(matches) > 1 {
+		name = matches[1]
+	}
+
+	// Check for arrow function
+	if name == "" {
+		if matches := jsArrowFuncPattern.FindStringSubmatch(line); len(matches) > 1 {
+			name = matches[1]
+		}
+	}
+
+	// Check for class method (only if inside a class)
+	if name == "" && currentClass != "" {
+		if matches := jsClassMethodPattern.FindStringSubmatch(line); len(matches) > 1 {
+			// Avoid matching control flow keywords
+			candidate := matches[1]
+			if candidate != "if" && candidate != "for" && candidate != "while" && candidate != "switch" && candidate != "catch" {
+				name = candidate
+			}
+		}
+	}
+
+	if name == "" {
+		return nil
+	}
+
+	// Check if this function is exported
+	if exportedNames[name] || strings.HasPrefix(strings.TrimSpace(line), "export ") {
+		isExported = true
+	}
+
+	// Class methods are considered "exported" if the class is exported
+	if currentClass != "" && exportedNames[currentClass] {
+		isExported = true
+	}
+
+	return &jsFuncContext{
+		Name:       name,
+		ClassName:  currentClass,
+		IsExported: isExported,
+		BraceDepth: braceDepth + 1, // Account for opening brace
+	}
+}
+
+// checkCryptoUsageWithContext checks a line for crypto function calls with function context.
+func (a *JavaScriptAnalyzer) checkCryptoUsageWithContext(line string, lineNum int, filename string, imports map[string]bool, funcCtx *jsFuncContext) []types.CryptoUsage {
+	usages := a.checkCryptoUsage(line, lineNum, filename, imports)
+
+	// Add function context to all usages
+	if funcCtx != nil {
+		for i := range usages {
+			if funcCtx.ClassName != "" {
+				usages[i].Function = funcCtx.ClassName + "." + funcCtx.Name
+			} else {
+				usages[i].Function = funcCtx.Name
+			}
+			usages[i].InExported = funcCtx.IsExported
+		}
+	}
+
+	return usages
 }
 
 // checkImports checks a line for crypto-related imports.

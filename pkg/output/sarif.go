@@ -1,17 +1,20 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 package output
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
 // SARIFFormatter formats scan results as SARIF for GitHub Security integration.
-type SARIFFormatter struct{}
+type SARIFFormatter struct {
+	Options FormatterOptions
+}
 
 // sarifLog represents a SARIF log structure.
 type sarifLog struct {
@@ -74,6 +77,12 @@ type sarifArtifactLocation struct {
 
 // Format writes the scan result as SARIF.
 func (f *SARIFFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	if result == nil {
+		return errors.New("result cannot be nil")
+	}
+	if w == nil {
+		return errors.New("writer cannot be nil")
+	}
 	log := sarifLog{
 		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
 		Version: "2.1.0",
@@ -121,12 +130,18 @@ func (f *SARIFFormatter) Format(result *types.ScanResult, w io.Writer) error {
 				rulesMap[ruleID] = true
 			}
 
+			// Build message with remediation if available
+			msgText := dep.Dependency.Name + "@" + dep.Dependency.Version + " uses " + crypto.Algorithm + " (Quantum Risk: " + string(crypto.QuantumRisk) + ")"
+			if f.Options.ShowRemediation && crypto.Remediation != "" {
+				msgText += ". Remediation: " + crypto.Remediation
+			}
+
 			// Add result
 			res := sarifResult{
 				RuleID: ruleID,
 				Level:  severityToSARIFLevel(crypto.Severity),
 				Message: sarifMessage{
-					Text: dep.Dependency.Name + "@" + dep.Dependency.Version + " uses " + crypto.Algorithm + " (Quantum Risk: " + string(crypto.QuantumRisk) + ")",
+					Text: msgText,
 				},
 				Locations: []sarifLocation{
 					{

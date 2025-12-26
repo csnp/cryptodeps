@@ -1,9 +1,10 @@
-// Copyright 2024 CSNP (csnp.org)
+// Copyright 2024-2025 CSNP (csnp.org)
 // SPDX-License-Identifier: Apache-2.0
 
 package output
 
 import (
+	"errors"
 	"fmt"
 	"io"
 
@@ -11,10 +12,18 @@ import (
 )
 
 // MarkdownFormatter formats scan results as Markdown.
-type MarkdownFormatter struct{}
+type MarkdownFormatter struct {
+	Options FormatterOptions
+}
 
 // Format writes the scan result as Markdown.
 func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	if result == nil {
+		return errors.New("result cannot be nil")
+	}
+	if w == nil {
+		return errors.New("writer cannot be nil")
+	}
 	// Title
 	fmt.Fprintf(w, "# CryptoDeps Scan Report\n\n")
 
@@ -48,6 +57,9 @@ func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error 
 	// Findings by risk level
 	fmt.Fprintf(w, "## Findings\n\n")
 
+	// Collect remediation for detailed section
+	remediationMap := make(map[string]string) // algorithm -> remediation
+
 	// Vulnerable
 	fmt.Fprintf(w, "### Quantum Vulnerable\n\n")
 	hasVulnerable := false
@@ -69,6 +81,9 @@ func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error 
 					crypto.Type,
 					crypto.Severity,
 				)
+				if crypto.Remediation != "" {
+					remediationMap[crypto.Algorithm] = crypto.Remediation
+				}
 			}
 		}
 	}
@@ -98,6 +113,9 @@ func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error 
 					crypto.Type,
 					crypto.Severity,
 				)
+				if crypto.Remediation != "" {
+					remediationMap[crypto.Algorithm] = crypto.Remediation
+				}
 			}
 		}
 	}
@@ -106,16 +124,24 @@ func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error 
 	}
 	fmt.Fprintf(w, "\n")
 
-	// Recommendations
-	fmt.Fprintf(w, "## Recommendations\n\n")
-	if result.Summary.QuantumVulnerable > 0 {
-		fmt.Fprintf(w, "- **Migrate quantum-vulnerable algorithms** to post-quantum alternatives (ML-KEM, ML-DSA, SLH-DSA)\n")
-		fmt.Fprintf(w, "- Review dependencies using RSA, ECDSA, Ed25519, and other asymmetric algorithms\n")
+	// Remediation Guidance
+	if f.Options.ShowRemediation && len(remediationMap) > 0 {
+		fmt.Fprintf(w, "## Remediation Guidance\n\n")
+		fmt.Fprintf(w, "| Algorithm | Recommended Action |\n")
+		fmt.Fprintf(w, "|-----------|--------------------|\n")
+		for algo, remediation := range remediationMap {
+			fmt.Fprintf(w, "| **%s** | %s |\n", algo, remediation)
+		}
+		fmt.Fprintf(w, "\n")
 	}
-	if result.Summary.QuantumPartial > 0 {
-		fmt.Fprintf(w, "- Consider upgrading to **256-bit symmetric keys** (AES-256, SHA-384/512) for post-quantum security\n")
-	}
-	fmt.Fprintf(w, "- Monitor [NIST PQC standards](https://csrc.nist.gov/projects/post-quantum-cryptography) for updates\n")
+
+	// NIST PQC Standards Reference
+	fmt.Fprintf(w, "## NIST Post-Quantum Cryptography Standards\n\n")
+	fmt.Fprintf(w, "| Standard | Algorithm | Use Case |\n")
+	fmt.Fprintf(w, "|----------|-----------|----------|\n")
+	fmt.Fprintf(w, "| [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final) | ML-KEM (Kyber) | Key Encapsulation |\n")
+	fmt.Fprintf(w, "| [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) | ML-DSA (Dilithium) | Digital Signatures |\n")
+	fmt.Fprintf(w, "| [FIPS 205](https://csrc.nist.gov/pubs/fips/205/final) | SLH-DSA (SPHINCS+) | Stateless Hash Signatures |\n")
 	fmt.Fprintf(w, "\n")
 
 	// Footer
