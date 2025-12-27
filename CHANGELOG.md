@@ -5,6 +5,24 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2025-12-27
+
+### Added
+- **Expanded remediation database**: 30+ additional algorithm entries
+  - Authenticated encryption: ChaCha20-Poly1305, AES-GCM, XSalsa20-Poly1305
+  - MACs: HMAC, HMAC-SHA256/512, Poly1305
+  - Post-quantum algorithms: ML-KEM, ML-DSA (marked as quantum-safe)
+  - NIST curves: P-256, P-384, P-521, secp256k1
+  - RSA variants: RSA-OAEP, RSA-PSS, PS256/384/512
+  - ECDH variants: ECDH-ES
+  - Hash functions: BLAKE2b, BLAKE2s, BLAKE3
+  - Chinese national algorithms: SM2, SM3, SM4
+
+### Fixed
+- **@noble/ed25519 false positives**: Database entry incorrectly reported RSA, ECDSA, ECDH, AES; now correctly shows only Ed25519 and X25519
+- **Maven property resolution**: Parser now resolves `${property}` placeholders from `<properties>` section (e.g., `${bouncycastle.version}` → `1.77`)
+- **AES remediation**: Added generic "AES" entry for cases where key size isn't specified
+
 ## [1.2.0] - 2025-12-27
 
 ### Added
@@ -61,6 +79,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Maps findings to CNSA 2.0 compliance requirements
 - Supports OMB M-23-02 cryptographic inventory requirements
 
+[1.2.1]: https://github.com/csnp/qramm-cryptodeps/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/csnp/qramm-cryptodeps/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/csnp/qramm-cryptodeps/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/csnp/qramm-cryptodeps/releases/tag/v1.0.0
