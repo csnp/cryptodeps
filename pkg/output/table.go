@@ -38,7 +38,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		return errors.New("writer cannot be nil")
 	}
 	// Header
-	fmt.Fprintf(w, "\nScanning %s... found %d dependencies\n\n", result.Manifest, result.Summary.TotalDependencies)
+	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", result.Manifest, result.Summary.TotalDependencies)
 
 	// Check if there are any crypto findings
 	hasCrypto := false
@@ -159,13 +159,13 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 
 	// Print CONFIRMED section (most important) - with call traces
 	if len(confirmed) > 0 {
-		fmt.Fprintln(w, "CONFIRMED - Actually used by your code (requires action):")
+		fmt.Fprintln(w, "[!] CONFIRMED - Actually used by your code (requires action):")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range confirmed {
 			icon := riskIcon(c.risk)
-			timeline := getTimeline(c.algorithm)
-			effort := getEffort(c.algorithm)
-			fmt.Fprintf(w, "  %s %-14s %-12s  [%s]  Effort: %s\n",
+			timeline := formatTimelineShort(getTimeline(c.algorithm))
+			effort := formatEffortShort(getEffort(c.algorithm))
+			fmt.Fprintf(w, "  %s %-14s %-12s  %-12s  %s\n",
 				icon, c.algorithm, formatRisk(c.risk), timeline, effort)
 			fmt.Fprintf(w, "     └─ %s\n", c.dependency)
 
@@ -196,7 +196,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 
 	// Print AVAILABLE section (lower priority) - condensed
 	if len(available) > 0 {
-		fmt.Fprintln(w, "AVAILABLE - In dependencies but not called (lower priority):")
+		fmt.Fprintln(w, "[.] AVAILABLE - In dependencies but not called (lower priority):")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 
 		// Group available by dependency for cleaner output
@@ -272,7 +272,7 @@ func (f *TableFormatter) printDetailedRemediation(w io.Writer, allCrypto []crypt
 
 	// Print CONFIRMED remediation (requires action)
 	if len(confirmed) > 0 {
-		fmt.Fprintln(w, "REMEDIATION - Action Required:")
+		fmt.Fprintln(w, "REMEDIATION GUIDANCE:")
 		fmt.Fprintln(w, strings.Repeat("═", 90))
 
 		for _, c := range confirmed {
@@ -303,34 +303,40 @@ func (f *TableFormatter) printRemediationItem(w io.Writer, c cryptoDetail, ecosy
 		return
 	}
 
-	fmt.Fprintf(w, "\n%s %s\n", riskIcon(c.risk), c.algorithm)
+	// Show priority marker for confirmed findings
+	priorityMarker := ""
+	if c.reachability == types.ReachabilityConfirmed {
+		priorityMarker = " [PRIORITY]"
+	}
+
+	fmt.Fprintf(w, "\n%s %s%s\n", riskIcon(c.risk), c.algorithm, priorityMarker)
 	fmt.Fprintln(w, strings.Repeat("─", 50))
 
 	// Summary and replacement
-	fmt.Fprintf(w, "  Action:      %s\n", r.Summary)
+	fmt.Fprintf(w, "  Action:       %s\n", r.Summary)
 	if r.Replacement != "" && r.Replacement != "No change needed" {
-		fmt.Fprintf(w, "  Replace:     %s\n", r.Replacement)
+		fmt.Fprintf(w, "  Replace with: %s\n", r.Replacement)
 	}
 
 	// NIST Standard
 	if r.NISTStandard != "" {
-		fmt.Fprintf(w, "  NIST:        %s\n", r.NISTStandard)
+		fmt.Fprintf(w, "  NIST:         %s\n", r.NISTStandard)
 	}
 
 	// Timeline and effort
-	fmt.Fprintf(w, "  Timeline:    %s\n", formatTimeline(r.Timeline))
-	fmt.Fprintf(w, "  Effort:      %s\n", formatEffort(r.Effort))
+	fmt.Fprintf(w, "  Timeline:     %s\n", formatTimeline(r.Timeline))
+	fmt.Fprintf(w, "  Effort:       %s\n", formatEffort(r.Effort))
 
 	// Libraries for the ecosystem
 	if r.Libraries != nil {
 		if libs, ok := r.Libraries[ecosystem]; ok && len(libs) > 0 {
-			fmt.Fprintf(w, "  Libraries:   %s\n", strings.Join(libs, ", "))
+			fmt.Fprintf(w, "  Libraries:    %s\n", strings.Join(libs, ", "))
 		}
 	}
 
 	// Notes
 	if r.Notes != "" {
-		fmt.Fprintf(w, "  Note:        %s\n", r.Notes)
+		fmt.Fprintf(w, "  Note:         %s\n", r.Notes)
 	}
 }
 
@@ -422,6 +428,21 @@ func formatTimeline(timeline string) string {
 	}
 }
 
+func formatTimelineShort(timeline string) string {
+	switch timeline {
+	case "immediate":
+		return "NOW"
+	case "short-term":
+		return "1-2yr"
+	case "medium-term":
+		return "2-5yr"
+	case "none":
+		return "-"
+	default:
+		return timeline
+	}
+}
+
 func formatEffort(effort string) string {
 	switch effort {
 	case "low":
@@ -432,6 +453,21 @@ func formatEffort(effort string) string {
 		return "High (architectural)"
 	case "none":
 		return "None"
+	default:
+		return effort
+	}
+}
+
+func formatEffortShort(effort string) string {
+	switch effort {
+	case "low":
+		return "low"
+	case "medium":
+		return "med"
+	case "high":
+		return "high"
+	case "none":
+		return "-"
 	default:
 		return effort
 	}
