@@ -75,7 +75,7 @@ git clone https://github.com/csnp/qramm-cryptodeps.git
 cd qramm-cryptodeps
 make build
 sudo mv cryptodeps /usr/local/bin/
-cd .. && rm -rf qramm-cryptodeps
+cd .. 
 cryptodeps version
 ```
 
