@@ -150,7 +150,7 @@ CryptoDeps goes beyond simple dependency scanning by analyzing your code's call 
 |-----------|----------------|
 | Go | `go.mod`, `go.sum` |
 | npm | `package.json`, `package-lock.json` |
-| Python | `requirements.txt`, `pyproject.toml`, `Pipfile` |
+| Python | `requirements.txt` and the `requirements-*.txt` family, `requirements/*.txt`, `pyproject.toml` (PEP 621 and Poetry), `Pipfile` |
 | Maven | `pom.xml` |
 
 ### Workspace & Monorepo Support

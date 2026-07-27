@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -14,30 +15,30 @@ import (
 
 // DefaultSkipDirs contains directories that should be skipped during manifest discovery.
 var DefaultSkipDirs = map[string]bool{
-	"node_modules":  true,
-	"vendor":        true,
-	".git":          true,
-	".svn":          true,
-	".hg":           true,
-	"dist":          true,
-	"build":         true,
-	".next":         true,
-	"__pycache__":   true,
-	".venv":         true,
-	"venv":          true,
-	".tox":          true,
-	"target":        true, // Maven/Rust
-	"bin":           true,
-	"obj":           true, // .NET
-	".idea":         true,
-	".vscode":       true,
-	"coverage":      true,
-	".nyc_output":   true,
-	".pytest_cache": true,
-	".mypy_cache":   true,
-	".ruff_cache":   true,
-	".gradle":       true,
-	".m2":           true,
+	"node_modules":     true,
+	"vendor":           true,
+	".git":             true,
+	".svn":             true,
+	".hg":              true,
+	"dist":             true,
+	"build":            true,
+	".next":            true,
+	"__pycache__":      true,
+	".venv":            true,
+	"venv":             true,
+	".tox":             true,
+	"target":           true, // Maven/Rust
+	"bin":              true,
+	"obj":              true, // .NET
+	".idea":            true,
+	".vscode":          true,
+	"coverage":         true,
+	".nyc_output":      true,
+	".pytest_cache":    true,
+	".mypy_cache":      true,
+	".ruff_cache":      true,
+	".gradle":          true,
+	".m2":              true,
 	"bower_components": true,
 }
 
@@ -75,7 +76,7 @@ func DiscoverManifests(root string) ([]string, error) {
 
 	// If it's a file, return just that file if it's a manifest
 	if !info.IsDir() {
-		if isManifestFile(filepath.Base(root)) {
+		if isManifestPath(root) {
 			return []string{root}, nil
 		}
 		return nil, nil
@@ -326,7 +327,7 @@ func walkForManifests(root string) ([]string, error) {
 		}
 
 		// Check if this is a manifest file
-		if isManifestFile(name) {
+		if isManifestPath(path) {
 			// Skip go.work files in the recursive walk (handled separately)
 			if name == "go.work" {
 				return nil
@@ -340,9 +341,37 @@ func walkForManifests(root string) ([]string, error) {
 	return manifests, err
 }
 
+// requirementsFilePattern matches the requirements.txt family. Python projects
+// routinely split dependencies across requirements-dev.txt, requirements-prod.txt,
+// requirements_test.txt and similar, and an exact match on "requirements.txt"
+// silently skips all of them.
+var requirementsFilePattern = regexp.MustCompile(`^requirements([-_.][^/]*)?\.txt$`)
+
+// isRequirementsFile reports whether a filename belongs to the requirements.txt
+// family.
+func isRequirementsFile(name string) bool {
+	return requirementsFilePattern.MatchString(strings.ToLower(name))
+}
+
 // isManifestFile checks if a filename is a recognized manifest file.
 func isManifestFile(name string) bool {
-	return ManifestFiles[name]
+	return ManifestFiles[name] || isRequirementsFile(name)
+}
+
+// isManifestPath checks whether a path is a manifest, including layouts that
+// only make sense with the parent directory in hand. The common
+// requirements/base.txt and requirements/dev.txt layout puts pip requirements in
+// files whose own names carry no hint of their contents.
+func isManifestPath(path string) bool {
+	name := filepath.Base(path)
+	if isManifestFile(name) {
+		return true
+	}
+	if strings.EqualFold(filepath.Base(filepath.Dir(path)), "requirements") &&
+		strings.EqualFold(filepath.Ext(name), ".txt") {
+		return true
+	}
+	return false
 }
 
 // isValidManifest checks if a manifest file is valid and parseable.
