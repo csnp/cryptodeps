@@ -5,6 +5,55 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-27
+
+Fixes both open community issues, plus a silent false negative found while
+reproducing them.
+
+### Fixed
+
+- **`requirements-*.txt` files were skipped**
+  ([#1](https://github.com/csnp/cryptodeps/issues/1)). Manifest discovery
+  matched the exact filename `requirements.txt`, so the
+  `requirements-dev.txt` and `requirements-prod.txt` split that most Python
+  projects use was never scanned. The `requirements*.txt` family and the
+  `requirements/*.txt` directory layout are now discovered and parsed.
+- **CBOM did not identify which dependency an algorithm came from**
+  ([#2](https://github.com/csnp/cryptodeps/issues/2)). Output emitted only the
+  algorithm, carrying the dependency's version but never its name, so a
+  component reading `{"name": "RSA", "version": "1.3.2"}` was unattributable.
+  Each dependency is now emitted as its own `library` component with a
+  `bom-ref`, and the CycloneDX `dependencies` graph links each algorithm to the
+  library that provides it.
+- **`pyproject.toml` and `Pipfile` produced fabricated dependencies.** Both were
+  advertised as supported, but parsing fell through to the `requirements.txt`
+  line parser behind a `TODO`. A `pyproject.toml` yielded entries named after
+  TOML keys (`name`, `dependencies`, `requires-python`), and because the real
+  packages were never identified, a project depending on `cryptography` reported
+  "No cryptographic usage detected". Both formats now have real TOML parsers
+  covering PEP 621, Poetry, and Pipfile layouts.
+- **Every CBOM shared one serial number.** `generateUUID` returned a hardcoded
+  all-zero UUID, which also failed the CycloneDX `urn:uuid` pattern. Serial
+  numbers are now random version 4 UUIDs.
+- **Unresolved build properties were emitted as versions.** A Maven dependency
+  declared as `${java-jwt.version}` appeared in the CBOM with that literal as
+  its version. Version ranges such as `>=2.0` were likewise emitted where
+  CycloneDX expects a concrete version. Only pinned versions are now reported as
+  versions; the declared constraint is preserved in the component description.
+- **CBOM `primitive` values were outside the CycloneDX enum**, which failed
+  schema validation for the whole document. Categories now map onto the
+  permitted enum, resolving `encryption` by algorithm where possible.
+
+### Added
+
+- Regression tests for manifest discovery, the three Python formats, PEP 508
+  requirement parsing, CBOM dependency attribution, version resolution, serial
+  number uniqueness, and primitive enum conformance.
+
+### Dependencies
+
+- Added `github.com/BurntSushi/toml` for pyproject.toml and Pipfile parsing.
+
 ## [1.2.1] - 2025-12-27
 
 ### Added

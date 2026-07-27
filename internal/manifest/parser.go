@@ -104,9 +104,30 @@ func getParser(filename string) (Parser, error) {
 		return &PythonParser{}, nil
 	case "pom.xml":
 		return &MavenParser{}, nil
-	default:
-		return nil, fmt.Errorf("unsupported manifest file: %s", filename)
 	}
+
+	// The requirements.txt family carries no fixed name. Matching only the exact
+	// filename silently skipped requirements-dev.txt, requirements-prod.txt and
+	// the requirements/*.txt layout.
+	if isRequirementsFile(filename) {
+		return &PythonParser{}, nil
+	}
+
+	return nil, fmt.Errorf("unsupported manifest file: %s", filename)
+}
+
+// getParserForPath selects a parser using the whole path, so that layouts whose
+// meaning depends on the parent directory resolve correctly. A pip requirements
+// file at requirements/base.txt is named base.txt and is indistinguishable from
+// any other text file by name alone.
+func getParserForPath(path string) (Parser, error) {
+	if parser, err := getParser(filepath.Base(path)); err == nil {
+		return parser, nil
+	}
+	if isManifestPath(path) && strings.EqualFold(filepath.Ext(path), ".txt") {
+		return &PythonParser{}, nil
+	}
+	return nil, fmt.Errorf("unsupported manifest file: %s", path)
 }
 
 // SupportedManifests returns a list of supported manifest filenames.
@@ -152,7 +173,7 @@ func DetectAndParseAll(path string) ([]*Manifest, error) {
 	var parseErrors []string
 
 	for _, manifestPath := range manifestPaths {
-		parser, err := getParser(filepath.Base(manifestPath))
+		parser, err := getParserForPath(manifestPath)
 		if err != nil {
 			// Skip unsupported files silently (they might have been picked up by glob)
 			continue
