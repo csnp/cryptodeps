@@ -2,7 +2,7 @@
 
 **Quantum-Safe Dependency Analysis for Your Software Supply Chain**
 
-Find every cryptographic vulnerability in your dependencies. Know your quantum risk. Focus on what matters.
+Find the cryptography your dependencies bring in, see which of it quantum computers will break, and tell apart what your code actually calls from what is merely available to it.
 
 [![CI](https://github.com/csnp/qramm-cryptodeps/actions/workflows/ci.yml/badge.svg)](https://github.com/csnp/qramm-cryptodeps/actions/workflows/ci.yml)
 [![Go Report Card](https://img.shields.io/badge/go%20report-A-brightgreen)](https://goreportcard.com/report/github.com/csnp/qramm-cryptodeps)
@@ -15,11 +15,11 @@ Find every cryptographic vulnerability in your dependencies. Know your quantum r
 
 ## The Quantum Computing Challenge
 
-Quantum computers will break RSA, ECDSA, and Diffie-Hellman within the next decade. This isn't speculation—the NSA, NIST, and major technology companies are already migrating to post-quantum cryptography (PQC).
+Quantum computers will break RSA, ECDSA, and Diffie-Hellman within the next decade. This isn't speculation: the NSA, NIST, and major technology companies are already migrating to post-quantum cryptography (PQC).
 
 The challenge? **You can't migrate what you can't find.**
 
-Your code might be quantum-safe, but what about your **dependencies**? The average software project has 300-1000+ transitive dependencies. Each one potentially uses cryptographic algorithms that quantum computers will break. Traditional security scanners miss this—they focus on CVEs, not cryptographic readiness.
+Your code might be quantum-safe, but what about your **dependencies**? The average software project has 300-1000+ transitive dependencies. Each one potentially uses cryptographic algorithms that quantum computers will break. Traditional security scanners miss this: they focus on CVEs, not cryptographic readiness.
 
 CryptoDeps solves this by analyzing your entire dependency tree and using **reachability analysis** to show exactly which crypto your code actually uses versus what's merely present in libraries.
 
@@ -281,7 +281,10 @@ cryptodeps status
 ## Sample Output
 
 ```
-[*] Scanning go.mod... found 2 dependencies
+
+Scanning /home/dev/myproject...
+
+[*] Scanning ./go.mod... found 2 dependencies
 
 [!] CONFIRMED - Actually used by your code (requires action):
 ──────────────────────────────────────────────────────────────────────────────────────────
@@ -386,7 +389,7 @@ cryptodeps:
 |------|---------|---------|
 | `0` | Success | No findings matching `--fail-on` threshold |
 | `1` | Vulnerable | Quantum-vulnerable crypto detected |
-| `2` | Error | Analysis failed (invalid manifest, network error) |
+| `2` | Error | Analysis failed, including any manifest that was found but could not be read |
 | `3` | Partial | Partial-risk crypto detected (with `--fail-on partial`) |
 
 ---
@@ -458,7 +461,7 @@ qramm-cryptodeps/
 │   ├── crypto/              # Algorithm patterns & remediation
 │   ├── output/              # Formatters (table, JSON, CBOM, SARIF)
 │   └── types/               # Shared type definitions
-├── data/                    # Crypto database (901 packages)
+├── data/                    # Crypto database (downloaded by `cryptodeps update`)
 └── examples/                # Sample projects for testing
 ```
 
@@ -474,7 +477,8 @@ qramm-cryptodeps/
 - [x] Quantum risk classification with CNSA 2.0 timeline
 - [x] Smart remediation guidance with NIST references
 - [x] GitHub repository URL scanning
-- [x] Crypto database of 901 packages (69 verified, 832 inferred)
+- [x] Crypto database of curated and inferred package entries, refreshed weekly
+      (run `cryptodeps status` for the counts your install currently holds)
 - [x] Workspace & monorepo support (npm, pnpm, Go workspaces)
 - [x] Multi-project aggregated results
 
@@ -568,28 +572,28 @@ Learn more at [qramm.org](https://qramm.org) and [csnp.org](https://csnp.org).
 
 ### NIST Post-Quantum Cryptography Standards
 
-- [FIPS 203 - ML-KEM](https://csrc.nist.gov/pubs/fips/203/final) — Module-Lattice-Based Key-Encapsulation Mechanism (replaces RSA/ECDH)
-- [FIPS 204 - ML-DSA](https://csrc.nist.gov/pubs/fips/204/final) — Module-Lattice-Based Digital Signature Algorithm (replaces RSA/ECDSA)
-- [FIPS 205 - SLH-DSA](https://csrc.nist.gov/pubs/fips/205/final) — Stateless Hash-Based Digital Signature Algorithm
-- [NIST SP 800-131A Rev 2](https://csrc.nist.gov/publications/detail/sp/800-131a/rev-2/final) — Transitioning cryptographic algorithms and key lengths
+- [FIPS 203 - ML-KEM](https://csrc.nist.gov/pubs/fips/203/final): Module-Lattice-Based Key-Encapsulation Mechanism (replaces RSA/ECDH)
+- [FIPS 204 - ML-DSA](https://csrc.nist.gov/pubs/fips/204/final): Module-Lattice-Based Digital Signature Algorithm (replaces RSA/ECDSA)
+- [FIPS 205 - SLH-DSA](https://csrc.nist.gov/pubs/fips/205/final): Stateless Hash-Based Digital Signature Algorithm
+- [NIST SP 800-131A Rev 2](https://csrc.nist.gov/publications/detail/sp/800-131a/rev-2/final): Transitioning cryptographic algorithms and key lengths
 
 ### Additional Resources
 
-- [NSA CNSA 2.0](https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF) — Commercial National Security Algorithm Suite
-- [OMB M-23-02](https://www.whitehouse.gov/wp-content/uploads/2022/11/M-23-02-M-Memo-on-Migrating-to-Post-Quantum-Cryptography.pdf) — Federal PQC Migration Requirements
+- [NSA CNSA 2.0](https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF): Commercial National Security Algorithm Suite
+- [OMB M-23-02](https://www.whitehouse.gov/wp-content/uploads/2022/11/M-23-02-M-Memo-on-Migrating-to-Post-Quantum-Cryptography.pdf): Federal PQC Migration Requirements
 - [CISA Post-Quantum Cryptography Initiative](https://www.cisa.gov/quantum)
-- [CycloneDX CBOM](https://cyclonedx.org/capabilities/cbom/) — Cryptographic Bill of Materials
+- [CycloneDX CBOM](https://cyclonedx.org/capabilities/cbom/): Cryptographic Bill of Materials
 
 ---
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 Copyright 2025 Cyber Security Non-Profit (CSNP)
 
 ---
 
-Built with purpose by [CSNP](https://csnp.org) — Advancing cybersecurity for everyone
+Built with purpose by [CSNP](https://csnp.org). Advancing cybersecurity for everyone.
 
 [QRAMM](https://qramm.org) | [CSNP](https://csnp.org) | [Issues](https://github.com/csnp/qramm-cryptodeps/issues) | [Twitter](https://twitter.com/caborgsec)

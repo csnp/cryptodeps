@@ -5,12 +5,51 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - 2026-07-28
 
-Release-blocking defects found by a fresh-user release test on the 1.3.0
-candidate. 1.3.0 was never tagged.
+Fixes both open community issues, and the release-blocking defects a fresh-user
+release test then found while reproducing them. An earlier 1.3.0 candidate
+carrying only the community fixes was prepared on 2026-07-27 but never tagged,
+so everything below ships together in this release.
 
 ### Fixed
+
+- **`requirements-*.txt` files were skipped**
+  ([#1](https://github.com/csnp/cryptodeps/issues/1)). Manifest discovery
+  matched the exact filename `requirements.txt`, so the
+  `requirements-dev.txt` and `requirements-prod.txt` split that most Python
+  projects use was never scanned. The `requirements*.txt` family and the
+  `requirements/*.txt` directory layout are now discovered and parsed.
+
+- **CBOM did not identify which dependency an algorithm came from**
+  ([#2](https://github.com/csnp/cryptodeps/issues/2)). Output emitted only the
+  algorithm, carrying the dependency's version but never its name, so a
+  component reading `{"name": "RSA", "version": "1.3.2"}` was unattributable.
+  Each dependency is now emitted as its own `library` component with a
+  `bom-ref`, and the CycloneDX `dependencies` graph links each algorithm to the
+  library that provides it.
+
+- **`pyproject.toml` and `Pipfile` produced fabricated dependencies.** Both were
+  advertised as supported, but parsing fell through to the `requirements.txt`
+  line parser behind a `TODO`. A `pyproject.toml` yielded entries named after
+  TOML keys (`name`, `dependencies`, `requires-python`), and because the real
+  packages were never identified, a project depending on `cryptography` reported
+  "No cryptographic usage detected". Both formats now have real TOML parsers
+  covering PEP 621, Poetry, and Pipfile layouts.
+
+- **Every CBOM shared one serial number.** `generateUUID` returned a hardcoded
+  all-zero UUID, which also failed the CycloneDX `urn:uuid` pattern. Serial
+  numbers are now random version 4 UUIDs.
+
+- **Unresolved build properties were emitted as versions.** A Maven dependency
+  declared as `${java-jwt.version}` appeared in the CBOM with that literal as
+  its version. Version ranges such as `>=2.0` were likewise emitted where
+  CycloneDX expects a concrete version. Only pinned versions are now reported as
+  versions; the declared constraint is preserved in the component description.
+
+- **CBOM `primitive` values were outside the CycloneDX enum**, which failed
+  schema validation for the whole document. Categories now map onto the
+  permitted enum, resolving `encryption` by algorithm where possible.
 
 - **Every machine-readable output reported the wrong tool version.** One binary
   gave four answers: `version` said 1.3.0 while SARIF and CBOM both claimed
@@ -157,13 +196,13 @@ candidate. 1.3.0 was never tagged.
   so `("/repo", "/repository/go.mod")` gave `./sitory/go.mod`.
 
 - **`cryptodeps status` reported roughly twice the packages the database holds.**
-  It announced 1731 packages, and every per-ecosystem number was wrong the same
-  way, for a database of 901. The index files each package under two keys,
+  On a 901-record database it announced 1731, and every per-ecosystem number was
+  wrong the same way. The index files each package under two keys,
   `name@version` and `name`, so a lookup succeeds with or without a version, and
-  the count was of index entries rather than packages. `status` now reports 901,
-  matching the database's own stats block and a direct count of its records, and
-  it lists the ecosystems in a fixed order instead of the order the map happened
-  to iterate in.
+  the count was of index entries rather than packages. `status` now reports the
+  record count itself, matching the database's own stats block and a direct
+  count of its records, and it lists the ecosystems in a fixed order instead of
+  the order the map happened to iterate in.
 
 ### Changed
 
@@ -181,45 +220,6 @@ candidate. 1.3.0 was never tagged.
   message that explains the failure was being pushed off the top of the
   terminal. Usage is still shown for genuine flag mistakes, where it helps.
 
-## [1.3.0] - 2026-07-27
-
-Fixes both open community issues, plus a silent false negative found while
-reproducing them.
-
-### Fixed
-
-- **`requirements-*.txt` files were skipped**
-  ([#1](https://github.com/csnp/cryptodeps/issues/1)). Manifest discovery
-  matched the exact filename `requirements.txt`, so the
-  `requirements-dev.txt` and `requirements-prod.txt` split that most Python
-  projects use was never scanned. The `requirements*.txt` family and the
-  `requirements/*.txt` directory layout are now discovered and parsed.
-- **CBOM did not identify which dependency an algorithm came from**
-  ([#2](https://github.com/csnp/cryptodeps/issues/2)). Output emitted only the
-  algorithm, carrying the dependency's version but never its name, so a
-  component reading `{"name": "RSA", "version": "1.3.2"}` was unattributable.
-  Each dependency is now emitted as its own `library` component with a
-  `bom-ref`, and the CycloneDX `dependencies` graph links each algorithm to the
-  library that provides it.
-- **`pyproject.toml` and `Pipfile` produced fabricated dependencies.** Both were
-  advertised as supported, but parsing fell through to the `requirements.txt`
-  line parser behind a `TODO`. A `pyproject.toml` yielded entries named after
-  TOML keys (`name`, `dependencies`, `requires-python`), and because the real
-  packages were never identified, a project depending on `cryptography` reported
-  "No cryptographic usage detected". Both formats now have real TOML parsers
-  covering PEP 621, Poetry, and Pipfile layouts.
-- **Every CBOM shared one serial number.** `generateUUID` returned a hardcoded
-  all-zero UUID, which also failed the CycloneDX `urn:uuid` pattern. Serial
-  numbers are now random version 4 UUIDs.
-- **Unresolved build properties were emitted as versions.** A Maven dependency
-  declared as `${java-jwt.version}` appeared in the CBOM with that literal as
-  its version. Version ranges such as `>=2.0` were likewise emitted where
-  CycloneDX expects a concrete version. Only pinned versions are now reported as
-  versions; the declared constraint is preserved in the component description.
-- **CBOM `primitive` values were outside the CycloneDX enum**, which failed
-  schema validation for the whole document. Categories now map onto the
-  permitted enum, resolving `encryption` by algorithm where possible.
-
 ### Added
 
 - Regression tests for manifest discovery, the three Python formats, PEP 508
@@ -229,6 +229,61 @@ reproducing them.
 ### Dependencies
 
 - Added `github.com/BurntSushi/toml` for pyproject.toml and Pipfile parsing.
+
+### Known limitations
+
+Present in 1.2.2 as well unless noted. Each was reproduced by hand against both
+the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
+
+- **A package that provides hybrid post-quantum cryptography is reported as
+  quantum-vulnerable.** `@noble/post-quantum` carries X25519, ECDSA and Ed25519
+  because they are one half of hybrid constructions such as X-Wing, whose other
+  half is ML-KEM. The database marks all three `VULNERABLE` at `HIGH` and the
+  remediation advises migrating to ML-KEM and ML-DSA, which is what the package
+  already implements. Its RSA and AES entries are wrong outright: neither is a
+  primitive the package offers. A project whose only crypto dependency is a PQC
+  library is therefore told it has four HIGH findings. The classification of a
+  classical primitive that appears only as a declared hybrid component is being
+  fixed generally rather than for one package.
+
+- **Maven coverage in the downloadable database is unstable.** The weekly
+  refresh has published between 15 and 356 Maven packages over the last seven
+  runs, because a partial result from the upstream search is committed as though
+  it were a complete one. The 15 that are always present are a curated seed list.
+  This affects `cryptodeps update` only; the binary's built-in database is
+  unchanged by it.
+
+- **Findings carry no line number.** JSON `location.file` is empty and
+  `location.line` is zero for every finding, and SARIF results carry no
+  `region`, so an alert lands on the manifest rather than on the line that
+  declares the dependency.
+
+- **A `GITHUB_TOKEN` in the environment breaks `analyze <url>`.** The GitHub API
+  is called with whatever token is present, so an expired or wrongly-scoped one
+  fails with `401 Unauthorized` against a public repository that needs no
+  authentication at all. `GITHUB_TOKEN` is set by default in GitHub Actions.
+  Clearing it for the command is the workaround.
+
+- **The database download is unverified.** `update --url` accepts any URL, and
+  the database file carries no signature or checksum, so the update path is
+  unauthenticated end to end. Prefer `--offline` where the built-in database is
+  sufficient.
+
+- **`--deep` requires `pip` on `PATH` for Python packages**, not `pip3`, so it
+  fails on a default Homebrew macOS with `exec: "pip": executable file not
+  found`. The failure is reported on stderr, but the report still suggests
+  running `--deep`, which is the command that just failed.
+
+- **A repository whose only manifests are of an unsupported type exits 2**, with
+  the same status as a genuine analysis error. 1.3.0 now names the file and the
+  reason rather than reporting that no manifest was found.
+
+## [1.2.2] - 2025-12-27
+
+### Fixed
+
+- Docker image name in the release workflow now matches the repository, so the
+  GHCR login succeeds and the container image publishes.
 
 ## [1.2.1] - 2025-12-27
 
@@ -304,7 +359,9 @@ reproducing them.
 - Maps findings to CNSA 2.0 compliance requirements
 - Supports OMB M-23-02 cryptographic inventory requirements
 
-[1.2.1]: https://github.com/csnp/qramm-cryptodeps/compare/v1.2.0...v1.2.1
-[1.2.0]: https://github.com/csnp/qramm-cryptodeps/compare/v1.1.0...v1.2.0
-[1.1.0]: https://github.com/csnp/qramm-cryptodeps/compare/v1.0.0...v1.1.0
-[1.0.0]: https://github.com/csnp/qramm-cryptodeps/releases/tag/v1.0.0
+[1.3.0]: https://github.com/csnp/cryptodeps/compare/v1.2.2...v1.3.0
+[1.2.2]: https://github.com/csnp/cryptodeps/compare/v1.2.1...v1.2.2
+[1.2.1]: https://github.com/csnp/cryptodeps/compare/v1.2.0...v1.2.1
+[1.2.0]: https://github.com/csnp/cryptodeps/compare/v1.1.0...v1.2.0
+[1.1.0]: https://github.com/csnp/cryptodeps/compare/v1.0.0...v1.1.0
+[1.0.0]: https://github.com/csnp/cryptodeps/releases/tag/v1.0.0
