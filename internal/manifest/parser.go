@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package manifest provides parsers for dependency manifest files.
