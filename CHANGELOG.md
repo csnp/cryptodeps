@@ -354,6 +354,25 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   the same status as a genuine analysis error. 1.3.0 now names the file and the
   reason rather than reporting that no manifest was found.
 
+- **`--fail-on any` fails a project whose cryptography is entirely quantum
+  safe, and reports it as a partial-risk exit.** The flag is described as
+  exiting non-zero "when risk found", but it is implemented as any cryptographic
+  usage at all, so a project whose only dependency is `bcrypt` exits 3 with
+  `0 vulnerable | 0 partial` in its own summary and nothing on either stream
+  explaining the failure. Exit 3 is documented as partial-risk findings, which
+  this is not. Identical on 1.2.2. The default, `--fail-on vulnerable`, is
+  unaffected and behaves as documented.
+
+- **`--offline` silently disables `--deep`, and the report then suggests
+  `--deep`.** Source analysis fetches package archives, so it cannot run with
+  downloads refused, but passing both prints no warning that one was ignored.
+  Because no source analysis was attempted, a scan whose dependencies are all
+  absent from the database ends at "Run with `--deep` to analyze package source
+  code directly", which is the flag that was just passed. 1.2.2 answered the
+  same invocation with "No cryptographic usage detected in dependencies", a
+  clean verdict for a scan that examined nothing, so the verdict itself is
+  fixed and the suggestion that follows it is not.
+
 ## [1.2.2] - 2025-12-27
 
 ### Fixed
