@@ -78,21 +78,28 @@ func reportSafe(s string) string {
 	return strconv.Quote(s)
 }
 
-// markdownSafe renders a string for the inside of a markdown code span.
+// markdownCode renders a string for the inside of a markdown code span that is
+// not in a table.
 //
 // Its callers must put the result in one. That is the whole defence, and it is
 // why this is not a list of markdown metacharacters to escape: inside a code
-// span only two characters are active, a backtick which would close the span
-// early and a pipe which GitHub-flavoured markdown splits a table cell on even
-// inside one. Everywhere else, every markdown construct is live. Escaping
-// characters one at a time is how the first version of this missed a path named
-// "**CLEAN**", which reached a bare `##` heading with no trigger character in it
-// and rendered as bold.
-func markdownSafe(s string) string {
-	out := reportSafe(s)
-	out = strings.ReplaceAll(out, "`", `\x60`)
-	out = strings.ReplaceAll(out, "|", `\|`)
-	return out
+// span only a backtick is active, and it would close the span early. Everywhere
+// else every markdown construct is live, which is how the first version of this
+// missed a path named "**CLEAN**": it had no trigger character, so it reached a
+// bare `##` heading unescaped and rendered as bold.
+func markdownCode(s string) string {
+	return strings.ReplaceAll(reportSafe(s), "`", `\x60`)
+}
+
+// markdownCell renders a string for a code span inside a GitHub-flavoured
+// markdown table cell, where a pipe splits the cell even inside the span.
+//
+// Separate from markdownCode because the pipe escape is a table rule and nothing
+// else consumes it: applied to a bullet or a heading, the backslash renders
+// literally, so the report displayed a name the filesystem does not have and the
+// quoted form no longer round-tripped through strconv.Unquote.
+func markdownCell(s string) string {
+	return strings.ReplaceAll(markdownCode(s), "|", `\|`)
 }
 
 // needsEscaping reports whether a string can break out of the line, the code
@@ -109,15 +116,21 @@ func markdownSafe(s string) string {
 func needsEscaping(s string) bool {
 	for _, r := range s {
 		switch {
-		case r < 0x20, r == 0x7f:
+		// Everything Go does not consider printable: the ASCII controls, DEL,
+		// U+0085, the Unicode line and paragraph separators, every bidi and
+		// format control, the zero-width set, and the non-ASCII spaces that
+		// render as an ordinary one. Enumerating these by hand missed U+061C,
+		// U+2060, U+180E, the tag block and U+00A0 on the first attempt, all of
+		// which belong to the classes the enumeration claimed to cover.
+		case !strconv.IsPrint(r):
 			return true
+		// Printable, but active in the context this is rendered into.
 		case r == '`', r == '|':
 			return true
-		case r == 0x85, r == 0x2028, r == 0x2029:
-			return true
-		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
-			return true
-		case r >= 0x200b && r <= 0x200f, r == 0xfeff, r == 0xfffd:
+		// Printable, and what invalid UTF-8 in a filename decodes to. It injects
+		// nothing; quoting marks the name as a rendering rather than the literal
+		// bytes, which cannot be recovered.
+		case r == 0xfffd:
 			return true
 		}
 	}
@@ -135,4 +148,17 @@ func manifestForReport(root, manifest string) string {
 		return manifest
 	}
 	return getRelativePath(root, manifest)
+}
+
+// dependencyLabel renders "name@version", or just the name when no version was
+// declared.
+//
+// One place, because both the table and markdown build this string and both had
+// it interpolated raw. The pieces come from the manifest under scan, so they
+// carry whatever the author of that manifest put in them.
+func dependencyLabel(name, version string) string {
+	if version == "" {
+		return name
+	}
+	return name + "@" + version
 }

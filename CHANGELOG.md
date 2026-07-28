@@ -52,8 +52,9 @@ candidate. 1.3.0 was never tagged.
   dependency blocks were read by ranging over maps, and findings were sorted on
   risk alone with a non-stable sort. The finding set was stable but the order
   was not, which breaks golden-file CI and reproducible SBOMs. Discovery,
-  parsing and rendering are now fully ordered; all five output formats are
-  byte-identical across runs.
+  parsing and rendering are now fully ordered, so ordering is stable across runs
+  in all five formats. The JSON scan timestamp and the CBOM serial number
+  necessarily differ between runs; every other byte is identical.
 
 - **A repository containing an unsupported manifest type always exited 2.**
   Discovery recognised `Cargo.toml`, `Gemfile`, `composer.json` and the Gradle
@@ -123,8 +124,8 @@ candidate. 1.3.0 was never tagged.
   above the corrupt manifest the report exists to disclose. A directory named
   `a|b` shifted a column out of the "Not analyzed" table, because
   GitHub-flavoured markdown splits a cell on an unescaped pipe even inside a
-  code span. Every path and skip reason in the markdown report is now rendered
-  inside a code span, where only a backtick and a pipe are active, rather than
+  code span. Every path, skip reason and dependency string in the markdown report is now
+  rendered inside a code span, where only a backtick and a pipe are active, rather than
   escaped character by character: the first attempt at this escaped control
   characters and left a bare `##` heading, so a directory named `**CLEAN**` or
   `[no findings](https://...)` still rendered as markup. In the plain-text
@@ -133,6 +134,18 @@ candidate. 1.3.0 was never tagged.
   a backtick or a pipe is rendered as a quoted string: single-line, reversible,
   and still naming the file. JSON, CBOM and SARIF were never affected by the
   line-injection vector, because `encoding/json` escapes what it emits.
+
+- **A dependency string could write its own lines into the report too.** The
+  path fix did not cover the other channel into the same document: a dependency
+  name and version come from the manifest under scan, and both were interpolated
+  bare into the markdown findings tables and the table report. It needs no
+  filesystem access at all, which makes it easier to reach than the directory
+  name that was fixed first: the database lookup falls back from "name@version"
+  to the name alone, so a real package with a version of
+  "1.3.1\n\n## Scan result: CLEAN" still resolved, reached the findings table,
+  and put that heading in the report seven times. Now rendered through the same
+  code spans every path uses. Present in 1.2.2 as well; the fix is not a
+  regression repair.
 
 - **The table and markdown reports named manifests differently from the CBOM and
   SARIF for the same scan.** Only the two machine-readable formats expressed a

@@ -86,28 +86,53 @@ func TestAScannedRepositoryCannotWriteItsOwnReport(t *testing.T) {
 	}
 }
 
-// TestMarkdownTableCellsSurviveAPipeInAPath pins the other half. GitHub-flavoured
-// markdown splits a table cell on an unescaped pipe even inside a code span, so
-// a directory named "a|b" silently shifted the Reason column into a third cell.
+// TestMarkdownTableCellsSurviveAPipeInAPath pins the GitHub-flavoured markdown
+// rule that a pipe splits a table cell even inside a code span, so a directory
+// named "a|b" silently shifted every column after it.
+//
+// The assertion is the invariant itself, not a cell count: no code span in a
+// table row may contain an unescaped pipe. Counting cells broke the moment a
+// four-column findings table also began wrapping its first cell in a code span,
+// and a count would not have caught a pipe in the fourth column anyway.
 func TestMarkdownTableCellsSurviveAPipeInAPath(t *testing.T) {
 	out := renderMulti(t, FormatMarkdown, hostilePathScan())
 
-	var checked int
+	var spansChecked, withPipe int
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "| `") {
+		if !strings.HasPrefix(line, "|") {
 			continue
 		}
-		checked++
-		// A row of the "Not analyzed" table is | path | reason |, which is
-		// three empty fields around two cells once split.
-		if got := strings.Count(line, "|") - strings.Count(line, `\|`); got != 3 {
-			t.Errorf("markdown table row has %d unescaped pipes, want 3 (two cells):\n%s",
-				got, line)
+		for _, span := range codeSpans(line) {
+			spansChecked++
+			if strings.Contains(span, "|") {
+				withPipe++
+				if !strings.Contains(span, `\|`) {
+					t.Errorf("code span %q in a table row carries an unescaped pipe, which "+
+						"splits the cell:\n%s", span, line)
+				}
+			}
 		}
 	}
-	if checked == 0 {
-		t.Fatal("no markdown table row carried a path, so this asserts nothing")
+	if spansChecked == 0 {
+		t.Fatal("no table row carried a code span, so this asserts nothing")
 	}
+	// The fixture must actually deliver a pipe into a table row, or the check
+	// above never runs on the input it exists for.
+	if withPipe == 0 {
+		t.Fatalf("no table-row code span carried a pipe, so the fixture does not exercise "+
+			"the rule this test is named for; %d spans checked", spansChecked)
+	}
+}
+
+// codeSpans returns the contents of each backtick-delimited span in a line.
+func codeSpans(line string) []string {
+	var out []string
+	parts := strings.Split(line, "`")
+	// Odd indices are inside a span when the backticks are balanced.
+	for i := 1; i < len(parts); i += 2 {
+		out = append(out, parts[i])
+	}
+	return out
 }
 
 // TestOrdinaryPathsAreRenderedUnchanged is the paired guard. Escaping must be
@@ -124,8 +149,8 @@ func TestOrdinaryPathsAreRenderedUnchanged(t *testing.T) {
 		if got := reportSafe(p); got != p {
 			t.Errorf("reportSafe(%q) = %q, want it unchanged", p, got)
 		}
-		if got := markdownSafe(p); got != p {
-			t.Errorf("markdownSafe(%q) = %q, want it unchanged", p, got)
+		if got := markdownCell(p); got != p {
+			t.Errorf("markdownCell(%q) = %q, want it unchanged", p, got)
 		}
 	}
 }
@@ -161,13 +186,13 @@ func TestHostilePathsAreEscapedNotDropped(t *testing.T) {
 				t.Errorf("reportSafe(%q) decodes to %q, so the real path is lost", tc.in, back)
 			}
 
-			md := markdownSafe(tc.in)
+			md := markdownCell(tc.in)
 			if strings.Contains(md, "`") {
-				t.Errorf("markdownSafe(%q) = %q carries a backtick and would close the code span",
+				t.Errorf("markdownCell(%q) = %q carries a backtick and would close the code span",
 					tc.in, md)
 			}
 			if strings.Count(md, "|") != strings.Count(md, `\|`) {
-				t.Errorf("markdownSafe(%q) = %q carries an unescaped pipe", tc.in, md)
+				t.Errorf("markdownCell(%q) = %q carries an unescaped pipe", tc.in, md)
 			}
 		})
 	}
@@ -184,43 +209,51 @@ func TestHostilePathsAreEscapedNotDropped(t *testing.T) {
 // "**CLEAN**" rendered as bold, and one named "[no findings](https://...)"
 // rendered as a link, in the report the bundled Action publishes.
 //
-// The fix is the context, not the character list: every untrusted string in the
-// markdown report is inside a code span, so only a backtick and a pipe are
-// active, and markdownSafe handles exactly those two.
+// The assertion works the other way round from the first version of this test.
+// That one selected lines by the code span it was supposed to be testing for
+// ("| `" and "- `"), so removing a code span removed the line from the sample
+// and the assertion never ran: five of six mutations survived it. This one finds
+// the hostile bytes wherever they landed and requires them to be inside a span.
 func TestMarkdownRendersUntrustedPathsInertly(t *testing.T) {
+	// The link has a single slash: a path goes through filepath.Clean, which
+	// collapses "https://" to "https:/", so a marker containing "//" would never
+	// match the rendered form and the coverage guard below would misreport.
+	const bold, link = "**CLEAN**", "[no findings](evil.invalid)"
+
 	result := mixedSkips()
-	result.Projects[0].Manifest = "/repo/**CLEAN**/package.json"
-	result.Skipped[0].Path = "/repo/[no findings](https://evil.invalid)/package.json"
+	result.Projects[0].Manifest = "/repo/" + bold + "/package.json"
+	result.Projects[0].Project = "/repo/" + bold
+	result.Skipped[0].Path = "/repo/" + link + "/package.json"
+	result.Skipped[0].Reason = "not valid JSON, near " + bold
+	result.Skipped[1].Path = "/repo/" + bold + "-unsupported/Cargo.toml"
 
 	out := renderMulti(t, FormatMarkdown, result)
 
+	var found int
 	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "| `") &&
-			!strings.HasPrefix(line, "- `") {
-			continue
-		}
-		// Anything a scanned tree contributed has to sit between backticks. A
-		// heading or a cell that carries it bare renders it as markup.
-		if strings.Contains(line, "**CLEAN**") || strings.Contains(line, "[no findings]") {
-			if strings.Count(line, "`") < 2 {
-				t.Errorf("markdown renders an untrusted path outside a code span, so the "+
+		for _, marker := range []string{bold, link} {
+			if !strings.Contains(line, marker) {
+				continue
+			}
+			found++
+			inSpan := false
+			for _, span := range codeSpans(line) {
+				if strings.Contains(span, marker) {
+					inSpan = true
+				}
+			}
+			if !inSpan {
+				t.Errorf("markdown renders untrusted text outside a code span, so the "+
 					"scanned tree controls the markup:\n%s", line)
 			}
 		}
 	}
-	// Guard the fixture: the hostile names must have reached the document.
-	if !strings.Contains(out, "CLEAN") || !strings.Contains(out, "no findings") {
-		t.Fatalf("fixture names did not reach the report, so this asserts nothing:\n%s", out)
-	}
-	// Every heading that names a project must be a code span.
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "## ") {
-			continue
-		}
-		heading := strings.TrimPrefix(line, "## ")
-		if strings.Contains(heading, "/") && !strings.HasPrefix(heading, "`") {
-			t.Errorf("project heading %q names a path outside a code span", line)
-		}
+	// Every context the fixture reaches must have been inspected: the Summary
+	// Manifest row, the project list, the project heading, the "Not analyzed"
+	// path cell and its Reason cell, and the unsupported bullet. Six.
+	if found < 6 {
+		t.Fatalf("only %d lines carried the hostile markers, so some of the six markdown "+
+			"contexts were never rendered by this fixture:\n%s", found, out)
 	}
 }
 
@@ -276,5 +309,65 @@ func TestInvalidUTF8InAPathIsFlagged(t *testing.T) {
 	if !strings.HasPrefix(got, `"`) {
 		t.Errorf("reportSafe(%q) = %q, want it quoted so the reader knows the name was "+
 			"not rendered literally", decoded, got)
+	}
+}
+
+// hostileDependencyScan is a scan of a manifest whose dependency version carries
+// a forged report heading. Nothing about the filesystem is unusual: the payload
+// is a string in a package.json, which is all a pull request needs.
+func hostileDependencyScan() *types.MultiProjectResult {
+	return types.AggregateResults("/repo", []*types.ScanResult{{
+		Project:   "/repo",
+		Manifest:  "/repo/package.json",
+		Ecosystem: types.EcosystemNPM,
+		Dependencies: []types.DependencyResult{{
+			Dependency: types.Dependency{
+				Name:    "node-forge",
+				Version: "1.3.1\n\n" + injectedHeading + "\n\nNo issues found.\n\n| x ",
+			},
+			InDatabase: true,
+			Analysis: &types.PackageAnalysis{Package: "node-forge", Crypto: []types.CryptoUsage{
+				{Algorithm: "DES", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical},
+			}},
+		}},
+		Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1,
+			QuantumVulnerable: 1},
+	}})
+}
+
+// TestADependencyStringCannotWriteItsOwnReport is the regression test for the
+// channel the path fix did not cover.
+//
+// A dependency name and version come from the manifest under scan, so they are
+// attacker-controlled in exactly the way a path is, and they are a strictly
+// easier channel: no filesystem write, no directory named with embedded
+// newlines, just an entry in a package.json. The database lookup falls back from
+// "name@version" to the name alone, so a real package with an arbitrary version
+// still resolves and reaches the findings table. A version of
+// "1.3.1\n\n## Scan result: CLEAN" put that heading in the markdown report seven
+// times, in the middle of the table of findings that contradicts it.
+func TestADependencyStringCannotWriteItsOwnReport(t *testing.T) {
+	result := hostileDependencyScan()
+
+	for _, format := range []Format{FormatTable, FormatMarkdown, FormatJSON, FormatCBOM, FormatSARIF} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, result)
+
+			for _, line := range strings.Split(out, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), injectedHeading) {
+					t.Errorf("%s carries a heading forged by a dependency version:\n%s", format, out)
+					break
+				}
+			}
+			// Guard the fixture: the finding must have reached the document, or
+			// the dependency string was never rendered and this proves nothing.
+			if !strings.Contains(out, "node-forge") {
+				t.Fatalf("%s does not name the dependency, so the hostile version was never "+
+					"rendered:\n%s", format, out)
+			}
+			if !strings.Contains(out, "DES") {
+				t.Fatalf("%s produced no finding for the fixture:\n%s", format, out)
+			}
+		})
 	}
 }

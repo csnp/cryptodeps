@@ -41,7 +41,7 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	fmt.Fprintf(w, "## Summary\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownSafe(manifestForReport(root, result.Manifest)))
+	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownCell(manifestForReport(root, result.Manifest)))
 	fmt.Fprintf(w, "| **Ecosystem** | %s |\n", result.Ecosystem)
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.Summary.TotalDependencies)
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.Summary.WithCrypto)
@@ -82,9 +82,14 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 					fmt.Fprintf(w, "|------------|-----------|------|----------|\n")
 					hasVulnerable = true
 				}
-				fmt.Fprintf(w, "| %s@%s | %s | %s | %s |\n",
-					dep.Dependency.Name,
-					dep.Dependency.Version,
+				// The name and the version come from the manifest being
+				// scanned, so they are attacker-controlled in exactly the way a
+				// path is, and they need no exotic filesystem to deliver: a
+				// dependency entry in a pull request is enough. A version of
+				// "1.3.1\n\n## Scan result: CLEAN" put that heading in this
+				// report, in a table row, seven times.
+				fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n",
+					markdownCell(dependencyLabel(dep.Dependency.Name, dep.Dependency.Version)),
 					crypto.Algorithm,
 					crypto.Type,
 					crypto.Severity,
@@ -114,9 +119,14 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 					fmt.Fprintf(w, "|------------|-----------|------|----------|\n")
 					hasPartial = true
 				}
-				fmt.Fprintf(w, "| %s@%s | %s | %s | %s |\n",
-					dep.Dependency.Name,
-					dep.Dependency.Version,
+				// The name and the version come from the manifest being
+				// scanned, so they are attacker-controlled in exactly the way a
+				// path is, and they need no exotic filesystem to deliver: a
+				// dependency entry in a pull request is enough. A version of
+				// "1.3.1\n\n## Scan result: CLEAN" put that heading in this
+				// report, in a table row, seven times.
+				fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n",
+					markdownCell(dependencyLabel(dep.Dependency.Name, dep.Dependency.Version)),
 					crypto.Algorithm,
 					crypto.Type,
 					crypto.Severity,
@@ -239,7 +249,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 		for _, s := range unread {
 			// The reason is a code span too: it is an error string that quotes the
 			// path back, so it carries the same untrusted bytes as the cell beside it.
-			fmt.Fprintf(w, "| `%s` | `%s` |\n", markdownSafe(getRelativePath(result.RootPath, s.Path)), markdownSafe(s.Reason))
+			fmt.Fprintf(w, "| `%s` | `%s` |\n", markdownCell(getRelativePath(result.RootPath, s.Path)), markdownCell(s.Reason))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -249,7 +259,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 			"Their dependencies were not analyzed, and this does not affect the exit code.\n\n",
 			len(unsupported))
 		for _, s := range unsupported {
-			fmt.Fprintf(w, "- `%s`\n", markdownSafe(getRelativePath(result.RootPath, s.Path)))
+			fmt.Fprintf(w, "- `%s`\n", markdownCode(getRelativePath(result.RootPath, s.Path)))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -258,7 +268,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	fmt.Fprintf(w, "## Overview\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", markdownSafe(scanRootDir(result.RootPath)))
+	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", markdownCell(scanRootDir(result.RootPath)))
 	fmt.Fprintf(w, "| **Projects Scanned** | %d |\n", len(result.Projects))
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.TotalSummary.TotalDependencies)
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.TotalSummary.WithCrypto)
@@ -276,7 +286,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	// Project list
 	fmt.Fprintf(w, "### Projects\n\n")
 	for _, project := range result.Projects {
-		fmt.Fprintf(w, "- `%s` (%s)\n", markdownSafe(getRelativePath(result.RootPath, project.Manifest)), project.Ecosystem)
+		fmt.Fprintf(w, "- `%s` (%s)\n", markdownCode(getRelativePath(result.RootPath, project.Manifest)), project.Ecosystem)
 	}
 	fmt.Fprintf(w, "\n")
 
@@ -286,7 +296,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 		// In a code span, like every other path in this document. A bare heading
 		// renders whatever the name contains, and a directory can be named
 		// "**CLEAN**" or "[no findings](https://...)".
-		fmt.Fprintf(w, "## `%s`\n\n", markdownSafe(getRelativePath(result.RootPath, project.Manifest)))
+		fmt.Fprintf(w, "## `%s`\n\n", markdownCode(getRelativePath(result.RootPath, project.Manifest)))
 
 		// Use the single-project formatter for detailed output
 		if err := f.formatProject(project, result.RootPath, w); err != nil {

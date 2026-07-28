@@ -71,10 +71,10 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 			continue
 		}
 
-		depName := dep.Dependency.Name
-		if dep.Dependency.Version != "" {
-			depName = fmt.Sprintf("%s@%s", dep.Dependency.Name, dep.Dependency.Version)
-		}
+		// Escaped here, once, because this string is built from the manifest
+		// under scan and is printed on several rows below. A version of
+		// "1.3.1\n\n## Scan result: CLEAN" wrote that line into this report.
+		depName := reportSafe(dependencyLabel(dep.Dependency.Name, dep.Dependency.Version))
 
 		for _, c := range dep.Analysis.Crypto {
 			allCrypto = append(allCrypto, cryptoDetail{
@@ -721,6 +721,11 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	// markdown printed a relative one for the same run, and the skip list printed
 	// above it by PrintSkipped was relative in the same document.
 	if len(result.Projects) == 1 {
+		// The root, once, before the report. Relativizing the manifest without
+		// it left this document with no absolute path anywhere, so a reader had
+		// nothing to resolve "./package.json" against. Every other format
+		// declares its root; this one had stopped.
+		fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(scanRootDir(result.RootPath)))
 		return f.formatProject(result.Projects[0], result.RootPath, w)
 	}
 
