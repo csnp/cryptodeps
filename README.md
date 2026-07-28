@@ -466,7 +466,7 @@ qramm-cryptodeps/
 
 ## Roadmap
 
-### v1.2 (Current Release)
+### v1.2 (Released)
 
 - [x] Multi-ecosystem dependency scanning (Go, npm, Python, Maven)
 - [x] Reachability analysis for Go projects
@@ -478,7 +478,19 @@ qramm-cryptodeps/
 - [x] Workspace & monorepo support (npm, pnpm, Go workspaces)
 - [x] Multi-project aggregated results
 
-### v1.3 (Next)
+### v1.3 (Next release)
+
+Correctness of what the tool reports, rather than new surfaces.
+
+- [x] Every output format reports the tool version that produced it
+- [x] Manifests that cannot be read are named, with the reason, and exit 2
+- [x] Manifests for unsupported ecosystems are reported without failing the scan
+- [x] A scan that examined nothing no longer reports a clean result
+- [x] `--risk` and `--min-severity` filter, and say how much they withheld
+- [x] SARIF results point at the manifest they came from, relative to the root
+- [x] Byte-identical output across runs of the same scan, in all five formats
+
+### v1.4 (Planned)
 
 - [ ] Improved reachability for npm/Python projects
 - [ ] Transitive dependency crypto inheritance

@@ -107,6 +107,26 @@ candidate. 1.3.0 was never tagged.
   which skipped the upload for exactly the incomplete scans most worth
   reporting.
 
+- **A CBOM published the operator's filesystem layout.** Manifest paths were
+  rendered relative to the scan root so that a shared bill of materials carries
+  the repository layout and not a home directory or a CI runner's workspace
+  path, but the comparison used the scan root exactly as it was typed while the
+  manifest paths had already been absolutized. `cryptodeps analyze /abs/path`
+  produced relative paths and `cryptodeps analyze .`, which is the default and
+  what the Action runs, emitted absolute ones. SARIF had always normalized the
+  root; both formats now share one implementation, so they cannot disagree again.
+
+- **A scanned repository could write its own lines into the report.** Every
+  filesystem path reached the table and markdown reports uninterpolated, and a
+  path is attacker-controlled: a directory named with embedded newlines and the
+  text `## Scan result: CLEAN` put exactly that heading in the markdown report,
+  above the corrupt manifest the report exists to disclose. A directory named
+  `a|b` shifted a column out of the "Not analyzed" table, because
+  GitHub-flavoured markdown splits a cell on an unescaped pipe even inside a
+  code span. Paths and skip reasons carrying a control character, a backtick or
+  a pipe are now rendered as a quoted string: single-line, reversible, and still
+  naming the file. JSON, CBOM and SARIF were never affected.
+
 ### Changed
 
 - Coloured emoji in the table output are replaced by the ASCII markers the
