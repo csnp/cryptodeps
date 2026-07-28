@@ -72,9 +72,12 @@ func TestDiscoverFindsRequirementsFamily(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "requirements-prod.txt"), "pyjwt>=2.0\n")
 	writeFile(t, filepath.Join(dir, "requirements", "base.txt"), "pycryptodome==3.19.0\n")
 
-	found, err := DiscoverManifests(dir)
+	found, skipped, err := DiscoverManifests(dir)
 	if err != nil {
 		t.Fatalf("discover: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("no manifest should have been skipped, got %v", skipped)
 	}
 
 	seen := make(map[string]bool)

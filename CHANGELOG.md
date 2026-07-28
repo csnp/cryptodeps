@@ -5,6 +5,68 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Release-blocking defects found by a fresh-user release test on the 1.3.0
+candidate. 1.3.0 was never tagged.
+
+### Fixed
+
+- **Every machine-readable output reported the wrong tool version.** One binary
+  gave four answers: `version` said 1.3.0 while SARIF and CBOM both claimed
+  1.0.0 and JSON carried no version at all. SARIF and CBOM are provenance
+  artifacts, so a stale literal there is a false record of what produced the
+  document. A new `pkg/version` package is now the single source of truth, fed
+  once from the values GoReleaser injects into `main`. SARIF also gained
+  `semanticVersion`, and JSON gained a top-level `tool` object.
+
+- **A manifest that could not be parsed was dropped silently and the scan still
+  reported a clean summary.** A tree containing a good and a corrupt
+  `package.json` scanned only the good one and never mentioned the other, so a
+  manifest broken by a bad merge became invisible and CI went green. The cause
+  was not the parse-error path: discovery rejected the file before any parser
+  ran. Unreadable manifests are now listed by name with the reason in the table,
+  JSON, markdown and SARIF output, and always exit 2. A tree whose only manifest
+  is corrupt no longer claims that no manifest was found.
+
+- **A scan where every dependency was unknown reported "No cryptographic usage
+  detected".** Nothing had been examined. The three cases (no dependencies, all
+  dependencies unknown, and dependencies analyzed with no findings) are now
+  worded differently, and the `--deep` hints that the analyzer had always
+  generated are finally printed.
+
+- **`--risk` and `--min-severity` did nothing.** Both were stored and never
+  read, so every value, including a misspelt one, produced byte-identical
+  output. They now filter, and the summary and exit code are computed from what
+  survives so that every number describes the same set of findings. Unknown
+  values are rejected instead of ignored. When a filter removes every finding,
+  the report says so rather than reporting a clean scan.
+
+- **Every SARIF result pointed at a literal path `"multiple"`.** Multi-project
+  runs flattened all projects into one synthetic result, discarding the real
+  manifest paths, so every alert landed on a file that does not exist. Results
+  now carry their own project's manifest, relative to the scan root and declared
+  through `SRCROOT` in `originalUriBaseIds`.
+
+- **Output order shuffled between runs of the same scan.** `package.json`
+  dependency blocks were read by ranging over maps, and findings were sorted on
+  risk alone with a non-stable sort. The finding set was stable but the order
+  was not, which breaks golden-file CI and reproducible SBOMs. Discovery,
+  parsing and rendering are now fully ordered; all five output formats are
+  byte-identical across runs.
+
+### Changed
+
+- Coloured emoji in the table output are replaced by the ASCII markers the
+  section headers already use: `[!]` vulnerable, `[~]` partial, `[OK]` safe,
+  `[?]` unknown. They need no legend, and unlike the emoji they survive a pipe
+  into a file, a terminal without an emoji font, and a screen reader. This also
+  brings the tool in line with the CSNP no-emoji standard.
+
+- A runtime failure no longer prints the full flag list after the error. The
+  message that explains the failure was being pushed off the top of the
+  terminal. Usage is still shown for genuine flag mistakes, where it helps.
+
 ## [1.3.0] - 2026-07-27
 
 Fixes both open community issues, plus a silent false negative found while
@@ -85,9 +147,9 @@ reproducing them.
 
 ### Changed
 - **Output formatting**: Clean, professional terminal design with colored status indicators
-  - 🔴 Vulnerable (quantum-broken by Shor's algorithm)
-  - 🟡 Partial risk (weakened by Grover's algorithm)
-  - 🟢 Safe (quantum-resistant)
+  - Vulnerable (quantum-broken by Shor's algorithm)
+  - Partial risk (weakened by Grover's algorithm)
+  - Safe (quantum-resistant)
 - Improved remediation guidance layout with aligned fields
 - Call trace formatting now uses `>` prefix for cleaner output
 

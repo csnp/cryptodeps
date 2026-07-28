@@ -8,6 +8,7 @@ import (
 
 	"github.com/csnp/qramm-cryptodeps/pkg/crypto"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	"github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // InferredAlgorithm represents an algorithm inferred from package metadata.
@@ -359,10 +360,12 @@ func ToPackageAnalysis(pkg PackageInfo, algorithms []InferredAlgorithm) types.Pa
 		Version:   pkg.Version,
 		Ecosystem: pkg.Ecosystem,
 		Analysis: types.AnalysisMetadata{
-			Date:        pkg.UpdatedAt,
+			Date: pkg.UpdatedAt,
+			// This record is produced by the running binary, so it is the one
+			// place where the scanner's own version is the honest provenance.
 			Method:      "inferred",
-			Tool:        "cryptodeps",
-			ToolVersion: "",
+			Tool:        version.Name,
+			ToolVersion: version.Version(),
 		},
 		Crypto:         cryptoUsages,
 		QuantumSummary: summary,

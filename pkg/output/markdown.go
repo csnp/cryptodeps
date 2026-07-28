@@ -171,6 +171,21 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	// Title
 	fmt.Fprintf(w, "# CryptoDeps Multi-Project Scan Report\n\n")
 
+	// Manifests that were found but not read change how every number below
+	// should be read, so they are stated before the overview rather than in a
+	// footnote.
+	if len(result.Skipped) > 0 {
+		fmt.Fprintf(w, "## Not analyzed\n\n")
+		fmt.Fprintf(w, "%d manifest file(s) were found but could not be read. "+
+			"The dependencies they declare are missing from this report.\n\n", len(result.Skipped))
+		fmt.Fprintf(w, "| Manifest | Reason |\n")
+		fmt.Fprintf(w, "|----------|--------|\n")
+		for _, s := range result.Skipped {
+			fmt.Fprintf(w, "| `%s` | %s |\n", s.Path, s.Reason)
+		}
+		fmt.Fprintf(w, "\n")
+	}
+
 	// Overview
 	fmt.Fprintf(w, "## Overview\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")

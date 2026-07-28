@@ -174,11 +174,12 @@ cryptodeps analyze /path/to/monorepo --no-workspaces
 
 Every finding is classified by quantum computing threat level:
 
-| Symbol | Risk Level | Quantum Threat | Examples |
+| Marker | Risk Level | Quantum Threat | Examples |
 |--------|------------|----------------|----------|
-| 🔴 | VULNERABLE | Shor's algorithm | RSA, ECDSA, Ed25519, ECDH, DH, DSA |
-| 🟡 | PARTIAL | Grover's algorithm | AES-128, SHA-256, HMAC-SHA256 |
-| 🟢 | SAFE | Resistant | AES-256, SHA-384+, ChaCha20, Argon2 |
+| `[!]` | VULNERABLE | Shor's algorithm | RSA, ECDSA, Ed25519, ECDH, DH, DSA |
+| `[~]` | PARTIAL | Grover's algorithm | AES-128, SHA-256, HMAC-SHA256 |
+| `[OK]` | SAFE | Resistant | AES-256, SHA-384+, ChaCha20, Argon2 |
+| `[?]` | UNKNOWN | Not classified | Algorithms absent from the database |
 
 ### Smart Remediation
 
@@ -227,10 +228,28 @@ Analyze Flags:
       --deep                Force AST analysis for packages not in database
       --offline             Use only local database, skip auto-updates
       --no-workspaces       Disable workspace discovery (scan single manifest only)
-      --risk string         Filter by risk: vulnerable, partial, all
-      --min-severity string Minimum severity to report
+      --risk string         Report only this risk level: vulnerable, partial, safe, unknown, all
+      --min-severity string Report only findings at or above: info, low, medium, high, critical
   -h, --help                Show help
 ```
+
+`--risk` and `--min-severity` filter the report. The summary and the exit code
+are computed from what the filters leave, so every number in the output
+describes the same set of findings. When a filter removes everything, the tool
+says so rather than reporting a clean scan.
+
+### Exit codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | No quantum-vulnerable findings |
+| 1 | Quantum-vulnerable findings detected |
+| 2 | Analysis error, including any manifest that was found but could not be read |
+| 3 | Partial-risk findings detected (with `--fail-on partial`) |
+
+A manifest that cannot be parsed is always reported by name, with the reason,
+and always exits 2. A scan that silently omitted a dependency file would let a
+build pass on a report that never read it.
 
 ### Common Workflows
 
@@ -262,38 +281,38 @@ cryptodeps status
 ## Sample Output
 
 ```
-[*] Scanning go.mod... found 36 dependencies
+[*] Scanning go.mod... found 2 dependencies
 
 [!] CONFIRMED - Actually used by your code (requires action):
 ──────────────────────────────────────────────────────────────────────────────────────────
-  🔴 Ed25519        VULNERABLE    1-2yr         low
+  [!]  Ed25519        VULNERABLE    1-2yr         low
      └─ golang.org/x/crypto@v0.31.0
         > Called from: crypto.GenerateEd25519KeyPair
         > Called from: crypto.SignMessage
-
-  🟡 HS256          PARTIAL       -             low
+  [~]  HS256          PARTIAL       -             low
      └─ github.com/golang-jwt/jwt/v5@v5.3.0
         > Called from: auth.JWTService.GenerateAccessToken
-
-  🟢 bcrypt         SAFE          -             -
+  [OK] bcrypt         SAFE          -             -
      └─ golang.org/x/crypto@v0.31.0
         > Called from: auth.HashPassword
 
 [.] AVAILABLE - In dependencies but not called (lower priority):
 ──────────────────────────────────────────────────────────────────────────────────────────
+  github.com/golang-jwt/jwt/v5@v5.3.0
+     └─ [!] ES256, [!] ES384, [!] ES512, [!] RS256, [!] RS384, [!] RS512, [~] HS384, [OK] HS512
   golang.org/x/crypto@v0.31.0
-     └─ 🔴 X25519, 🟢 ChaCha20-Poly1305, 🟢 Argon2
+     └─ [!] X25519, [OK] Argon2, [OK] ChaCha20-Poly1305
 
 ══════════════════════════════════════════════════════════════════════════════════════════
-SUMMARY: 36 deps | 2 with crypto | 8 vulnerable | 2 partial
+SUMMARY: 2 deps | 2 with crypto | 8 vulnerable | 2 partial
 REACHABILITY: 3 confirmed | 0 reachable | 11 available-only
 
 REMEDIATION GUIDANCE:
 ══════════════════════════════════════════════════════════════════════════════════════════
 
-🔴 Ed25519 [PRIORITY]
+[!] Ed25519 [PRIORITY]
 ──────────────────────────────────────────────────
-  Action:       Plan migration to ML-DSA; prioritize if signing long-lived data
+  Action:       Plan migration to ML-DSA; prioritize if signing long-lived data or certificates
   Replace with: ML-DSA-65 (FIPS 204)
   NIST:         FIPS 204
   Timeline:     Short-term (1-2 years)

@@ -167,6 +167,11 @@ type ScanSummary struct {
 	QuantumVulnerable    int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
 	QuantumPartial       int `json:"quantumPartial" yaml:"quantumPartial"`
 	NotInDatabase        int `json:"notInDatabase" yaml:"notInDatabase"`
+	// FilteredOut counts findings that were detected and then withheld by
+	// --risk or --min-severity. Without it, a filter that matches nothing is
+	// indistinguishable from a project with no cryptography, and the report
+	// would state the second while the first is true.
+	FilteredOut int `json:"filteredOut,omitempty" yaml:"filteredOut,omitempty"`
 	// Reachability stats (only populated when reachability analysis is enabled)
 	ReachabilityAnalyzed bool `json:"reachabilityAnalyzed,omitempty" yaml:"reachabilityAnalyzed,omitempty"`
 	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"`   // Direct calls from user code
@@ -174,12 +179,26 @@ type ScanSummary struct {
 	AvailableCrypto      int  `json:"availableCrypto,omitempty" yaml:"availableCrypto,omitempty"`   // In deps but not called
 }
 
+// SkippedManifest records a file that was recognised as a manifest but could not
+// be analyzed, and why.
+//
+// A scanner may skip input. It must never skip it silently: a manifest broken by
+// a bad merge would otherwise vanish from the report while the summary still
+// reads clean and CI still goes green.
+type SkippedManifest struct {
+	Path   string `json:"path" yaml:"path"`
+	Reason string `json:"reason" yaml:"reason"`
+}
+
 // MultiProjectResult represents the result of scanning multiple projects/manifests.
 type MultiProjectResult struct {
-	RootPath     string        `json:"rootPath" yaml:"rootPath"`
-	ScanDate     time.Time     `json:"scanDate" yaml:"scanDate"`
-	Projects     []*ScanResult `json:"projects" yaml:"projects"`
-	TotalSummary ScanSummary   `json:"totalSummary" yaml:"totalSummary"`
+	RootPath string        `json:"rootPath" yaml:"rootPath"`
+	ScanDate time.Time     `json:"scanDate" yaml:"scanDate"`
+	Projects []*ScanResult `json:"projects" yaml:"projects"`
+	// Skipped lists manifests that were found but could not be analyzed. An
+	// empty scan with a non-empty Skipped is an incomplete scan, not a clean one.
+	Skipped      []SkippedManifest `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	TotalSummary ScanSummary       `json:"totalSummary" yaml:"totalSummary"`
 }
 
 // AggregateResults combines multiple scan results into a single multi-project result.

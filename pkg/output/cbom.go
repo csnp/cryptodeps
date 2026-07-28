@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	"github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // CBOMFormatter formats scan results as CycloneDX CBOM (JSON).
@@ -89,9 +90,9 @@ func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Tools: []cycloneDXTool{
 				{
-					Vendor:  "CSNP",
-					Name:    "cryptodeps",
-					Version: "1.0.0",
+					Vendor:  version.Vendor,
+					Name:    version.Name,
+					Version: version.Version(),
 				},
 			},
 		},

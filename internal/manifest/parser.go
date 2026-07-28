@@ -142,46 +142,59 @@ func SupportedManifests() []string {
 }
 
 // DetectAndParseAll discovers all manifests in a directory (including workspaces)
-// and parses each one. Returns a slice of parsed manifests.
-func DetectAndParseAll(path string) ([]*Manifest, error) {
+// and parses each one.
+//
+// It returns the parsed manifests and every manifest that was found but could
+// not be used, so that the caller can report the skips rather than hiding them.
+// Both a validation rejection during discovery and a parse failure here produce
+// a SkippedManifest.
+func DetectAndParseAll(path string) ([]*Manifest, []types.SkippedManifest, error) {
 	// Check if path is a directory
 	info, err := os.Stat(path)
 	if err != nil {
-		return nil, fmt.Errorf("cannot access path: %w", err)
+		return nil, nil, fmt.Errorf("cannot access path: %w", err)
 	}
 
 	// If it's a file, just parse that single file
 	if !info.IsDir() {
 		manifest, err := DetectAndParse(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return []*Manifest{manifest}, nil
+		return []*Manifest{manifest}, nil, nil
 	}
 
 	// Discover all manifests in the directory tree
-	manifestPaths, err := DiscoverManifests(path)
+	manifestPaths, skipped, err := DiscoverManifests(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to discover manifests: %w", err)
+		return nil, nil, fmt.Errorf("failed to discover manifests: %w", err)
 	}
 
-	if len(manifestPaths) == 0 {
-		return nil, fmt.Errorf("no supported manifest files found in %s", path)
+	if len(manifestPaths) == 0 && len(skipped) == 0 {
+		return nil, nil, fmt.Errorf("no supported manifest files found in %s", path)
 	}
 
 	var manifests []*Manifest
-	var parseErrors []string
 
 	for _, manifestPath := range manifestPaths {
 		parser, err := getParserForPath(manifestPath)
 		if err != nil {
-			// Skip unsupported files silently (they might have been picked up by glob)
+			// Recognised by discovery but not by any parser. Report it: the
+			// user is entitled to know a file that looks like a manifest was
+			// not read.
+			skipped = append(skipped, types.SkippedManifest{
+				Path:   manifestPath,
+				Reason: "no parser for this manifest type",
+			})
 			continue
 		}
 
 		deps, err := parser.Parse(manifestPath)
 		if err != nil {
-			parseErrors = append(parseErrors, fmt.Sprintf("%s: %v", manifestPath, err))
+			skipped = append(skipped, types.SkippedManifest{
+				Path:   manifestPath,
+				Reason: err.Error(),
+			})
 			continue
 		}
 
@@ -192,9 +205,19 @@ func DetectAndParseAll(path string) ([]*Manifest, error) {
 		})
 	}
 
-	if len(manifests) == 0 && len(parseErrors) > 0 {
-		return nil, fmt.Errorf("failed to parse any manifests: %s", strings.Join(parseErrors, "; "))
+	if len(manifests) == 0 && len(skipped) > 0 {
+		return nil, skipped, fmt.Errorf("found %d manifest file(s) but none could be read: %s",
+			len(skipped), describeSkipped(skipped))
 	}
 
-	return manifests, nil
+	return manifests, skipped, nil
+}
+
+// describeSkipped renders skipped manifests for an error message.
+func describeSkipped(skipped []types.SkippedManifest) string {
+	parts := make([]string, 0, len(skipped))
+	for _, s := range skipped {
+		parts = append(parts, fmt.Sprintf("%s (%s)", s.Path, s.Reason))
+	}
+	return strings.Join(parts, "; ")
 }

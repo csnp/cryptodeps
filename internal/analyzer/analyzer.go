@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/csnp/qramm-cryptodeps/internal/analyzer/ondemand"
@@ -29,8 +30,75 @@ type Options struct {
 	Offline      bool   // Only use database, no on-demand analysis
 	Deep         bool   // Force on-demand analysis for all packages
 	Reachability bool   // Perform reachability analysis to determine actual crypto usage
-	RiskFilter   string // Filter by risk level (vulnerable, partial, all)
-	MinSeverity  string // Minimum severity to report
+	RiskFilter   string // Filter by risk level (vulnerable, partial, safe, unknown, all)
+	MinSeverity  string // Minimum severity to report (info, low, medium, high, critical)
+}
+
+// Risk filter values accepted by --risk.
+const (
+	RiskFilterAll = "all"
+)
+
+// severityRank orders severities so that --min-severity can act as a threshold.
+var severityRank = map[types.Severity]int{
+	types.SeverityInfo:     0,
+	types.SeverityLow:      1,
+	types.SeverityMedium:   2,
+	types.SeverityHigh:     3,
+	types.SeverityCritical: 4,
+}
+
+// ValidateRiskFilter checks a --risk value. An unrecognised value used to be
+// accepted and then ignored, so a typo produced a full report that the user
+// believed was filtered.
+func ValidateRiskFilter(s string) error {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", RiskFilterAll,
+		strings.ToLower(string(types.RiskVulnerable)),
+		strings.ToLower(string(types.RiskPartial)),
+		strings.ToLower(string(types.RiskSafe)),
+		strings.ToLower(string(types.RiskUnknown)):
+		return nil
+	default:
+		return fmt.Errorf("invalid --risk value %q: expected one of vulnerable, partial, safe, unknown, all", s)
+	}
+}
+
+// ValidateMinSeverity checks a --min-severity value.
+func ValidateMinSeverity(s string) error {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	if _, ok := severityRank[types.Severity(strings.ToUpper(strings.TrimSpace(s)))]; ok {
+		return nil
+	}
+	return fmt.Errorf("invalid --min-severity value %q: expected one of info, low, medium, high, critical", s)
+}
+
+// keepCrypto reports whether a finding survives the configured filters.
+func (a *Analyzer) keepCrypto(c types.CryptoUsage) bool {
+	risk := strings.ToLower(strings.TrimSpace(a.options.RiskFilter))
+	if risk != "" && risk != RiskFilterAll {
+		if !strings.EqualFold(string(c.QuantumRisk), risk) {
+			return false
+		}
+	}
+
+	min := strings.ToUpper(strings.TrimSpace(a.options.MinSeverity))
+	if min != "" {
+		threshold, ok := severityRank[types.Severity(min)]
+		if ok && severityRank[c.Severity] < threshold {
+			return false
+		}
+	}
+
+	return true
+}
+
+// filtersActive reports whether any reporting filter is set.
+func (a *Analyzer) filtersActive() bool {
+	risk := strings.ToLower(strings.TrimSpace(a.options.RiskFilter))
+	return (risk != "" && risk != RiskFilterAll) || strings.TrimSpace(a.options.MinSeverity) != ""
 }
 
 // New creates a new analyzer with the given database and options.
@@ -60,9 +128,12 @@ func (a *Analyzer) Analyze(path string) (*types.ScanResult, error) {
 }
 
 // AnalyzeAll discovers and analyzes all manifests in a directory (including workspaces).
+//
+// Manifests that could not be read are carried on the result rather than
+// dropped, so that the report can say what was not looked at.
 func (a *Analyzer) AnalyzeAll(path string) (*types.MultiProjectResult, error) {
 	// Discover and parse all manifests
-	manifests, err := manifest.DetectAndParseAll(path)
+	manifests, skipped, err := manifest.DetectAndParseAll(path)
 	if err != nil {
 		return nil, err
 	}
@@ -71,17 +142,22 @@ func (a *Analyzer) AnalyzeAll(path string) (*types.MultiProjectResult, error) {
 	for _, m := range manifests {
 		result, err := a.analyzeManifest(m, filepath.Dir(m.Path))
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to analyze %s: %v\n", m.Path, err)
+			skipped = append(skipped, types.SkippedManifest{Path: m.Path, Reason: err.Error()})
 			continue
 		}
 		results = append(results, result)
 	}
 
 	if len(results) == 0 {
+		if len(skipped) > 0 {
+			return nil, fmt.Errorf("no manifests could be analyzed: %d found, all unreadable", len(skipped))
+		}
 		return nil, fmt.Errorf("no manifests could be analyzed")
 	}
 
-	return types.AggregateResults(path, results), nil
+	multi := types.AggregateResults(path, results)
+	multi.Skipped = skipped
+	return multi, nil
 }
 
 // analyzeManifest analyzes a single parsed manifest.
@@ -98,6 +174,29 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 	// Analyze each dependency
 	for _, dep := range m.Dependencies {
 		depResult := a.analyzeDependency(dep)
+
+		// Apply the reporting filters before the summary is accumulated, so
+		// that the counts, the table and the exit code all describe the same
+		// set of findings. --risk and --min-severity were previously stored and
+		// never read, so every value including a misspelt one produced the full
+		// report.
+		if a.filtersActive() && depResult.Analysis != nil {
+			kept := make([]types.CryptoUsage, 0, len(depResult.Analysis.Crypto))
+			for _, c := range depResult.Analysis.Crypto {
+				if a.keepCrypto(c) {
+					kept = append(kept, c)
+				} else {
+					result.Summary.FilteredOut++
+				}
+			}
+			// Copy before mutating: Analysis points into the shared database,
+			// so writing through it would corrupt the entry for every other
+			// dependency that resolves to the same package.
+			filtered := *depResult.Analysis
+			filtered.Crypto = kept
+			depResult.Analysis = &filtered
+		}
+
 		result.Dependencies = append(result.Dependencies, depResult)
 
 		// Update summary

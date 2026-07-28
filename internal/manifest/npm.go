@@ -6,6 +6,7 @@ package manifest
 import (
 	"encoding/json"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
@@ -48,47 +49,37 @@ func (p *NPMParser) Parse(path string) ([]types.Dependency, error) {
 
 	var deps []types.Dependency
 
-	// Parse production dependencies (direct)
-	for name, version := range pkg.Dependencies {
-		deps = append(deps, types.Dependency{
-			Name:      name,
-			Version:   cleanNPMVersion(version),
-			Ecosystem: types.EcosystemNPM,
-			Direct:    true,
-		})
-	}
-
-	// Parse dev dependencies (direct but dev-only)
-	for name, version := range pkg.DevDependencies {
-		deps = append(deps, types.Dependency{
-			Name:      name,
-			Version:   cleanNPMVersion(version),
-			Ecosystem: types.EcosystemNPM,
-			Direct:    true,
-		})
-	}
-
-	// Parse peer dependencies
-	for name, version := range pkg.PeerDependencies {
-		deps = append(deps, types.Dependency{
-			Name:      name,
-			Version:   cleanNPMVersion(version),
-			Ecosystem: types.EcosystemNPM,
-			Direct:    true,
-		})
-	}
-
-	// Parse optional dependencies
-	for name, version := range pkg.OptionalDependencies {
-		deps = append(deps, types.Dependency{
-			Name:      name,
-			Version:   cleanNPMVersion(version),
-			Ecosystem: types.EcosystemNPM,
-			Direct:    true,
-		})
+	// Each block is emitted in sorted order. Go randomises map iteration, so
+	// ranging over these maps directly made the whole report shuffle between
+	// runs of the same scan, which breaks diffable CI output and reproducible
+	// SBOMs even though the finding set itself was stable.
+	for _, block := range []map[string]string{
+		pkg.Dependencies,
+		pkg.DevDependencies,
+		pkg.PeerDependencies,
+		pkg.OptionalDependencies,
+	} {
+		for _, name := range sortedKeys(block) {
+			deps = append(deps, types.Dependency{
+				Name:      name,
+				Version:   cleanNPMVersion(block[name]),
+				Ecosystem: types.EcosystemNPM,
+				Direct:    true,
+			})
+		}
 	}
 
 	return deps, nil
+}
+
+// sortedKeys returns a map's keys in a stable order.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // cleanNPMVersion normalizes npm version strings.

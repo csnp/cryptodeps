@@ -195,10 +195,14 @@ func (db *Database) loadEmbeddedData() {
 			Version:   "",
 			Ecosystem: types.EcosystemGo,
 			Analysis: types.AnalysisMetadata{
-				Date:        time.Now(),
-				Method:      "embedded",
-				Tool:        "cryptodeps",
-				ToolVersion: "1.0.0",
+				Date:   time.Now(),
+				Method: "embedded",
+				Tool:   "cryptodeps",
+				// No ToolVersion: the embedded records are curated by hand, so
+				// attributing them to any tool version is a false provenance
+				// claim. The scanner's own version is reported once, at the top
+				// of each output document. This matches the other 69 embedded
+				// records, which have never set the field.
 			},
 			Crypto: []types.CryptoUsage{
 				{Algorithm: "Ed25519", Type: "signature", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityHigh, Remediation: "Migrate to ML-DSA (FIPS 204) for signatures"},
