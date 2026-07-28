@@ -129,7 +129,13 @@ var withheldAssertion = map[Format]func(*testing.T, string){
 			t.Fatalf("CBOM is not valid JSON: %v", err)
 		}
 		for _, p := range doc.Metadata.Properties {
-			if p.Name == "cryptodeps:findingsWithheld" && strings.Contains(p.Value, "9") {
+			if p.Name == "cryptodeps:findingsWithheld" {
+				// The exact count. Contains(value, "9") passed against an
+				// implementation multiplying the count by 100, and the CBOM's
+				// random v4 serialNumber contains a 9 most runs anyway.
+				if !strings.HasPrefix(p.Value, "9 finding(s)") {
+					t.Errorf("cryptodeps:findingsWithheld does not state 9 withheld: %q", p.Value)
+				}
 				return
 			}
 		}
@@ -137,8 +143,8 @@ var withheldAssertion = map[Format]func(*testing.T, string){
 			"complete bill of materials for a filtered scan: %+v", doc.Metadata.Properties)
 	},
 	FormatSARIF: func(t *testing.T, out string) {
-		if !strings.Contains(out, "withheld by --risk or --min-severity") {
-			t.Errorf("SARIF has no notification about withheld findings:\n%s", out)
+		if !strings.Contains(out, "9 finding(s) were detected and withheld") {
+			t.Errorf("SARIF does not state the 9 withheld findings:\n%s", out)
 		}
 	},
 }
@@ -454,5 +460,86 @@ func TestMarkdownRemediationOrderIsStable(t *testing.T) {
 	// Guard the fixture: without a remediation table there is nothing to shuffle.
 	if !strings.Contains(first, "Remediation Guidance") {
 		t.Fatal("fixture produced no remediation table, so it cannot guard its ordering")
+	}
+}
+
+// TestWithheldFindingsAreReportedEvenWhenSomeSurvive is the regression test for
+// the case the whole filtered-scan fix missed.
+//
+// Withholding findings is a property of the scan, not of an empty report, but it
+// was routed through classifyNoFindings, which by contract only speaks about
+// scans that produced nothing. So the moment one finding survived the filter,
+// SARIF and CBOM stopped mentioning the withheld ones entirely: 28 withheld
+// beside 38 reported, and a machine consumer read the run as complete. The table
+// and JSON said it plainly, which is what made the divergence invisible in
+// review.
+func TestWithheldFindingsAreReportedEvenWhenSomeSurvive(t *testing.T) {
+	partial := types.AggregateResults("/repo", []*types.ScanResult{{
+		Project:   "/repo/a",
+		Manifest:  "/repo/a/package.json",
+		Ecosystem: types.EcosystemNPM,
+		Dependencies: []types.DependencyResult{{
+			Dependency: types.Dependency{Name: "node-forge", Version: "1.3.1"},
+			InDatabase: true,
+			Analysis: &types.PackageAnalysis{Package: "node-forge", Crypto: []types.CryptoUsage{
+				{Algorithm: "DES", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical},
+			}},
+		}},
+		Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1,
+			QuantumVulnerable: 1, FilteredOut: 7},
+	}})
+
+	// Guard the fixture: findings must SURVIVE, or this is the filtered-to-empty
+	// case that was already covered and the test proves nothing.
+	if !hasAnyCrypto(partial.Projects[0].Dependencies) {
+		t.Fatal("fixture has no surviving finding, so it cannot exercise the partial-filter case")
+	}
+
+	for _, format := range []Format{FormatTable, FormatMarkdown, FormatJSON, FormatCBOM, FormatSARIF} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, partial)
+			if !strings.Contains(out, "7") {
+				t.Errorf("%s never mentions the 7 withheld findings beside the 1 reported:\n%s",
+					format, out)
+			}
+			if !strings.Contains(out, "DES") {
+				t.Fatalf("fixture produced no surviving finding in %s:\n%s", format, out)
+			}
+		})
+	}
+}
+
+// TestCoverageNotesAreEmittedPerProjectNotJustFirst pins the plural.
+//
+// The previous per-project test had exactly one note-producing project, so an
+// implementation returning after the first note passed it.
+func TestCoverageNotesAreEmittedPerProjectNotJustFirst(t *testing.T) {
+	mk := func(manifest string) *types.ScanResult {
+		return &types.ScanResult{
+			Manifest: manifest,
+			Dependencies: []types.DependencyResult{
+				{Dependency: types.Dependency{Name: "left-pad"}},
+			},
+			Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, NotInDatabase: 1},
+		}
+	}
+	multi := types.AggregateResults("/repo", []*types.ScanResult{
+		mk("/repo/a/package.json"), mk("/repo/b/package.json"), mk("/repo/c/package.json"),
+	})
+
+	notes := coverageNotes(multi.Projects)
+	if len(notes) != 3 {
+		t.Fatalf("got %d coverage notes, want 3 (one per unexamined project); an "+
+			"implementation that stops after the first would satisfy a single-project fixture", len(notes))
+	}
+	for _, format := range []Format{FormatSARIF, FormatCBOM} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, multi)
+			for _, name := range []string{"a/package.json", "b/package.json", "c/package.json"} {
+				if !strings.Contains(out, name) {
+					t.Errorf("%s does not attribute a coverage note to %s:\n%s", format, name, out)
+				}
+			}
+		})
 	}
 }

@@ -78,9 +78,30 @@ var ManifestFiles = map[string]bool{
 	"composer.json":    false,
 }
 
-// IsParsableManifest reports whether a filename has a parser behind it.
-func IsParsableManifest(name string) bool {
-	return ManifestFiles[name] || isRequirementsFile(name)
+// IsParsableManifest reports whether a path has a parser behind it.
+//
+// It asks getParserForPath, the same function discovery uses, rather than
+// reimplementing the rule. A parallel predicate would drift, and it would get
+// the requirements/*.txt layout wrong: requirements/base.txt is named base.txt
+// and is parsable only because of its parent directory.
+func IsParsableManifest(path string) bool {
+	_, err := getParserForPath(path)
+	return err == nil
+}
+
+// newSkip records a manifest that was found but not analyzed.
+//
+// Whether a skip is "unsupported" is a property of the FILE, not of the stage
+// that happened to reject it. Deciding it at the parser-lookup site instead left
+// an empty Cargo.toml, rejected earlier by validateManifest, classified as an
+// unread manifest, so it forced exit 2 and undid the polyglot fix for any tree
+// whose unsupported manifest was also empty or unreadable.
+func newSkip(path, reason string) types.SkippedManifest {
+	return types.SkippedManifest{
+		Path:        path,
+		Reason:      reason,
+		Unsupported: !IsParsableManifest(path),
+	}
 }
 
 // DiscoverManifests finds all manifest files in a directory tree.
@@ -110,7 +131,7 @@ func DiscoverManifests(root string) ([]string, []types.SkippedManifest, error) {
 	if !info.IsDir() {
 		if isManifestPath(root) {
 			if err := validateManifest(root); err != nil {
-				return nil, []types.SkippedManifest{{Path: root, Reason: err.Error()}}, nil
+				return nil, []types.SkippedManifest{newSkip(root, err.Error())}, nil
 			}
 			return []string{root}, nil, nil
 		}
@@ -152,7 +173,7 @@ func DiscoverManifests(root string) ([]string, []types.SkippedManifest, error) {
 	var skipped []types.SkippedManifest
 	for _, m := range manifests {
 		if err := validateManifest(m); err != nil {
-			skipped = append(skipped, types.SkippedManifest{Path: m, Reason: err.Error()})
+			skipped = append(skipped, newSkip(m, err.Error()))
 			continue
 		}
 		validated = append(validated, m)

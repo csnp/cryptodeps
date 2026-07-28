@@ -209,14 +209,36 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	// Manifests that were found but not read change how every number below
 	// should be read, so they are stated before the overview rather than in a
 	// footnote.
-	if len(result.Skipped) > 0 {
+	// Split by kind, for the same reason the table does: counting an unreadable
+	// manifest and an unsupported ecosystem together produced a number that
+	// disagreed with the CBOM for the same run, and asserted that a healthy
+	// Cargo.toml "could not be read".
+	var unread, unsupported []types.SkippedManifest
+	for _, s := range result.Skipped {
+		if s.Unsupported {
+			unsupported = append(unsupported, s)
+		} else {
+			unread = append(unread, s)
+		}
+	}
+	if len(unread) > 0 {
 		fmt.Fprintf(w, "## Not analyzed\n\n")
 		fmt.Fprintf(w, "%d manifest file(s) were found but could not be read. "+
-			"The dependencies they declare are missing from this report.\n\n", len(result.Skipped))
+			"The dependencies they declare are missing from this report.\n\n", len(unread))
 		fmt.Fprintf(w, "| Manifest | Reason |\n")
 		fmt.Fprintf(w, "|----------|--------|\n")
-		for _, s := range result.Skipped {
+		for _, s := range unread {
 			fmt.Fprintf(w, "| `%s` | %s |\n", s.Path, s.Reason)
+		}
+		fmt.Fprintf(w, "\n")
+	}
+	if len(unsupported) > 0 {
+		fmt.Fprintf(w, "## Unsupported ecosystems\n\n")
+		fmt.Fprintf(w, "%d manifest file(s) belong to ecosystems cryptodeps does not parse. "+
+			"Their dependencies were not analyzed, and this does not affect the exit code.\n\n",
+			len(unsupported))
+		for _, s := range unsupported {
+			fmt.Fprintf(w, "- `%s`\n", s.Path)
 		}
 		fmt.Fprintf(w, "\n")
 	}

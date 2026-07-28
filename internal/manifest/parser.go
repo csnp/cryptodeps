@@ -185,20 +185,13 @@ func DetectAndParseAll(path string) ([]*Manifest, []types.SkippedManifest, error
 			// look incomplete. cryptodeps never claimed to read Cargo.toml, and
 			// erroring on one turned every polyglot repository into a build
 			// failure.
-			skipped = append(skipped, types.SkippedManifest{
-				Path:        manifestPath,
-				Reason:      "no parser for this manifest type",
-				Unsupported: true,
-			})
+			skipped = append(skipped, newSkip(manifestPath, "no parser for this manifest type"))
 			continue
 		}
 
 		deps, err := parser.Parse(manifestPath)
 		if err != nil {
-			skipped = append(skipped, types.SkippedManifest{
-				Path:   manifestPath,
-				Reason: err.Error(),
-			})
+			skipped = append(skipped, newSkip(manifestPath, err.Error()))
 			continue
 		}
 
@@ -210,6 +203,14 @@ func DetectAndParseAll(path string) ([]*Manifest, []types.SkippedManifest, error
 	}
 
 	if len(manifests) == 0 && len(skipped) > 0 {
+		// "could not be read" is only true of a manifest that should have been
+		// readable. A tree holding nothing but a Cargo.toml is not a broken
+		// tree, it is an ecosystem cryptodeps does not support, and saying
+		// otherwise sends the user to look for a defect in a healthy file.
+		if !types.IncompleteScan(skipped) {
+			return nil, skipped, fmt.Errorf("no supported manifest files found in %s: %s",
+				path, describeSkipped(skipped))
+		}
 		return nil, skipped, fmt.Errorf("found %d manifest file(s) but none could be read: %s",
 			len(skipped), describeSkipped(skipped))
 	}

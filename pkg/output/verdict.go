@@ -91,11 +91,32 @@ type coverageNote struct {
 func coverageNotes(projects []*types.ScanResult) []coverageNote {
 	var notes []coverageNote
 	for _, p := range projects {
-		if p == nil || hasAnyCrypto(p.Dependencies) {
+		if p == nil {
+			continue
+		}
+
+		// Withheld findings are a property of the SCAN, not of an empty report,
+		// so this is asked before and independently of the no-findings
+		// classification. Routing it through classifyNoFindings, which by
+		// contract only speaks about scans that produced nothing, meant a
+		// partially filtered scan said nothing at all: 28 findings withheld
+		// beside 38 reported, and neither SARIF nor CBOM mentioned it, because
+		// one finding had survived.
+		if p.Summary.FilteredOut > 0 {
+			notes = append(notes, coverageNote{
+				Manifest: p.Manifest,
+				Case:     caseFiltered,
+				Summary:  p.Summary,
+			})
+		}
+
+		if hasAnyCrypto(p.Dependencies) {
 			continue
 		}
 		c := classifyNoFindings(p.Summary)
-		if c == caseGenuinelyClean {
+		// caseFiltered is already handled above, and caseGenuinelyClean needs no
+		// explanation: an empty result set is exactly what it means.
+		if c == caseGenuinelyClean || c == caseFiltered {
 			continue
 		}
 		notes = append(notes, coverageNote{Manifest: p.Manifest, Case: c, Summary: p.Summary})
@@ -121,9 +142,18 @@ func (n coverageNote) Text() string {
 }
 
 // Level maps a note to a SARIF notification level.
+//
+// Only a scan that failed to establish something warns. A filtered report and a
+// manifest that declared no dependencies are both complete and correct states
+// that merely need explaining, so they are notes. Warning on every one of them
+// buried the signal: a healthy npm workspace produced three warnings saying
+// "this package.json has no dependencies" and none saying findings were
+// withheld.
 func (n coverageNote) Level() string {
-	if n.Case == caseFiltered {
+	switch n.Case {
+	case caseFiltered, caseNoDependencies:
 		return "note"
+	default:
+		return "warning"
 	}
-	return "warning"
 }

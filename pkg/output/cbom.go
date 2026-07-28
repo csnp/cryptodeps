@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -123,7 +124,7 @@ func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanR
 		},
 		Components: make([]cycloneDXComponent, 0),
 	}
-	bom.Metadata.Properties = cbomCoverageProperties(projects, skipped)
+	bom.Metadata.Properties = cbomCoverageProperties(result.Project, projects, skipped)
 
 	// Emit each dependency as a component, then each algorithm it provides as a
 	// cryptographic asset, and link the two through the dependencies graph.
@@ -339,7 +340,7 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 // namespaced by convention and these are tool-specific, not spec fields.
 // Coverage is judged per project through the shared classifier, so this cannot
 // disagree with what the table and markdown reports say.
-func cbomCoverageProperties(projects []*types.ScanResult, skipped []types.SkippedManifest) []cycloneDXProperty {
+func cbomCoverageProperties(root string, projects []*types.ScanResult, skipped []types.SkippedManifest) []cycloneDXProperty {
 	var props []cycloneDXProperty
 
 	var unread int
@@ -350,7 +351,7 @@ func cbomCoverageProperties(projects []*types.ScanResult, skipped []types.Skippe
 		} else {
 			unread++
 		}
-		props = append(props, cycloneDXProperty{Name: name, Value: s.Path + ": " + s.Reason})
+		props = append(props, cycloneDXProperty{Name: name, Value: relativeManifest(root, s.Path) + ": " + s.Reason})
 	}
 	if unread > 0 {
 		props = append(props, cycloneDXProperty{
@@ -367,10 +368,26 @@ func cbomCoverageProperties(projects []*types.ScanResult, skipped []types.Skippe
 		}
 		value := note.Text()
 		if note.Manifest != "" && len(projects) > 1 {
-			value = note.Manifest + ": " + value
+			// Relative to the scan root. Emitting the absolute path published
+			// the operator's home directory, or a CI runner's workspace path,
+			// into a document meant to be shared.
+			value = relativeManifest(root, note.Manifest) + ": " + value
 		}
 		props = append(props, cycloneDXProperty{Name: name, Value: value})
 	}
 
 	return props
+}
+
+// relativeManifest renders a manifest path relative to the scan root so that a
+// shared document carries no local filesystem layout.
+func relativeManifest(root, manifest string) string {
+	if root == "" || manifest == "" {
+		return manifest
+	}
+	rel, err := filepath.Rel(root, manifest)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return manifest
+	}
+	return filepath.ToSlash(rel)
 }

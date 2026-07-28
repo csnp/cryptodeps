@@ -216,13 +216,38 @@ func PrintSkipped(w io.Writer, skipped []types.SkippedManifest) {
 	if len(skipped) == 0 {
 		return
 	}
-	fmt.Fprintf(w, "[!] %d manifest file(s) found but NOT analyzed:\n", len(skipped))
+	// Split by kind. Counting them together made this report say "2 manifest
+	// file(s) found but NOT analyzed" about a corrupt package.json and a
+	// Cargo.toml in the same breath, while the CBOM for the same run said one.
+	// Only the first is a gap in the scan; the second is a limit of the tool.
+	var unread, unsupported []types.SkippedManifest
 	for _, s := range skipped {
-		fmt.Fprintf(w, "    %s\n", s.Path)
-		fmt.Fprintf(w, "      reason: %s\n", s.Reason)
+		if s.Unsupported {
+			unsupported = append(unsupported, s)
+		} else {
+			unread = append(unread, s)
+		}
 	}
-	fmt.Fprintln(w, "    These dependencies are missing from the results below.")
-	fmt.Fprintln(w)
+
+	if len(unread) > 0 {
+		fmt.Fprintf(w, "[!] %d manifest file(s) found but NOT analyzed:\n", len(unread))
+		for _, s := range unread {
+			fmt.Fprintf(w, "    %s\n", s.Path)
+			fmt.Fprintf(w, "      reason: %s\n", s.Reason)
+		}
+		fmt.Fprintln(w, "    These dependencies are missing from the results below.")
+		fmt.Fprintln(w)
+	}
+
+	if len(unsupported) > 0 {
+		fmt.Fprintf(w, "[?] %d manifest file(s) found for ecosystems cryptodeps does not support:\n",
+			len(unsupported))
+		for _, s := range unsupported {
+			fmt.Fprintf(w, "    %s\n", s.Path)
+		}
+		fmt.Fprintln(w, "    Their dependencies were not analyzed. This does not affect the exit code.")
+		fmt.Fprintln(w)
+	}
 }
 
 // printReachabilityBreakdown prints crypto grouped by reachability status.

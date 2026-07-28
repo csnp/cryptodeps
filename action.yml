@@ -110,11 +110,13 @@ runs:
         exit $EXIT_CODE
 
     - name: Generate SARIF Report
-      # always(), because the analysis step above ends with `exit $EXIT_CODE` and
-      # its default threshold exits 1 on any vulnerable finding. Without this the
-      # SARIF steps are skipped for every repository that has something to
-      # report, which is the only kind whose report anyone wants.
-      if: always() && inputs.sarif-file != ''
+      # !cancelled(), not success(): the analysis step above ends with
+      # `exit $EXIT_CODE` and its default threshold exits 1 on any vulnerable
+      # finding, so the implicit success() skipped the SARIF steps for every
+      # repository that had something to report. Not always() either, which
+      # GitHub documents as running even on cancellation: a cancelled run would
+      # then still push a report into the Security tab.
+      if: ${{ !cancelled() && inputs.sarif-file != '' }}
       shell: bash
       run: |
         # A non-zero exit here must not stop the upload. --fail-on none silences
@@ -140,7 +142,7 @@ runs:
         fi
 
     - name: Upload SARIF to GitHub Security
-      if: always() && inputs.sarif-file != ''
+      if: ${{ !cancelled() && inputs.sarif-file != '' }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ inputs.sarif-file }}
