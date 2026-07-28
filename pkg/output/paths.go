@@ -78,9 +78,16 @@ func reportSafe(s string) string {
 	return strconv.Quote(s)
 }
 
-// markdownSafe is reportSafe plus the two escapes markdown itself needs: a
-// backtick would close a code span early, and GitHub-flavoured markdown requires
-// a pipe to be escaped even inside one, or it splits the table cell.
+// markdownSafe renders a string for the inside of a markdown code span.
+//
+// Its callers must put the result in one. That is the whole defence, and it is
+// why this is not a list of markdown metacharacters to escape: inside a code
+// span only two characters are active, a backtick which would close the span
+// early and a pipe which GitHub-flavoured markdown splits a table cell on even
+// inside one. Everywhere else, every markdown construct is live. Escaping
+// characters one at a time is how the first version of this missed a path named
+// "**CLEAN**", which reached a bare `##` heading with no trigger character in it
+// and rendered as bold.
 func markdownSafe(s string) string {
 	out := reportSafe(s)
 	out = strings.ReplaceAll(out, "`", `\x60`)
@@ -89,10 +96,28 @@ func markdownSafe(s string) string {
 }
 
 // needsEscaping reports whether a string can break out of the line, the code
-// span or the table cell it is about to be rendered into.
+// span or the table cell it is about to be rendered into, or misrepresent what
+// it names.
+//
+// ASCII control characters are not the whole set. U+2028 and U+2029 are line
+// breaks to a renderer, so they inject lines exactly as \n does. The bidi
+// controls reverse the visible order of a name, which is the Trojan Source
+// trick: a report can be made to display a filename that is not the one it is
+// talking about. The zero-width characters make two different paths render
+// identically. U+FFFD is what invalid UTF-8 in a filename decodes to, and a
+// filesystem does not require valid UTF-8.
 func needsEscaping(s string) bool {
 	for _, r := range s {
-		if r < 0x20 || r == 0x7f || r == '`' || r == '|' {
+		switch {
+		case r < 0x20, r == 0x7f:
+			return true
+		case r == '`', r == '|':
+			return true
+		case r == 0x85, r == 0x2028, r == 0x2029:
+			return true
+		case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+			return true
+		case r >= 0x200b && r <= 0x200f, r == 0xfeff, r == 0xfffd:
 			return true
 		}
 	}

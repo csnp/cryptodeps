@@ -482,13 +482,14 @@ qramm-cryptodeps/
 
 Correctness of what the tool reports, rather than new surfaces.
 
-- [x] Every output format reports the tool version that produced it
+- [x] Every machine-readable output reports the tool version that produced it
 - [x] Manifests that cannot be read are named, with the reason, and exit 2
 - [x] Manifests for unsupported ecosystems are reported without failing the scan
 - [x] A scan that examined nothing no longer reports a clean result
 - [x] `--risk` and `--min-severity` filter, and say how much they withheld
 - [x] SARIF results point at the manifest they came from, relative to the root
-- [x] Byte-identical output across runs of the same scan, in all five formats
+- [x] Stable ordering across runs of the same scan, in all five formats
+      (the scan timestamp and the CBOM serial number necessarily differ)
 
 ### v1.4 (Planned)
 

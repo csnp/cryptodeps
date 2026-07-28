@@ -237,7 +237,9 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 		fmt.Fprintf(w, "| Manifest | Reason |\n")
 		fmt.Fprintf(w, "|----------|--------|\n")
 		for _, s := range unread {
-			fmt.Fprintf(w, "| `%s` | %s |\n", markdownSafe(getRelativePath(result.RootPath, s.Path)), markdownSafe(s.Reason))
+			// The reason is a code span too: it is an error string that quotes the
+			// path back, so it carries the same untrusted bytes as the cell beside it.
+			fmt.Fprintf(w, "| `%s` | `%s` |\n", markdownSafe(getRelativePath(result.RootPath, s.Path)), markdownSafe(s.Reason))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -281,7 +283,10 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	// Individual project reports
 	for _, project := range result.Projects {
 		fmt.Fprintf(w, "---\n\n")
-		fmt.Fprintf(w, "## %s\n\n", markdownSafe(getRelativePath(result.RootPath, project.Manifest)))
+		// In a code span, like every other path in this document. A bare heading
+		// renders whatever the name contains, and a directory can be named
+		// "**CLEAN**" or "[no findings](https://...)".
+		fmt.Fprintf(w, "## `%s`\n\n", markdownSafe(getRelativePath(result.RootPath, project.Manifest)))
 
 		// Use the single-project formatter for detailed output
 		if err := f.formatProject(project, result.RootPath, w); err != nil {

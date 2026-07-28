@@ -715,9 +715,13 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	// be read, so they cannot go in a footer.
 	PrintSkipped(w, result.RootPath, result.Skipped)
 
-	// If there's only one project, just format it normally
+	// If there's only one project, just format it normally. It still gets the
+	// scan root: without it, a single-manifest repository, which is the most
+	// common shape there is, printed an absolute manifest path in the table while
+	// markdown printed a relative one for the same run, and the skip list printed
+	// above it by PrintSkipped was relative in the same document.
 	if len(result.Projects) == 1 {
-		return f.Format(result.Projects[0], w)
+		return f.formatProject(result.Projects[0], result.RootPath, w)
 	}
 
 	// Header showing discovered projects

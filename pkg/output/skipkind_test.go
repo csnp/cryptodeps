@@ -253,3 +253,82 @@ func TestGetRelativePathDoesNotInventPathsAcrossASharedPrefix(t *testing.T) {
 		t.Errorf("getRelativePath(\"/repo\", \"/repo/a/go.mod\") = %q, want \"./a/go.mod\"", got)
 	}
 }
+
+// analyzedPathScan is a two-project workspace, so the per-project renders run
+// through the workspace path rather than the single-project short-circuit.
+func analyzedPathScan() *types.MultiProjectResult {
+	mk := func(dir string) *types.ScanResult {
+		return &types.ScanResult{
+			Project:   "/repo/" + dir,
+			Manifest:  "/repo/" + dir + "/package.json",
+			Ecosystem: types.EcosystemNPM,
+			Dependencies: []types.DependencyResult{{
+				Dependency: types.Dependency{Name: "node-forge", Version: "1.3.1"},
+				InDatabase: true,
+				Analysis: &types.PackageAnalysis{Package: "node-forge", Crypto: []types.CryptoUsage{
+					{Algorithm: "DES", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical},
+				}},
+			}},
+			Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1,
+				QuantumVulnerable: 1},
+		}
+	}
+	return types.AggregateResults("/repo", []*types.ScanResult{mk("a"), mk("b")})
+}
+
+// TestAnalyzedManifestsAreNamedRelativeToTheRoot guards the headline behaviour of
+// the path consolidation, which had no test that failed when it was removed.
+//
+// Only the SKIPPED manifests were guarded. Deleting the relativization from the
+// per-project table header, the markdown Summary row, the markdown project list
+// or the markdown project heading left the whole suite green, so the absolute
+// paths those surfaces used to publish could come straight back.
+func TestAnalyzedManifestsAreNamedRelativeToTheRoot(t *testing.T) {
+	for _, format := range []Format{FormatTable, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, analyzedPathScan())
+			if !strings.Contains(out, "a/package.json") || !strings.Contains(out, "b/package.json") {
+				t.Fatalf("%s does not name both analyzed manifests, so this asserts nothing:\n%s",
+					format, out)
+			}
+			for _, line := range strings.Split(out, "\n") {
+				if strings.Contains(line, "/repo/a/package.json") ||
+					strings.Contains(line, "/repo/b/package.json") {
+					t.Errorf("%s names an analyzed manifest by its absolute path while the "+
+						"skip list and the machine formats use the relative one:\n%s", format, line)
+				}
+			}
+		})
+	}
+}
+
+// TestASingleProjectTreeIsNamedLikeAnyOther pins the short-circuit.
+//
+// table.go's FormatMulti delegates a one-project workspace straight to the
+// single-project renderer. That renderer takes no scan root, so a repository
+// with exactly one manifest, which is the most common shape there is, printed an
+// absolute path in the table while markdown printed a relative one for the same
+// run, and the skip list printed above it in the same document was relative too.
+func TestASingleProjectTreeIsNamedLikeAnyOther(t *testing.T) {
+	one := types.AggregateResults("/repo", []*types.ScanResult{analyzedPathScan().Projects[0]})
+	one.Skipped = []types.SkippedManifest{
+		{Path: "/repo/corrupt/package.json", Reason: "not valid JSON: unexpected end of JSON input"},
+	}
+	if len(one.Projects) != 1 {
+		t.Fatalf("fixture has %d projects, so it does not exercise the short-circuit",
+			len(one.Projects))
+	}
+
+	for _, format := range []Format{FormatTable, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, one)
+			if !strings.Contains(out, "a/package.json") {
+				t.Fatalf("%s does not name the manifest:\n%s", format, out)
+			}
+			if strings.Contains(out, "/repo/a/package.json") {
+				t.Errorf("%s names the only manifest by its absolute path, while the skipped "+
+					"one in the same document is relative:\n%s", format, out)
+			}
+		})
+	}
+}

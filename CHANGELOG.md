@@ -123,9 +123,25 @@ candidate. 1.3.0 was never tagged.
   above the corrupt manifest the report exists to disclose. A directory named
   `a|b` shifted a column out of the "Not analyzed" table, because
   GitHub-flavoured markdown splits a cell on an unescaped pipe even inside a
-  code span. Paths and skip reasons carrying a control character, a backtick or
-  a pipe are now rendered as a quoted string: single-line, reversible, and still
-  naming the file. JSON, CBOM and SARIF were never affected.
+  code span. Every path and skip reason in the markdown report is now rendered
+  inside a code span, where only a backtick and a pipe are active, rather than
+  escaped character by character: the first attempt at this escaped control
+  characters and left a bare `##` heading, so a directory named `**CLEAN**` or
+  `[no findings](https://...)` still rendered as markup. In the plain-text
+  report, and inside the code spans, anything carrying a control character, a
+  Unicode line or paragraph separator, a bidi override, a zero-width character,
+  a backtick or a pipe is rendered as a quoted string: single-line, reversible,
+  and still naming the file. JSON, CBOM and SARIF were never affected by the
+  line-injection vector, because `encoding/json` escapes what it emits.
+
+- **The table and markdown reports named manifests differently from the CBOM and
+  SARIF for the same scan.** Only the two machine-readable formats expressed a
+  manifest relative to the scan root; the table used a string-prefix test that
+  compared the root as typed against absolutized paths, and markdown did not
+  relativize at all. Every surface of one run now names a manifest the same way,
+  with one absolute anchor per document. `getRelativePath` also returned a path
+  that does not exist when the root was a string prefix of a sibling directory,
+  so `("/repo", "/repository/go.mod")` gave `./sitory/go.mod`.
 
 - **`cryptodeps status` reported roughly twice the packages the database holds.**
   It announced 1731 packages, and every per-ecosystem number was wrong the same
@@ -137,6 +153,10 @@ candidate. 1.3.0 was never tagged.
   to iterate in.
 
 ### Changed
+
+- `output.PrintSkipped` takes the scan root as its second argument, so it can
+  name a manifest the same way the rest of the report does. This is a breaking
+  change to an exported function in an importable package.
 
 - Coloured emoji in the table output are replaced by the ASCII markers the
   section headers already use: `[!]` vulnerable, `[~]` partial, `[OK]` safe,

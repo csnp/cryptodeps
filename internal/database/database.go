@@ -122,7 +122,7 @@ func enrichWithRemediation(analysis *types.PackageAnalysis, ecosystem types.Ecos
 
 // Stats returns statistics about the database.
 //
-// It counts distinct packages, not index entries. addToIndex deliberately files
+// It counts distinct database records, not index entries. addToIndex deliberately files
 // every package under two keys, "name@version" and "name", so that a lookup
 // succeeds with or without a version. Reporting len(index) as a package count
 // therefore counted every versioned package twice: `cryptodeps status` announced
@@ -130,6 +130,12 @@ func enrichWithRemediation(analysis *types.PackageAnalysis, ecosystem types.Ecos
 // wrong in the same way. The two keys collapse for a package with no version,
 // which is why the inflation was not a clean doubling and why the number looked
 // plausible enough to survive.
+//
+// Records, not names: the database can hold two records for one package under
+// different spellings of its name, as it does for PGPy/pgpy and PyNaCl/pynacl,
+// and counting records is what makes this agree with the stats block the
+// database publishes about itself. A name-based count would report 899 where
+// the file says 901.
 func (db *Database) Stats() DatabaseStats {
 	stats := DatabaseStats{
 		ByEcosystem: make(map[types.Ecosystem]int),
