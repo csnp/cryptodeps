@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 	"github.com/csnp/qramm-cryptodeps/pkg/version"
@@ -139,18 +137,11 @@ func (f *SARIFFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 
 // write emits one SARIF run covering every supplied project.
 func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanResult, skipped []types.SkippedManifest) error {
-	absRoot, err := filepath.Abs(root)
-	if err != nil {
-		absRoot = root
-	}
-	// A uriBaseId names a directory. When the scan root is a manifest file,
-	// which is what `cryptodeps analyze ./package.json` passes, using it
-	// unchanged declared a base of "file:///.../package.json/" and made every
-	// result relative to itself, so each one resolved to the literal ".". That
-	// is the same unusable-literal defect as the "multiple" path it replaced.
-	if info, statErr := os.Stat(absRoot); statErr == nil && !info.IsDir() {
-		absRoot = filepath.Dir(absRoot)
-	}
+	// A uriBaseId names a directory, and the root has to be absolute before any
+	// manifest path can be expressed relative to it. Both normalizations live in
+	// scanRootDir, which CBOM calls too: when SARIF did this inline and CBOM did
+	// not, the same run produced repository-relative SARIF and absolute CBOM.
+	absRoot := scanRootDir(root)
 
 	log := sarifLog{
 		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -295,18 +286,14 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 // root (which a caller can produce by passing an explicit file path) falls back
 // to an absolute file URI with no base, since a relative path would be a lie.
 func sarifArtifactURI(absRoot, manifestPath string) (uri string, baseID string) {
-	if manifestPath == "" {
+	path, underRoot := relativeToRoot(absRoot, manifestPath)
+	if path == "" {
 		return "", ""
 	}
-	absManifest, err := filepath.Abs(manifestPath)
-	if err != nil {
-		return filepath.ToSlash(manifestPath), ""
+	if !underRoot {
+		return "file://" + path, ""
 	}
-	rel, err := filepath.Rel(absRoot, absManifest)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "file://" + filepath.ToSlash(absManifest), ""
-	}
-	return filepath.ToSlash(rel), sarifURIBaseID
+	return path, sarifURIBaseID
 }
 
 // severityToSARIFLevel converts a severity to SARIF level.

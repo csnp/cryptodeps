@@ -6,6 +6,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,18 +91,14 @@ func nothingExaminedScan() *types.MultiProjectResult {
 // passed against an implementation with the CBOM property and the JSON
 // aggregation both deliberately disabled, and was flaky besides. A count is the
 // wrong assertion, and so is a digit.
-var withheldAssertion = map[Format]func(*testing.T, string){
-	FormatTable: func(t *testing.T, out string) {
-		if !strings.Contains(out, "9 finding(s) were detected") {
-			t.Errorf("table does not state the withheld findings:\n%s", out)
-		}
+var withheldAssertion = map[Format]func(t *testing.T, out string, want int){
+	FormatTable: func(t *testing.T, out string, want int) {
+		assertWithheldSentence(t, FormatTable, out, want)
 	},
-	FormatMarkdown: func(t *testing.T, out string) {
-		if !strings.Contains(out, "9 finding(s) were detected") {
-			t.Errorf("markdown does not state the withheld findings:\n%s", out)
-		}
+	FormatMarkdown: func(t *testing.T, out string, want int) {
+		assertWithheldSentence(t, FormatMarkdown, out, want)
 	},
-	FormatJSON: func(t *testing.T, out string) {
+	FormatJSON: func(t *testing.T, out string, want int) {
 		var doc struct {
 			TotalSummary struct {
 				FilteredOut int `json:"filteredOut"`
@@ -110,13 +107,13 @@ var withheldAssertion = map[Format]func(*testing.T, string){
 		if err := json.Unmarshal([]byte(out), &doc); err != nil {
 			t.Fatalf("JSON is not valid: %v", err)
 		}
-		if doc.TotalSummary.FilteredOut != 9 {
-			t.Errorf("totalSummary.filteredOut = %d, want 9; a consumer reading the "+
+		if doc.TotalSummary.FilteredOut != want {
+			t.Errorf("totalSummary.filteredOut = %d, want %d; a consumer reading the "+
 				"aggregate cannot tell this filtered scan from a clean one",
-				doc.TotalSummary.FilteredOut)
+				doc.TotalSummary.FilteredOut, want)
 		}
 	},
-	FormatCBOM: func(t *testing.T, out string) {
+	FormatCBOM: func(t *testing.T, out string, want int) {
 		var doc struct {
 			Metadata struct {
 				Properties []struct {
@@ -130,11 +127,12 @@ var withheldAssertion = map[Format]func(*testing.T, string){
 		}
 		for _, p := range doc.Metadata.Properties {
 			if p.Name == "cryptodeps:findingsWithheld" {
-				// The exact count. Contains(value, "9") passed against an
-				// implementation multiplying the count by 100, and the CBOM's
-				// random v4 serialNumber contains a 9 most runs anyway.
-				if !strings.HasPrefix(p.Value, "9 finding(s)") {
-					t.Errorf("cryptodeps:findingsWithheld does not state 9 withheld: %q", p.Value)
+				// The exact count, at the start of the named property.
+				// Contains(value, "9") passed against an implementation
+				// multiplying the count by 100, and the CBOM's random v4
+				// serialNumber contains any given digit most runs anyway.
+				if !strings.HasPrefix(p.Value, fmt.Sprintf("%d finding(s)", want)) {
+					t.Errorf("cryptodeps:findingsWithheld does not state %d withheld: %q", want, p.Value)
 				}
 				return
 			}
@@ -142,11 +140,60 @@ var withheldAssertion = map[Format]func(*testing.T, string){
 		t.Errorf("CBOM has no cryptodeps:findingsWithheld property, so it asserts a "+
 			"complete bill of materials for a filtered scan: %+v", doc.Metadata.Properties)
 	},
-	FormatSARIF: func(t *testing.T, out string) {
-		if !strings.Contains(out, "9 finding(s) were detected and withheld") {
-			t.Errorf("SARIF does not state the 9 withheld findings:\n%s", out)
+	FormatSARIF: func(t *testing.T, out string, want int) {
+		var doc struct {
+			Runs []struct {
+				Invocations []struct {
+					ToolExecutionNotifications []struct {
+						Message struct {
+							Text string `json:"text"`
+						} `json:"message"`
+					} `json:"toolExecutionNotifications"`
+				} `json:"invocations"`
+			} `json:"runs"`
 		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("SARIF is not valid JSON: %v", err)
+		}
+		// Parsed, not grepped: the notification text is the field a consumer
+		// reads, and a bare substring match over the whole document is
+		// satisfied by a timestamp, a version or a path.
+		wantText := fmt.Sprintf("%d finding(s) were detected and withheld", want)
+		for _, run := range doc.Runs {
+			for _, inv := range run.Invocations {
+				for _, n := range inv.ToolExecutionNotifications {
+					if strings.Contains(n.Message.Text, wantText) {
+						return
+					}
+				}
+			}
+		}
+		t.Errorf("no SARIF toolExecutionNotification states %q:\n%s", wantText, out)
 	},
+}
+
+// assertWithheldSentence checks that a human format states the withheld count in
+// one of the two sentences it is allowed to use for it, and that the count in
+// that sentence is the real one.
+//
+// Two sentences because the wording genuinely differs: a scan filtered to
+// nothing explains itself where the verdict would go, while a scan that still
+// has something to show annotates the summary. Both are checked against the
+// count so neither can be satisfied by a digit appearing somewhere else.
+func assertWithheldSentence(t *testing.T, format Format, out string, want int) {
+	t.Helper()
+	sentences := []string{
+		fmt.Sprintf("%d finding(s) were detected and", want),
+		fmt.Sprintf("%d further finding(s) excluded by --risk or --min-severity", want),
+		fmt.Sprintf("%d further finding(s) were excluded by `--risk` or `--min-severity`", want),
+		fmt.Sprintf("| **Withheld by filter** | %d |", want),
+	}
+	for _, s := range sentences {
+		if strings.Contains(out, s) {
+			return
+		}
+	}
+	t.Errorf("%s never states that %d finding(s) were withheld:\n%s", format, want, out)
 }
 
 // TestEveryFormatSaysFindingsWereWithheld covers the filtered-to-empty case.
@@ -159,7 +206,7 @@ func TestEveryFormatSaysFindingsWereWithheld(t *testing.T) {
 				t.Errorf("%s reports a clean scan while 9 findings were withheld by a filter:\n%s",
 					format, out)
 			}
-			withheldAssertion[format](t, out)
+			withheldAssertion[format](t, out, 9)
 		})
 	}
 }
@@ -498,10 +545,12 @@ func TestWithheldFindingsAreReportedEvenWhenSomeSurvive(t *testing.T) {
 	for _, format := range []Format{FormatTable, FormatMarkdown, FormatJSON, FormatCBOM, FormatSARIF} {
 		t.Run(string(format), func(t *testing.T) {
 			out := renderMulti(t, format, partial)
-			if !strings.Contains(out, "7") {
-				t.Errorf("%s never mentions the 7 withheld findings beside the 1 reported:\n%s",
-					format, out)
-			}
+			// The named field, per format. The first version of this test
+			// asserted strings.Contains(out, "7"), which the scan timestamp and
+			// the CBOM's random serial number satisfy on their own: it passed
+			// against an implementation that reported no withheld findings at
+			// all, which is the entire defect it was written for.
+			withheldAssertion[format](t, out, 7)
 			if !strings.Contains(out, "DES") {
 				t.Fatalf("fixture produced no surviving finding in %s:\n%s", format, out)
 			}

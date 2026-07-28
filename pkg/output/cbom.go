@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -343,6 +342,11 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 func cbomCoverageProperties(root string, projects []*types.ScanResult, skipped []types.SkippedManifest) []cycloneDXProperty {
 	var props []cycloneDXProperty
 
+	// Normalized once. Comparing a manifest path against the raw root is what
+	// made the relativization a no-op for `cryptodeps analyze .`, which is the
+	// invocation the GitHub Action uses.
+	absRoot := scanRootDir(root)
+
 	var unread int
 	for _, s := range skipped {
 		name := "cryptodeps:manifestNotAnalyzed"
@@ -351,7 +355,7 @@ func cbomCoverageProperties(root string, projects []*types.ScanResult, skipped [
 		} else {
 			unread++
 		}
-		props = append(props, cycloneDXProperty{Name: name, Value: relativeManifest(root, s.Path) + ": " + s.Reason})
+		props = append(props, cycloneDXProperty{Name: name, Value: relativeManifest(absRoot, s.Path) + ": " + s.Reason})
 	}
 	if unread > 0 {
 		props = append(props, cycloneDXProperty{
@@ -371,7 +375,7 @@ func cbomCoverageProperties(root string, projects []*types.ScanResult, skipped [
 			// Relative to the scan root. Emitting the absolute path published
 			// the operator's home directory, or a CI runner's workspace path,
 			// into a document meant to be shared.
-			value = relativeManifest(root, note.Manifest) + ": " + value
+			value = relativeManifest(absRoot, note.Manifest) + ": " + value
 		}
 		props = append(props, cycloneDXProperty{Name: name, Value: value})
 	}
@@ -379,15 +383,13 @@ func cbomCoverageProperties(root string, projects []*types.ScanResult, skipped [
 	return props
 }
 
-// relativeManifest renders a manifest path relative to the scan root so that a
-// shared document carries no local filesystem layout.
-func relativeManifest(root, manifest string) string {
-	if root == "" || manifest == "" {
-		return manifest
-	}
-	rel, err := filepath.Rel(root, manifest)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		return manifest
-	}
-	return filepath.ToSlash(rel)
+// relativeManifest renders a manifest path relative to an already-normalized
+// scan root, so that a shared document carries no local filesystem layout.
+//
+// absRoot must come from scanRootDir. The first version took the raw root and
+// compared it against absolute manifest paths, so it returned the absolute path
+// unchanged for every relative root, which is every default invocation.
+func relativeManifest(absRoot, manifest string) string {
+	rel, _ := relativeToRoot(absRoot, manifest)
+	return rel
 }

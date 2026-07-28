@@ -258,3 +258,49 @@ func TestUnreadableManifestStillMarksTheScanIncomplete(t *testing.T) {
 		t.Error("IncompleteScan is false for an unreadable manifest, so the scan exits 0")
 	}
 }
+
+// TestUnsupportedOnlyTreeIsNotCalledUnreadable guards the wording a user of a
+// Rust or Ruby repository actually sees.
+//
+// When nothing parseable is found, the error explains why. Reporting a healthy
+// Cargo.toml as a file that "could not be read" sends the user to look for a
+// defect in a file that has none, and contradicts the tool's own classification
+// of the same skip as a declared limit rather than an incomplete scan.
+func TestUnsupportedOnlyTreeIsNotCalledUnreadable(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "Cargo.toml"), "[package]\nname = \"x\"\n")
+
+	_, skipped, err := DetectAndParseAll(root)
+	if err == nil {
+		t.Fatal("a tree with no parseable manifest reported success")
+	}
+	if !types.IncompleteScan(skipped) && strings.Contains(err.Error(), "none could be read") {
+		t.Errorf("error says the manifest could not be read, which IncompleteScan says is "+
+			"false for it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "no supported manifest files found") {
+		t.Errorf("error does not say the ecosystem is unsupported: %v", err)
+	}
+	if len(skipped) != 1 || !skipped[0].Unsupported {
+		t.Errorf("skipped = %+v, want one unsupported entry so the caller can report the "+
+			"file rather than only the failure", skipped)
+	}
+}
+
+// TestUnreadableOnlyTreeStillSaysItCouldNotBeRead is the paired direction. The
+// wording split must not make a genuinely broken manifest sound supported.
+func TestUnreadableOnlyTreeStillSaysItCouldNotBeRead(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "package.json"), `{"name":"b","dependencies":`)
+
+	_, skipped, err := DetectAndParseAll(root)
+	if err == nil {
+		t.Fatal("a tree whose only manifest is corrupt reported success")
+	}
+	if !strings.Contains(err.Error(), "none could be read") {
+		t.Errorf("error does not say the manifest could not be read: %v", err)
+	}
+	if !types.IncompleteScan(skipped) {
+		t.Errorf("skipped = %+v, want an incomplete scan", skipped)
+	}
+}
