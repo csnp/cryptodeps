@@ -333,10 +333,16 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   authentication at all. `GITHUB_TOKEN` is set by default in GitHub Actions.
   Clearing it for the command is the workaround.
 
-- **The database download is unverified.** `update --url` accepts any URL, and
-  the database file carries no signature or checksum, so the update path is
-  unauthenticated end to end. Prefer `--offline` where the built-in database is
-  sufficient.
+- **The database download is unverified, and it is not opt-in.** `update --url`
+  accepts any URL, and the database file carries no signature or checksum, so
+  the update path is unauthenticated end to end. The download is also automatic
+  and silent: the first `analyze` on a machine with no `~/.cryptodeps` fetches
+  the database over the network and writes it there without printing anything,
+  so a user who never runs `update` is still scanning against downloaded data.
+  That is why the same project can be reported differently on two machines. Pass
+  `--offline` to use only the database built into the binary, which is smaller
+  (72 packages against 849) and carries none of the entries listed in the
+  hybrid-PQC limitation above.
 
 - **`--deep` requires `pip` on `PATH` for Python packages**, not `pip3`, so it
   fails on a default Homebrew macOS with `exec: "pip": executable file not
