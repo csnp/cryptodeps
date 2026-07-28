@@ -1,16 +1,21 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 package manifest
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
 // DefaultSkipDirs contains directories that should be skipped during manifest discovery.
@@ -42,20 +47,61 @@ var DefaultSkipDirs = map[string]bool{
 	"bower_components": true,
 }
 
-// ManifestFiles contains filenames that indicate a project manifest.
+// ManifestFiles maps a manifest filename to whether cryptodeps has a parser for
+// it. Every name here is discovered; the value decides what happens next.
+//
+// A name mapped to false is still found and still reported, as an unsupported
+// ecosystem rather than an unread file, and it does not affect the exit code.
+// Both halves of that matter, and getting either wrong has already shipped a
+// defect. Treating these as ordinary skips made every polyglot repository exit 2
+// and masked the exit 1 that real findings had earned. Dropping them from
+// discovery to fix that made a build.gradle full of crypto dependencies vanish
+// from all five output formats at exit 0, which is precisely the silent skip
+// this branch exists to remove.
+//
+// go.work is false because workspace membership is resolved by parseGoWorkspace,
+// which reads it directly and contributes the member go.mod files. The workspace
+// file declares no dependencies of its own.
 var ManifestFiles = map[string]bool{
 	"go.mod":           true,
-	"go.work":          true,
 	"package.json":     true,
 	"requirements.txt": true,
 	"pyproject.toml":   true,
 	"Pipfile":          true,
 	"pom.xml":          true,
-	"build.gradle":     true,
-	"build.gradle.kts": true,
-	"Cargo.toml":       true,
-	"Gemfile":          true,
-	"composer.json":    true,
+
+	"go.work":          false,
+	"build.gradle":     false,
+	"build.gradle.kts": false,
+	"Cargo.toml":       false,
+	"Gemfile":          false,
+	"composer.json":    false,
+}
+
+// IsParsableManifest reports whether a path has a parser behind it.
+//
+// It asks getParserForPath, the same function discovery uses, rather than
+// reimplementing the rule. A parallel predicate would drift, and it would get
+// the requirements/*.txt layout wrong: requirements/base.txt is named base.txt
+// and is parsable only because of its parent directory.
+func IsParsableManifest(path string) bool {
+	_, err := getParserForPath(path)
+	return err == nil
+}
+
+// newSkip records a manifest that was found but not analyzed.
+//
+// Whether a skip is "unsupported" is a property of the FILE, not of the stage
+// that happened to reject it. Deciding it at the parser-lookup site instead left
+// an empty Cargo.toml, rejected earlier by validateManifest, classified as an
+// unread manifest, so it forced exit 2 and undid the polyglot fix for any tree
+// whose unsupported manifest was also empty or unreadable.
+func newSkip(path, reason string) types.SkippedManifest {
+	return types.SkippedManifest{
+		Path:        path,
+		Reason:      reason,
+		Unsupported: !IsParsableManifest(path),
+	}
 }
 
 // DiscoverManifests finds all manifest files in a directory tree.
@@ -63,23 +109,33 @@ var ManifestFiles = map[string]bool{
 // 1. Parse workspace configuration files (package.json workspaces, go.work, pnpm-workspace.yaml)
 // 2. Recursively walk the directory tree for any manifests not covered by workspace config
 // 3. Deduplicate and validate results
-func DiscoverManifests(root string) ([]string, error) {
+//
+// It returns the usable manifests and, separately, every file that was
+// recognised as a manifest by name but rejected by validation. The second
+// return used to be discarded, which is what made a corrupt package.json
+// invisible: it was dropped here, before any parser ran, so no parse error was
+// ever produced and the scan reported a clean summary for the files that
+// happened to survive.
+func DiscoverManifests(root string) ([]string, []types.SkippedManifest, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	info, err := os.Stat(root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// If it's a file, return just that file if it's a manifest
 	if !info.IsDir() {
 		if isManifestPath(root) {
-			return []string{root}, nil
+			if err := validateManifest(root); err != nil {
+				return nil, []types.SkippedManifest{newSkip(root, err.Error())}, nil
+			}
+			return []string{root}, nil, nil
 		}
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	seen := make(map[string]bool)
@@ -109,15 +165,21 @@ func DiscoverManifests(root string) ([]string, error) {
 		}
 	}
 
-	// Layer 3: Validate and filter
+	// Layer 3: Validate, keeping the rejects so the caller can report them.
+	// Sorted so that discovery order does not depend on how the two layers
+	// above happened to interleave.
+	sort.Strings(manifests)
 	var validated []string
+	var skipped []types.SkippedManifest
 	for _, m := range manifests {
-		if isValidManifest(m) {
-			validated = append(validated, m)
+		if err := validateManifest(m); err != nil {
+			skipped = append(skipped, newSkip(m, err.Error()))
+			continue
 		}
+		validated = append(validated, m)
 	}
 
-	return validated, nil
+	return validated, skipped, nil
 }
 
 // parseWorkspaceConfigs detects and parses workspace configuration files.
@@ -354,8 +416,13 @@ func isRequirementsFile(name string) bool {
 }
 
 // isManifestFile checks if a filename is a recognized manifest file.
+//
+// Membership, not the mapped value: a name cryptodeps cannot parse is still
+// discovered so that it can be reported as an unsupported ecosystem. Testing the
+// value here instead is what made those files vanish from every output format.
 func isManifestFile(name string) bool {
-	return ManifestFiles[name] || isRequirementsFile(name)
+	_, known := ManifestFiles[name]
+	return known || isRequirementsFile(name)
 }
 
 // isManifestPath checks whether a path is a manifest, including layouts that
@@ -374,22 +441,22 @@ func isManifestPath(path string) bool {
 	return false
 }
 
-// isValidManifest checks if a manifest file is valid and parseable.
-func isValidManifest(path string) bool {
+// validateManifest reports whether a manifest file is usable, and returns the
+// reason when it is not. The reason is shown to the user, so it names the defect
+// rather than just saying the file was skipped.
+func validateManifest(path string) error {
 	info, err := os.Stat(path)
 	if err != nil {
-		return false
+		return fmt.Errorf("cannot read file: %w", err)
 	}
 
-	// Skip empty files
 	if info.Size() == 0 {
-		return false
+		return errors.New("file is empty")
 	}
 
-	// Try to read the file
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return false
+		return fmt.Errorf("cannot read file: %w", err)
 	}
 
 	filename := filepath.Base(path)
@@ -398,21 +465,25 @@ func isValidManifest(path string) bool {
 	switch filename {
 	case "package.json":
 		var pkg map[string]interface{}
-		return json.Unmarshal(data, &pkg) == nil
+		if err := json.Unmarshal(data, &pkg); err != nil {
+			return fmt.Errorf("not valid JSON: %w", err)
+		}
+		return nil
 	case "go.mod":
-		// Must contain "module" directive
-		return strings.Contains(string(data), "module ")
+		if !strings.Contains(string(data), "module ") {
+			return errors.New("no module directive")
+		}
+		return nil
 	case "pom.xml":
-		// Must contain project tag
-		return strings.Contains(string(data), "<project")
-	case "requirements.txt":
-		// Just needs to be non-empty (already checked)
-		return true
-	case "pyproject.toml", "Pipfile":
-		// Basic TOML-like structure check
-		return true
+		if !strings.Contains(string(data), "<project") {
+			return errors.New("no <project> element")
+		}
+		return nil
 	default:
-		return true
+		// requirements.txt family, pyproject.toml, Pipfile and anything else
+		// recognised by name: non-empty is all we can check cheaply. Real
+		// defects surface as parse errors, which are reported the same way.
+		return nil
 	}
 }
 

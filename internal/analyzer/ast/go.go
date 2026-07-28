@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ast provides AST-based analysis for crypto detection.
@@ -112,9 +112,9 @@ type cryptoVisitor struct {
 
 // funcContext tracks a function context during AST traversal.
 type funcContext struct {
-	Name       string // function or method name
-	Receiver   string // receiver type for methods (empty for functions)
-	IsExported bool   // whether the function is exported (uppercase first letter)
+	Name       string    // function or method name
+	Receiver   string    // receiver type for methods (empty for functions)
+	IsExported bool      // whether the function is exported (uppercase first letter)
 	EndPos     token.Pos // position where function ends
 }
 

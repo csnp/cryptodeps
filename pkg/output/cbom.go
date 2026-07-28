@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 package output
@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	"github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // CBOMFormatter formats scan results as CycloneDX CBOM (JSON).
@@ -32,8 +33,22 @@ type cycloneDXBOM struct {
 }
 
 type cycloneDXMetadata struct {
-	Timestamp string          `json:"timestamp"`
-	Tools     []cycloneDXTool `json:"tools"`
+	Timestamp  string              `json:"timestamp"`
+	Tools      []cycloneDXTool     `json:"tools"`
+	Properties []cycloneDXProperty `json:"properties,omitempty"`
+}
+
+// cycloneDXProperty is the spec's name/value pair, used here to record what the
+// scan did not cover.
+//
+// A CBOM asserts a cryptographic bill of materials. Emitting one from a scan
+// that could not read a manifest, or that withheld findings behind a filter,
+// with nothing to say so, is the same false-completeness claim that unreadable
+// manifests used to produce in the table. The component list alone cannot
+// express an absence.
+type cycloneDXProperty struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type cycloneDXTool struct {
@@ -74,6 +89,17 @@ type cycloneDXAlgorithmProperties struct {
 
 // Format writes the scan result as CycloneDX CBOM.
 func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	return f.format(result, []*types.ScanResult{result}, nil, w)
+}
+
+// format writes a CBOM, recording any manifest that was not read and anything
+// the scan did not establish.
+//
+// projects is the per-project view, kept separate from the merged result because
+// coverage has to be judged per project. Judging it on the merged summary let a
+// workspace where one project was entirely unexamined emit a document that said
+// nothing about it.
+func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanResult, skipped []types.SkippedManifest, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
@@ -89,14 +115,15 @@ func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Tools: []cycloneDXTool{
 				{
-					Vendor:  "CSNP",
-					Name:    "cryptodeps",
-					Version: "1.0.0",
+					Vendor:  version.Vendor,
+					Name:    version.Name,
+					Version: version.Version(),
 				},
 			},
 		},
 		Components: make([]cycloneDXComponent, 0),
 	}
+	bom.Metadata.Properties = cbomCoverageProperties(result.Project, projects, skipped)
 
 	// Emit each dependency as a component, then each algorithm it provides as a
 	// cryptographic asset, and link the two through the dependencies graph.
@@ -303,5 +330,66 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 		merged.Dependencies = append(merged.Dependencies, project.Dependencies...)
 	}
 
-	return f.Format(merged, w)
+	return f.format(merged, result.Projects, result.Skipped, w)
+}
+
+// cbomCoverageProperties records what this bill of materials does not cover.
+//
+// Named under a cryptodeps: prefix because CycloneDX property names are
+// namespaced by convention and these are tool-specific, not spec fields.
+// Coverage is judged per project through the shared classifier, so this cannot
+// disagree with what the table and markdown reports say.
+func cbomCoverageProperties(root string, projects []*types.ScanResult, skipped []types.SkippedManifest) []cycloneDXProperty {
+	var props []cycloneDXProperty
+
+	// Normalized once. Comparing a manifest path against the raw root is what
+	// made the relativization a no-op for `cryptodeps analyze .`, which is the
+	// invocation the GitHub Action uses.
+	absRoot := scanRootDir(root)
+
+	var unread int
+	for _, s := range skipped {
+		name := "cryptodeps:manifestNotAnalyzed"
+		if s.Unsupported {
+			name = "cryptodeps:manifestNotSupported"
+		} else {
+			unread++
+		}
+		props = append(props, cycloneDXProperty{Name: name, Value: relativeManifest(absRoot, s.Path) + ": " + s.Reason})
+	}
+	if unread > 0 {
+		props = append(props, cycloneDXProperty{
+			Name: "cryptodeps:coverage",
+			Value: fmt.Sprintf("incomplete: %d manifest(s) were found but could not be read, "+
+				"so the dependencies they declare are absent from this document", unread),
+		})
+	}
+
+	for _, note := range coverageNotes(projects) {
+		name := "cryptodeps:coverage"
+		if note.Case == caseFiltered {
+			name = "cryptodeps:findingsWithheld"
+		}
+		value := note.Text()
+		if note.Manifest != "" && len(projects) > 1 {
+			// Relative to the scan root. Emitting the absolute path published
+			// the operator's home directory, or a CI runner's workspace path,
+			// into a document meant to be shared.
+			value = relativeManifest(absRoot, note.Manifest) + ": " + value
+		}
+		props = append(props, cycloneDXProperty{Name: name, Value: value})
+	}
+
+	return props
+}
+
+// relativeManifest renders a manifest path relative to an already-normalized
+// scan root, so that a shared document carries no local filesystem layout.
+//
+// absRoot must come from scanRootDir. The first version took the raw root and
+// compared it against absolute manifest paths, so it returned the absolute path
+// unchanged for every relative root, which is every default invocation.
+func relativeManifest(absRoot, manifest string) string {
+	rel, _ := relativeToRoot(absRoot, manifest)
+	return rel
 }

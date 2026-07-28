@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ast provides AST-based analysis for crypto detection.
@@ -63,27 +63,27 @@ var (
 
 // Python crypto package mappings
 var pythonCryptoPackages = map[string][]string{
-	"cryptography":         {"RSA", "ECDSA", "Ed25519", "AES", "3DES", "ChaCha20"},
-	"Crypto":               {"RSA", "AES", "DES", "3DES", "SHA-256"},
-	"Cryptodome":           {"RSA", "AES", "DES", "3DES", "SHA-256"},
-	"pycryptodome":         {"RSA", "AES", "DES", "3DES", "SHA-256"},
-	"hashlib":              {"SHA-256", "SHA-512", "MD5", "SHA-1"},
-	"hmac":                 {"HMAC"},
-	"bcrypt":               {"bcrypt"},
-	"argon2":               {"Argon2"},
-	"scrypt":               {"scrypt"},
-	"nacl":                 {"X25519", "Ed25519", "XSalsa20"},
-	"PyNaCl":               {"X25519", "Ed25519", "XSalsa20"},
-	"jwt":                  {"RS256", "ES256", "HS256"},
-	"jose":                 {"RS256", "ES256", "HS256"},
-	"python-jose":          {"RS256", "ES256", "HS256"},
-	"passlib":              {"bcrypt", "Argon2", "PBKDF2"},
-	"paramiko":             {"RSA", "ECDSA", "Ed25519", "AES"},
-	"pyOpenSSL":            {"RSA", "ECDSA", "AES", "3DES"},
-	"M2Crypto":             {"RSA", "AES", "DES"},
-	"ecdsa":                {"ECDSA"},
-	"ed25519":              {"Ed25519"},
-	"rsa":                  {"RSA"},
+	"cryptography": {"RSA", "ECDSA", "Ed25519", "AES", "3DES", "ChaCha20"},
+	"Crypto":       {"RSA", "AES", "DES", "3DES", "SHA-256"},
+	"Cryptodome":   {"RSA", "AES", "DES", "3DES", "SHA-256"},
+	"pycryptodome": {"RSA", "AES", "DES", "3DES", "SHA-256"},
+	"hashlib":      {"SHA-256", "SHA-512", "MD5", "SHA-1"},
+	"hmac":         {"HMAC"},
+	"bcrypt":       {"bcrypt"},
+	"argon2":       {"Argon2"},
+	"scrypt":       {"scrypt"},
+	"nacl":         {"X25519", "Ed25519", "XSalsa20"},
+	"PyNaCl":       {"X25519", "Ed25519", "XSalsa20"},
+	"jwt":          {"RS256", "ES256", "HS256"},
+	"jose":         {"RS256", "ES256", "HS256"},
+	"python-jose":  {"RS256", "ES256", "HS256"},
+	"passlib":      {"bcrypt", "Argon2", "PBKDF2"},
+	"paramiko":     {"RSA", "ECDSA", "Ed25519", "AES"},
+	"pyOpenSSL":    {"RSA", "ECDSA", "AES", "3DES"},
+	"M2Crypto":     {"RSA", "AES", "DES"},
+	"ecdsa":        {"ECDSA"},
+	"ed25519":      {"Ed25519"},
+	"rsa":          {"RSA"},
 }
 
 // AnalyzeDirectory analyzes all Python files in a directory.
@@ -134,10 +134,10 @@ func (a *PythonAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, erro
 
 // pyFuncContext tracks function context during Python file analysis.
 type pyFuncContext struct {
-	Name       string
-	ClassName  string // for methods within classes
-	IsPublic   bool   // Python uses leading underscore convention for private
-	Indent     int    // indentation level where function starts
+	Name      string
+	ClassName string // for methods within classes
+	IsPublic  bool   // Python uses leading underscore convention for private
+	Indent    int    // indentation level where function starts
 }
 
 // AnalyzeFile analyzes a single Python file for cryptographic usage.

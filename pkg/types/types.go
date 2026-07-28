@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package types defines the core data structures used throughout CryptoDeps.
@@ -10,10 +10,10 @@ import "time"
 type Ecosystem string
 
 const (
-	EcosystemGo     Ecosystem = "go"
-	EcosystemNPM    Ecosystem = "npm"
-	EcosystemPyPI   Ecosystem = "pypi"
-	EcosystemMaven  Ecosystem = "maven"
+	EcosystemGo      Ecosystem = "go"
+	EcosystemNPM     Ecosystem = "npm"
+	EcosystemPyPI    Ecosystem = "pypi"
+	EcosystemMaven   Ecosystem = "maven"
 	EcosystemUnknown Ecosystem = "unknown"
 )
 
@@ -47,7 +47,7 @@ type Dependency struct {
 	Name      string    `json:"name" yaml:"name"`
 	Version   string    `json:"version" yaml:"version"`
 	Ecosystem Ecosystem `json:"ecosystem" yaml:"ecosystem"`
-	Direct    bool      `json:"direct" yaml:"direct"`       // true if direct dependency, false if transitive
+	Direct    bool      `json:"direct" yaml:"direct"`                     // true if direct dependency, false if transitive
 	Parent    string    `json:"parent,omitempty" yaml:"parent,omitempty"` // parent dependency (for transitive)
 }
 
@@ -101,13 +101,13 @@ type CryptoUsage struct {
 	QuantumRisk  QuantumRisk  `json:"quantumRisk" yaml:"quantumRisk"`
 	Severity     Severity     `json:"severity" yaml:"severity"`
 	Location     Location     `json:"location" yaml:"location"`
-	CallPath     []string     `json:"callPath,omitempty" yaml:"callPath,omitempty"` // trace from public API to crypto
-	InExported   bool         `json:"inExported,omitempty" yaml:"inExported,omitempty"` // whether in exported/public function
-	Function     string       `json:"function,omitempty" yaml:"function,omitempty"` // containing function name
-	Remediation  string       `json:"remediation,omitempty" yaml:"remediation,omitempty"` // migration guidance
-	Confidence   Confidence   `json:"confidence,omitempty" yaml:"confidence,omitempty"` // verified, high, medium, low
+	CallPath     []string     `json:"callPath,omitempty" yaml:"callPath,omitempty"`         // trace from public API to crypto
+	InExported   bool         `json:"inExported,omitempty" yaml:"inExported,omitempty"`     // whether in exported/public function
+	Function     string       `json:"function,omitempty" yaml:"function,omitempty"`         // containing function name
+	Remediation  string       `json:"remediation,omitempty" yaml:"remediation,omitempty"`   // migration guidance
+	Confidence   Confidence   `json:"confidence,omitempty" yaml:"confidence,omitempty"`     // verified, high, medium, low
 	Reachability Reachability `json:"reachability,omitempty" yaml:"reachability,omitempty"` // CONFIRMED, REACHABLE, AVAILABLE
-	Traces       []CallTrace  `json:"traces,omitempty" yaml:"traces,omitempty"` // paths from user code to this crypto
+	Traces       []CallTrace  `json:"traces,omitempty" yaml:"traces,omitempty"`             // paths from user code to this crypto
 }
 
 // AnalysisMetadata contains information about how the analysis was performed.
@@ -161,25 +161,65 @@ type ScanResult struct {
 
 // ScanSummary provides aggregate statistics for a scan.
 type ScanSummary struct {
-	TotalDependencies    int `json:"totalDependencies" yaml:"totalDependencies"`
-	DirectDependencies   int `json:"directDependencies" yaml:"directDependencies"`
-	WithCrypto           int `json:"withCrypto" yaml:"withCrypto"`
-	QuantumVulnerable    int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
-	QuantumPartial       int `json:"quantumPartial" yaml:"quantumPartial"`
-	NotInDatabase        int `json:"notInDatabase" yaml:"notInDatabase"`
+	TotalDependencies  int `json:"totalDependencies" yaml:"totalDependencies"`
+	DirectDependencies int `json:"directDependencies" yaml:"directDependencies"`
+	WithCrypto         int `json:"withCrypto" yaml:"withCrypto"`
+	QuantumVulnerable  int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
+	QuantumPartial     int `json:"quantumPartial" yaml:"quantumPartial"`
+	NotInDatabase      int `json:"notInDatabase" yaml:"notInDatabase"`
+	// FilteredOut counts findings that were detected and then withheld by
+	// --risk or --min-severity. Without it, a filter that matches nothing is
+	// indistinguishable from a project with no cryptography, and the report
+	// would state the second while the first is true.
+	FilteredOut int `json:"filteredOut,omitempty" yaml:"filteredOut,omitempty"`
 	// Reachability stats (only populated when reachability analysis is enabled)
 	ReachabilityAnalyzed bool `json:"reachabilityAnalyzed,omitempty" yaml:"reachabilityAnalyzed,omitempty"`
-	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"`   // Direct calls from user code
-	ReachableCrypto      int  `json:"reachableCrypto,omitempty" yaml:"reachableCrypto,omitempty"`   // In call graph
-	AvailableCrypto      int  `json:"availableCrypto,omitempty" yaml:"availableCrypto,omitempty"`   // In deps but not called
+	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"` // Direct calls from user code
+	ReachableCrypto      int  `json:"reachableCrypto,omitempty" yaml:"reachableCrypto,omitempty"` // In call graph
+	AvailableCrypto      int  `json:"availableCrypto,omitempty" yaml:"availableCrypto,omitempty"` // In deps but not called
+}
+
+// SkippedManifest records a file that was recognised as a manifest but could not
+// be analyzed, and why.
+//
+// A scanner may skip input. It must never skip it silently: a manifest broken by
+// a bad merge would otherwise vanish from the report while the summary still
+// reads clean and CI still goes green.
+type SkippedManifest struct {
+	Path   string `json:"path" yaml:"path"`
+	Reason string `json:"reason" yaml:"reason"`
+	// Unsupported separates "cryptodeps has no parser for this ecosystem" from
+	// "this file should have been readable and was not".
+	//
+	// Both are reported, because a file that looks like a manifest and was not
+	// read is something the user is entitled to know either way. Only the second
+	// means the scan is incomplete, so only the second forces exit 2. Collapsing
+	// the two made every polyglot repository an analysis error, and then
+	// dropping the unsupported ones from discovery to fix that made them
+	// invisible instead, which is the failure this type exists to prevent.
+	Unsupported bool `json:"unsupported,omitempty" yaml:"unsupported,omitempty"`
+}
+
+// IncompleteScan reports whether any skip means the scan failed to cover input
+// it should have covered. An unsupported ecosystem is not such a case.
+func IncompleteScan(skipped []SkippedManifest) bool {
+	for _, s := range skipped {
+		if !s.Unsupported {
+			return true
+		}
+	}
+	return false
 }
 
 // MultiProjectResult represents the result of scanning multiple projects/manifests.
 type MultiProjectResult struct {
-	RootPath     string        `json:"rootPath" yaml:"rootPath"`
-	ScanDate     time.Time     `json:"scanDate" yaml:"scanDate"`
-	Projects     []*ScanResult `json:"projects" yaml:"projects"`
-	TotalSummary ScanSummary   `json:"totalSummary" yaml:"totalSummary"`
+	RootPath string        `json:"rootPath" yaml:"rootPath"`
+	ScanDate time.Time     `json:"scanDate" yaml:"scanDate"`
+	Projects []*ScanResult `json:"projects" yaml:"projects"`
+	// Skipped lists manifests that were found but could not be analyzed. An
+	// empty scan with a non-empty Skipped is an incomplete scan, not a clean one.
+	Skipped      []SkippedManifest `json:"skipped,omitempty" yaml:"skipped,omitempty"`
+	TotalSummary ScanSummary       `json:"totalSummary" yaml:"totalSummary"`
 }
 
 // AggregateResults combines multiple scan results into a single multi-project result.
@@ -198,6 +238,10 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		multi.TotalSummary.QuantumVulnerable += r.Summary.QuantumVulnerable
 		multi.TotalSummary.QuantumPartial += r.Summary.QuantumPartial
 		multi.TotalSummary.NotInDatabase += r.Summary.NotInDatabase
+		// Without this the aggregate reported zero withheld findings while the
+		// per-project summaries reported dozens, so the totals a reader
+		// actually looks at described a filtered scan as a complete one.
+		multi.TotalSummary.FilteredOut += r.Summary.FilteredOut
 		multi.TotalSummary.ConfirmedCrypto += r.Summary.ConfirmedCrypto
 		multi.TotalSummary.ReachableCrypto += r.Summary.ReachableCrypto
 		multi.TotalSummary.AvailableCrypto += r.Summary.AvailableCrypto

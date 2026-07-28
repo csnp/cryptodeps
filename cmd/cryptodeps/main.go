@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // CryptoDeps analyzes software dependencies for cryptographic usage and quantum vulnerability.
@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -15,21 +16,30 @@ import (
 	"github.com/csnp/qramm-cryptodeps/internal/database"
 	"github.com/csnp/qramm-cryptodeps/pkg/output"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	buildinfo "github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // Exit codes for CI/CD integration
 const (
-	ExitSuccess         = 0 // No issues found
-	ExitVulnerable      = 1 // Quantum-vulnerable findings detected
-	ExitError           = 2 // Analysis error occurred
-	ExitPartial         = 3 // Partial-risk findings detected (when --fail-on=partial)
+	ExitSuccess    = 0 // No issues found
+	ExitVulnerable = 1 // Quantum-vulnerable findings detected
+	ExitError      = 2 // Analysis error occurred
+	ExitPartial    = 3 // Partial-risk findings detected (when --fail-on=partial)
 )
 
+// Build identity. GoReleaser injects these via -X main.version and friends, so
+// they have to live here under these exact names. They are handed straight to
+// pkg/version, which is what the rest of the tool reads. Keep them var, not
+// const: -X is silently ignored on a const and the build still succeeds.
 var (
 	version = "dev"
 	commit  = "none"
 	date    = "unknown"
 )
+
+func init() {
+	buildinfo.Set(version, commit, date)
+}
 
 // CLI flags
 var (
@@ -47,8 +57,10 @@ var (
 )
 
 func main() {
+	// Cobra has already written the error to stderr, and for a flag mistake it
+	// writes the message before the usage block, which is the order a reader
+	// needs. Printing it again here would duplicate every message.
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
 		os.Exit(ExitError)
 	}
 	// Exit with appropriate code for CI/CD
@@ -77,9 +89,11 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("cryptodeps %s\n", version)
-		fmt.Printf("  commit: %s\n", commit)
-		fmt.Printf("  built:  %s\n", date)
+		// Read through pkg/version rather than the locals, so that this command
+		// and every machine-readable emitter provably agree.
+		fmt.Printf("%s %s\n", buildinfo.Name, buildinfo.Version())
+		fmt.Printf("  commit: %s\n", buildinfo.Commit())
+		fmt.Printf("  built:  %s\n", buildinfo.Date())
 	},
 }
 
@@ -99,8 +113,12 @@ The path can be:
 Exit codes (for CI/CD):
   0 - No quantum-vulnerable findings
   1 - Quantum-vulnerable findings detected
-  2 - Analysis error
+  2 - Analysis error, including any manifest that was found but could not be read
   3 - Partial-risk findings detected (with --fail-on=partial)
+
+--risk and --min-severity filter the report. The summary and the exit code are
+computed from what the filters leave, so that every number in the output
+describes the same set of findings.
 
 Examples:
   cryptodeps analyze .
@@ -139,8 +157,8 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&deepFlag, "deep", false, "Force on-demand analysis for unknown packages")
 	analyzeCmd.Flags().BoolVar(&reachabilityFlag, "reachability", true, "Analyze call graph to find actually-used crypto (Go only, use --reachability=false to disable)")
 	analyzeCmd.Flags().BoolVar(&noWorkspacesFlag, "no-workspaces", false, "Disable workspace/monorepo discovery (scan single manifest only)")
-	analyzeCmd.Flags().StringVar(&riskFilter, "risk", "", "Filter by risk level (vulnerable, partial, all)")
-	analyzeCmd.Flags().StringVar(&minSeverity, "min-severity", "", "Minimum severity to report")
+	analyzeCmd.Flags().StringVar(&riskFilter, "risk", "", "Report only this risk level (vulnerable, partial, safe, unknown, all)")
+	analyzeCmd.Flags().StringVar(&minSeverity, "min-severity", "", "Report only findings at or above this severity (info, low, medium, high, critical)")
 	analyzeCmd.Flags().StringVar(&failOn, "fail-on", "vulnerable", "Exit non-zero when risk found (vulnerable, partial, any, none)")
 
 	// Update command flags
@@ -155,6 +173,12 @@ func init() {
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
+	// From here on, a failure is a runtime failure rather than a usage mistake,
+	// so do not follow it with the whole flag list. Setting this inside RunE
+	// rather than on the command keeps usage where it helps: an unknown flag is
+	// rejected during parsing, before this line runs.
+	cmd.SilenceUsage = true
+
 	// Default to current directory
 	path := "."
 	if len(args) > 0 {
@@ -176,6 +200,15 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 		defer analyzer.CleanupTempDir(tempDir)
 		path = tempDir
+	}
+
+	// Reject unknown filter values before doing any work. Silently ignoring
+	// them produced an unfiltered report that the user believed was filtered.
+	if err := analyzer.ValidateRiskFilter(riskFilter); err != nil {
+		return err
+	}
+	if err := analyzer.ValidateMinSeverity(minSeverity); err != nil {
+		return err
 	}
 
 	// Parse output format
@@ -228,6 +261,19 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 
 		exitCode = determineExitCodeMulti(multiResult, failOn)
+
+		// An unread manifest means the scan is incomplete, whatever the
+		// findings say. That is an analysis error, so it takes precedence over
+		// the finding-based codes and over --fail-on none: a build must not go
+		// green on a report that silently omits a dependency file.
+		//
+		// A manifest for an ecosystem cryptodeps has no parser for is reported
+		// but does not count. It is not a failure to read something; it is a
+		// declared limit of the tool, and treating it as an error made every
+		// repository holding a Cargo.toml or a build.gradle exit 2.
+		if types.IncompleteScan(multiResult.Skipped) {
+			exitCode = ExitError
+		}
 	}
 
 	return nil
@@ -327,8 +373,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Total packages: %d\n", stats.TotalPackages)
 	fmt.Println()
 	fmt.Println("By ecosystem:")
-	for ecosystem, count := range stats.ByEcosystem {
-		fmt.Printf("  %-8s %d packages\n", ecosystem+":", count)
+	// Sorted. Ranging over the map printed the ecosystems in a different order
+	// on almost every run, which is the same nondeterminism the five output
+	// formats were fixed for: it defeats diffing two runs and any golden file.
+	ecosystems := make([]string, 0, len(stats.ByEcosystem))
+	for ecosystem := range stats.ByEcosystem {
+		ecosystems = append(ecosystems, string(ecosystem))
+	}
+	sort.Strings(ecosystems)
+	for _, ecosystem := range ecosystems {
+		fmt.Printf("  %-8s %d packages\n", ecosystem+":", stats.ByEcosystem[types.Ecosystem(ecosystem)])
 	}
 	fmt.Println()
 

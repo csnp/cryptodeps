@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 package output
@@ -31,6 +31,13 @@ type cryptoDetail struct {
 
 // Format writes the scan result as a table.
 func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	return f.formatProject(result, "", w)
+}
+
+// formatProject renders one project. root is the scan root when this render is
+// part of a workspace report and empty when it stands alone, so the manifest is
+// named the same way here as in the project list above it.
+func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
@@ -38,7 +45,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		return errors.New("writer cannot be nil")
 	}
 	// Header
-	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", result.Manifest, result.Summary.TotalDependencies)
+	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(manifestForReport(root, result.Manifest)), result.Summary.TotalDependencies)
 
 	// Check if there are any crypto findings
 	hasCrypto := false
@@ -50,8 +57,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 	}
 
 	if !hasCrypto {
-		fmt.Fprintln(w, "[OK] No cryptographic usage detected in dependencies.")
-		fmt.Fprintln(w)
+		f.printNoFindingsVerdict(w, result)
 		return nil
 	}
 
@@ -65,10 +71,10 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 			continue
 		}
 
-		depName := dep.Dependency.Name
-		if dep.Dependency.Version != "" {
-			depName = fmt.Sprintf("%s@%s", dep.Dependency.Name, dep.Dependency.Version)
-		}
+		// Escaped here, once, because this string is built from the manifest
+		// under scan and is printed on several rows below. A version of
+		// "1.3.1\n\n## Scan result: CLEAN" wrote that line into this report.
+		depName := reportSafe(dependencyLabel(dep.Dependency.Name, dep.Dependency.Version))
 
 		for _, c := range dep.Analysis.Crypto {
 			allCrypto = append(allCrypto, cryptoDetail{
@@ -104,12 +110,20 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 			result.Summary.AvailableCrypto,
 		)
 	} else {
-		fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n\n",
+		fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n",
 			result.Summary.TotalDependencies,
 			result.Summary.WithCrypto,
 			result.Summary.QuantumVulnerable,
 			result.Summary.QuantumPartial,
 		)
+		fmt.Fprintln(w)
+	}
+
+	// A filtered report is a partial view, and every number above describes only
+	// what survived the filter. Say so, next to the numbers.
+	if result.Summary.FilteredOut > 0 {
+		fmt.Fprintf(w, "FILTERED: %d further finding(s) excluded by --risk or --min-severity.\n\n",
+			result.Summary.FilteredOut)
 	}
 
 	// Display detailed remediation for vulnerable findings
@@ -145,11 +159,102 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		fmt.Fprintf(w, "[!] %d packages not in database (use --deep to analyze)\n", notAnalyzed)
 	}
 
-	if deepAnalyzed > 0 || notAnalyzed > 0 {
+	f.printHints(w, result)
+
+	if deepAnalyzed > 0 || notAnalyzed > 0 || len(result.Hints) > 0 {
 		fmt.Fprintln(w)
 	}
 
 	return nil
+}
+
+// printNoFindingsVerdict states what a scan with no crypto findings actually
+// established.
+//
+// "No cryptographic usage detected" is only true if something was examined. When
+// every dependency is unknown to the database, nothing was examined, and
+// reporting a clean result is a false negative on the tool's core question. The
+// three cases below are genuinely different and are worded differently.
+func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanResult) {
+	total := result.Summary.TotalDependencies
+	unknown := result.Summary.NotInDatabase
+
+	switch classifyNoFindings(result.Summary) {
+	case caseFiltered:
+		fmt.Fprintf(w, "[?] No findings matched the active filter. %d finding(s) were detected and\n",
+			result.Summary.FilteredOut)
+		fmt.Fprintln(w, "    excluded by --risk or --min-severity. This is not a clean result.")
+		fmt.Fprintln(w, "    Re-run without the filter to see them.")
+
+	case caseNoDependencies:
+		fmt.Fprintln(w, "[?] No dependencies found in this manifest. Nothing to analyze.")
+
+	case caseNothingExamined:
+		fmt.Fprintf(w, "[?] Not analyzed. All %d dependencies are absent from the crypto database,\n", total)
+		fmt.Fprintln(w, "    so no conclusion about cryptographic usage can be drawn from this scan.")
+		fmt.Fprintln(w, "    Run with --deep to analyze package source code directly.")
+		// The hints for this case say the same thing in other words. Printing
+		// both reads as three separate problems.
+
+	default:
+		fmt.Fprintf(w, "[OK] No cryptographic usage detected in the %d of %d dependencies that were analyzed.\n",
+			total-unknown, total)
+		if unknown > 0 {
+			fmt.Fprintf(w, "[!] %d not in database, so they were not examined (use --deep to analyze).\n", unknown)
+		}
+		f.printHints(w, result)
+	}
+
+	fmt.Fprintln(w)
+}
+
+// printHints prints the analyzer's suggestions. They were generated on every
+// scan but never reached the terminal.
+func (f *TableFormatter) printHints(w io.Writer, result *types.ScanResult) {
+	for _, hint := range result.Hints {
+		fmt.Fprintf(w, "    %s\n", hint)
+	}
+}
+
+// PrintSkipped reports manifests that were found but not analyzed. It is
+// deliberately loud: a silently skipped manifest is how a scanner reports a
+// clean tree it never read.
+func PrintSkipped(w io.Writer, root string, skipped []types.SkippedManifest) {
+	if len(skipped) == 0 {
+		return
+	}
+	// Split by kind. Counting them together made this report say "2 manifest
+	// file(s) found but NOT analyzed" about a corrupt package.json and a
+	// Cargo.toml in the same breath, while the CBOM for the same run said one.
+	// Only the first is a gap in the scan; the second is a limit of the tool.
+	var unread, unsupported []types.SkippedManifest
+	for _, s := range skipped {
+		if s.Unsupported {
+			unsupported = append(unsupported, s)
+		} else {
+			unread = append(unread, s)
+		}
+	}
+
+	if len(unread) > 0 {
+		fmt.Fprintf(w, "[!] %d manifest file(s) found but NOT analyzed:\n", len(unread))
+		for _, s := range unread {
+			fmt.Fprintf(w, "    %s\n", reportSafe(getRelativePath(root, s.Path)))
+			fmt.Fprintf(w, "      reason: %s\n", reportSafe(s.Reason))
+		}
+		fmt.Fprintln(w, "    These dependencies are missing from the results below.")
+		fmt.Fprintln(w)
+	}
+
+	if len(unsupported) > 0 {
+		fmt.Fprintf(w, "[?] %d manifest file(s) found for ecosystems cryptodeps does not support:\n",
+			len(unsupported))
+		for _, s := range unsupported {
+			fmt.Fprintf(w, "    %s\n", reportSafe(getRelativePath(root, s.Path)))
+		}
+		fmt.Fprintln(w, "    Their dependencies were not analyzed. This does not affect the exit code.")
+		fmt.Fprintln(w)
+	}
 }
 
 // printReachabilityBreakdown prints crypto grouped by reachability status.
@@ -172,7 +277,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 			icon := riskIcon(c.risk)
 			timeline := formatTimelineShort(getTimeline(c.algorithm))
 			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  %s %-14s %-12s  %-12s  %s\n",
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n",
 				icon, c.algorithm, formatRisk(c.risk), timeline, effort)
 			fmt.Fprintf(w, "     └─ %s\n", c.dependency)
 
@@ -196,7 +301,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range reachable {
 			icon := riskIcon(c.risk)
-			fmt.Fprintf(w, "  %s %-14s %-12s  %s\n", icon, c.algorithm, formatRisk(c.risk), c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %s\n", icon, c.algorithm, formatRisk(c.risk), c.dependency)
 		}
 		fmt.Fprintln(w)
 	}
@@ -206,15 +311,22 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 		fmt.Fprintln(w, "[.] AVAILABLE - In dependencies but not called (lower priority):")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 
-		// Group available by dependency for cleaner output
+		// Group available by dependency for cleaner output. Iterate the names in
+		// sorted order rather than ranging over the map, whose order Go
+		// randomises.
 		byDep := make(map[string][]cryptoDetail)
 		for _, c := range available {
 			byDep[c.dependency] = append(byDep[c.dependency], c)
 		}
+		depNames := make([]string, 0, len(byDep))
+		for dep := range byDep {
+			depNames = append(depNames, dep)
+		}
+		sort.Strings(depNames)
 
-		for dep, algos := range byDep {
+		for _, dep := range depNames {
 			var algoStrs []string
-			for _, a := range algos {
+			for _, a := range byDep[dep] {
 				algoStrs = append(algoStrs, fmt.Sprintf("%s %s", riskIcon(a.risk), a.algorithm))
 			}
 			fmt.Fprintf(w, "  %s\n", dep)
@@ -239,7 +351,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		for _, c := range vulnerable {
 			timeline := formatTimelineShort(getTimeline(c.algorithm))
 			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  🔴 %-14s %-12s  %-12s  %s\n", c.algorithm, timeline, effort, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency)
 		}
 		fmt.Fprintln(w)
 	}
@@ -250,7 +362,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		for _, c := range partial {
 			timeline := formatTimelineShort(getTimeline(c.algorithm))
 			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  🟡 %-14s %-12s  %-12s  %s\n", c.algorithm, timeline, effort, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency)
 		}
 		fmt.Fprintln(w)
 	}
@@ -259,7 +371,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		fmt.Fprintln(w, "[OK] QUANTUM SAFE:")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range safe {
-			fmt.Fprintf(w, "  🟢 %-14s %s\n", c.algorithm, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %s\n", riskIcon(c.risk), c.algorithm, c.dependency)
 		}
 		fmt.Fprintln(w)
 	}
@@ -270,7 +382,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		fmt.Fprintln(w, "[?] UNKNOWN RISK:")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range unknown {
-			fmt.Fprintf(w, "  ⚪ %-14s %s\n", c.algorithm, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %s\n", riskIcon(c.risk), c.algorithm, c.dependency)
 		}
 		fmt.Fprintln(w)
 	}
@@ -440,22 +552,42 @@ func filterByRisk(crypto []cryptoDetail, risk types.QuantumRisk) []cryptoDetail 
 	return result
 }
 
+// sortByRisk orders findings highest risk first.
+//
+// The comparison has to be total. Ordering on risk alone left every same-risk
+// finding in an arbitrary relative position, and since sort.Slice is not stable
+// the same scan printed its rows in a different order between runs.
 func sortByRisk(crypto []cryptoDetail) {
 	sort.Slice(crypto, func(i, j int) bool {
-		return riskPriority(crypto[i].risk) > riskPriority(crypto[j].risk)
+		a, b := crypto[i], crypto[j]
+		if pa, pb := riskPriority(a.risk), riskPriority(b.risk); pa != pb {
+			return pa > pb
+		}
+		if a.algorithm != b.algorithm {
+			return a.algorithm < b.algorithm
+		}
+		return a.dependency < b.dependency
 	})
 }
 
+// riskIcon maps a risk level to the marker shown beside a finding. It is the
+// single place that decision is made.
+//
+// These are the same ASCII tokens the section headers already use, so a reader
+// never needs a legend to connect a row to its section. They also survive a pipe
+// into a file, a screen reader, a terminal without an emoji font, and a
+// fixed-width column, none of which was true of the coloured circles that used
+// to be here. CSNP output carries no emoji.
 func riskIcon(risk types.QuantumRisk) string {
 	switch risk {
 	case types.RiskVulnerable:
-		return "🔴"
+		return "[!]"
 	case types.RiskPartial:
-		return "🟡"
+		return "[~]"
 	case types.RiskSafe:
-		return "🟢"
+		return "[OK]"
 	default:
-		return "⚪"
+		return "[?]"
 	}
 }
 
@@ -579,27 +711,40 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 		return errors.New("writer cannot be nil")
 	}
 
-	// If there's only one project, just format it normally
+	// Report unread manifests first. They change how every number below should
+	// be read, so they cannot go in a footer.
+	PrintSkipped(w, result.RootPath, result.Skipped)
+
+	// If there's only one project, just format it normally. It still gets the
+	// scan root: without it, a single-manifest repository, which is the most
+	// common shape there is, printed an absolute manifest path in the table while
+	// markdown printed a relative one for the same run, and the skip list printed
+	// above it by PrintSkipped was relative in the same document.
 	if len(result.Projects) == 1 {
-		return f.Format(result.Projects[0], w)
+		// The root, once, before the report. Relativizing the manifest without
+		// it left this document with no absolute path anywhere, so a reader had
+		// nothing to resolve "./package.json" against. Every other format
+		// declares its root; this one had stopped.
+		fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(scanRootDir(result.RootPath)))
+		return f.formatProject(result.Projects[0], result.RootPath, w)
 	}
 
 	// Header showing discovered projects
-	fmt.Fprintf(w, "\nScanning %s...\n", result.RootPath)
+	fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(scanRootDir(result.RootPath)))
 	fmt.Fprintf(w, "Found %d projects:\n", len(result.Projects))
 	for _, p := range result.Projects {
 		relPath := getRelativePath(result.RootPath, p.Manifest)
-		fmt.Fprintf(w, "  - %s (%s)\n", relPath, p.Ecosystem)
+		fmt.Fprintf(w, "  - %s (%s)\n", reportSafe(relPath), p.Ecosystem)
 	}
 	fmt.Fprintln(w)
 
 	// Format each project
 	for i, project := range result.Projects {
 		relPath := getRelativePath(result.RootPath, project.Manifest)
-		fmt.Fprintf(w, "=== %s (%s) ===\n", relPath, project.Ecosystem)
+		fmt.Fprintf(w, "=== %s (%s) ===\n", reportSafe(relPath), project.Ecosystem)
 
 		// Use the single-project formatter for each project
-		if err := f.Format(project, w); err != nil {
+		if err := f.formatProject(project, result.RootPath, w); err != nil {
 			return err
 		}
 
@@ -618,6 +763,13 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 		result.TotalSummary.QuantumVulnerable,
 		result.TotalSummary.QuantumPartial,
 	)
+	// The aggregate is the line a reader takes away, so it carries the filter
+	// annotation too. Printing it only under each project left the TOTAL row
+	// describing a filtered scan as though it were complete.
+	if result.TotalSummary.FilteredOut > 0 {
+		fmt.Fprintf(w, "FILTERED: %d further finding(s) excluded by --risk or --min-severity.\n",
+			result.TotalSummary.FilteredOut)
+	}
 	if result.TotalSummary.ReachabilityAnalyzed {
 		fmt.Fprintf(w, "REACHABILITY: %d confirmed | %d reachable | %d available-only\n",
 			result.TotalSummary.ConfirmedCrypto,
@@ -630,16 +782,23 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	return nil
 }
 
-// getRelativePath returns a relative path from root to target.
+// getRelativePath renders target relative to the scan root, in the "./x" form
+// the project list uses.
+//
+// It asks relativeToRoot, the same helper CBOM and SARIF use. The string-prefix
+// test it replaced was a third implementation of that comparison, and it was
+// wrong in both directions: it compared the raw root against absolutized
+// manifest paths, so `cryptodeps analyze .` printed absolute paths while
+// `cryptodeps analyze /abs/path` printed relative ones for the same tree; and a
+// shared string prefix produced a path that does not exist, with
+// getRelativePath("/repo", "/repository/go.mod") returning "./sitory/go.mod".
 func getRelativePath(root, target string) string {
-	// Simple approach: remove root prefix if present
-	if strings.HasPrefix(target, root) {
-		rel := strings.TrimPrefix(target, root)
-		rel = strings.TrimPrefix(rel, "/")
-		if rel == "" {
-			return "."
-		}
-		return "./" + rel
+	rel, underRoot := relativeToRoot(scanRootDir(root), target)
+	if !underRoot {
+		return rel
 	}
-	return target
+	if rel == "." {
+		return "."
+	}
+	return "./" + rel
 }

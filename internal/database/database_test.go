@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 package database
@@ -358,5 +358,52 @@ func TestLookupWithExactVersion(t *testing.T) {
 	_, found = db.Lookup(types.EcosystemGo, "versioned-pkg", "2.0.0")
 	if !found {
 		t.Error("Should find package with fallback to no-version key")
+	}
+}
+
+// TestStatsCountsPackagesNotIndexEntries is the regression test for a number the
+// tool announced on a user-facing surface and got wrong by about 90 per cent.
+//
+// addToIndex deliberately files every package under two keys, "name@version" and
+// "name", so a lookup succeeds with or without a version. Stats reported
+// len(index), so every versioned package counted twice: `cryptodeps status`
+// announced 1731 packages for a database of 901. The two keys collapse into one
+// for a package with no version, which is why the inflation was not a clean
+// doubling and why the wrong number looked plausible.
+func TestStatsCountsPackagesNotIndexEntries(t *testing.T) {
+	db := New("")
+	pkgs := []*types.PackageAnalysis{
+		{Package: "node-forge", Version: "1.3.1", Ecosystem: types.EcosystemNPM},
+		{Package: "jsonwebtoken", Version: "9.0.0", Ecosystem: types.EcosystemNPM},
+		// No version: both index keys collapse to one, so this package is the
+		// reason a naive len(index) is not simply double the truth.
+		{Package: "left-pad", Ecosystem: types.EcosystemNPM},
+		{Package: "cryptography", Version: "42.0.0", Ecosystem: types.EcosystemPyPI},
+	}
+	for _, p := range pkgs {
+		db.addToIndex(p)
+	}
+
+	// Guard the fixture: the index really must hold more entries than packages,
+	// or this passes against the broken implementation too.
+	entries := 0
+	for _, byEcosystem := range db.index {
+		entries += len(byEcosystem)
+	}
+	if entries <= len(pkgs) {
+		t.Fatalf("index holds %d entries for %d packages; the fixture does not exercise "+
+			"the double-keying this test exists for", entries, len(pkgs))
+	}
+
+	stats := db.Stats()
+	if stats.TotalPackages != len(pkgs) {
+		t.Errorf("Stats().TotalPackages = %d, want %d; the index holds %d entries and the "+
+			"count must be of packages, not entries", stats.TotalPackages, len(pkgs), entries)
+	}
+	if got, want := stats.ByEcosystem[types.EcosystemNPM], 3; got != want {
+		t.Errorf("Stats().ByEcosystem[npm] = %d, want %d", got, want)
+	}
+	if got, want := stats.ByEcosystem[types.EcosystemPyPI], 1; got != want {
+		t.Errorf("Stats().ByEcosystem[pypi] = %d, want %d", got, want)
 	}
 }

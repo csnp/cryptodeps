@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Command gendb generates a JSON database file from the embedded database
@@ -34,11 +34,11 @@ type DatabaseExport struct {
 
 // DatabaseStats contains statistics about the database.
 type DatabaseStats struct {
-	TotalPackages    int                       `json:"totalPackages"`
-	VerifiedPackages int                       `json:"verifiedPackages"`
-	InferredPackages int                       `json:"inferredPackages"`
-	ByEcosystem      map[types.Ecosystem]int   `json:"byEcosystem"`
-	ByConfidence     map[types.Confidence]int  `json:"byConfidence"`
+	TotalPackages    int                      `json:"totalPackages"`
+	VerifiedPackages int                      `json:"verifiedPackages"`
+	InferredPackages int                      `json:"inferredPackages"`
+	ByEcosystem      map[types.Ecosystem]int  `json:"byEcosystem"`
+	ByConfidence     map[types.Confidence]int `json:"byConfidence"`
 }
 
 var (
@@ -81,8 +81,15 @@ func main() {
 	fmt.Fprintf(os.Stderr, "  Verified: %d\n", stats.VerifiedPackages)
 	fmt.Fprintf(os.Stderr, "  Inferred: %d\n", stats.InferredPackages)
 	fmt.Fprintf(os.Stderr, "  By ecosystem:\n")
-	for eco, count := range stats.ByEcosystem {
-		fmt.Fprintf(os.Stderr, "    %s: %d\n", eco, count)
+	// Sorted, for the same reason the status command is: ranging over the map
+	// printed the ecosystems in a different order on almost every run.
+	ecosystems := make([]string, 0, len(stats.ByEcosystem))
+	for eco := range stats.ByEcosystem {
+		ecosystems = append(ecosystems, string(eco))
+	}
+	sort.Strings(ecosystems)
+	for _, eco := range ecosystems {
+		fmt.Fprintf(os.Stderr, "    %s: %d\n", eco, stats.ByEcosystem[types.Ecosystem(eco)])
 	}
 
 	// Marshal and output to stdout

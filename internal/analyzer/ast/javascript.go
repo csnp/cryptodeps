@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package ast provides AST-based analysis for crypto detection.
@@ -26,25 +26,25 @@ func NewJavaScriptAnalyzer() *JavaScriptAnalyzer {
 // Common patterns for detecting crypto in JavaScript
 var (
 	// Import patterns
-	requirePattern    = regexp.MustCompile(`require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
-	importPattern     = regexp.MustCompile(`import\s+.*?\s+from\s+['"]([^'"]+)['"]`)
-	importDynPattern  = regexp.MustCompile(`import\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	requirePattern   = regexp.MustCompile(`require\s*\(\s*['"]([^'"]+)['"]\s*\)`)
+	importPattern    = regexp.MustCompile(`import\s+.*?\s+from\s+['"]([^'"]+)['"]`)
+	importDynPattern = regexp.MustCompile(`import\s*\(\s*['"]([^'"]+)['"]\s*\)`)
 
 	// Function detection patterns
-	jsFuncDeclPattern  = regexp.MustCompile(`(?:async\s+)?function\s+(\w+)\s*\(`)
-	jsArrowFuncPattern = regexp.MustCompile(`(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>`)
+	jsFuncDeclPattern    = regexp.MustCompile(`(?:async\s+)?function\s+(\w+)\s*\(`)
+	jsArrowFuncPattern   = regexp.MustCompile(`(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>`)
 	jsClassMethodPattern = regexp.MustCompile(`(?:async\s+)?(\w+)\s*\([^)]*\)\s*{`)
-	jsExportPattern     = regexp.MustCompile(`^(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)|module\.exports\s*[.=]|exports\.(\w+))`)
-	jsClassPattern      = regexp.MustCompile(`class\s+(\w+)`)
+	jsExportPattern      = regexp.MustCompile(`^(?:export\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+(\w+)|module\.exports\s*[.=]|exports\.(\w+))`)
+	jsClassPattern       = regexp.MustCompile(`class\s+(\w+)`)
 
 	// Crypto function call patterns
 	cryptoMethodPattern = regexp.MustCompile(`crypto\.(createCipher|createDecipher|createCipheriv|createDecipheriv|createSign|createVerify|createHash|createHmac|generateKeyPair|generateKeyPairSync|randomBytes|scrypt|scryptSync|pbkdf2|pbkdf2Sync)\s*\(`)
 
 	// Common crypto library function patterns
-	bcryptPattern     = regexp.MustCompile(`bcrypt\.(hash|compare|genSalt|hashSync|compareSync|genSaltSync)\s*\(`)
-	jwtPattern        = regexp.MustCompile(`(jwt|jsonwebtoken)\.(sign|verify|decode)\s*\(`)
-	cryptoJSPattern   = regexp.MustCompile(`CryptoJS\.(AES|DES|TripleDES|Rabbit|RC4|MD5|SHA1|SHA256|SHA512|SHA3|RIPEMD160|HmacMD5|HmacSHA1|HmacSHA256|HmacSHA512)\.(encrypt|decrypt|hash)\s*\(`)
-	nodeForgePattern  = regexp.MustCompile(`forge\.(pki|cipher|md|hmac|random|util)\.(rsa|aes|des|md5|sha1|sha256|sha512)`)
+	bcryptPattern    = regexp.MustCompile(`bcrypt\.(hash|compare|genSalt|hashSync|compareSync|genSaltSync)\s*\(`)
+	jwtPattern       = regexp.MustCompile(`(jwt|jsonwebtoken)\.(sign|verify|decode)\s*\(`)
+	cryptoJSPattern  = regexp.MustCompile(`CryptoJS\.(AES|DES|TripleDES|Rabbit|RC4|MD5|SHA1|SHA256|SHA512|SHA3|RIPEMD160|HmacMD5|HmacSHA1|HmacSHA256|HmacSHA512)\.(encrypt|decrypt|hash)\s*\(`)
+	nodeForgePattern = regexp.MustCompile(`forge\.(pki|cipher|md|hmac|random|util)\.(rsa|aes|des|md5|sha1|sha256|sha512)`)
 
 	// Algorithm string patterns in crypto calls
 	algStringPattern = regexp.MustCompile(`['"]([a-zA-Z0-9-]+)['"]`)
@@ -52,46 +52,46 @@ var (
 
 // Known crypto algorithms in JavaScript
 var jsAlgorithmMap = map[string]string{
-	"aes-128-cbc":     "AES-128",
-	"aes-192-cbc":     "AES-192",
-	"aes-256-cbc":     "AES-256",
-	"aes-128-gcm":     "AES-128-GCM",
-	"aes-256-gcm":     "AES-256-GCM",
-	"aes-128-ctr":     "AES-128",
-	"aes-256-ctr":     "AES-256",
-	"des":             "DES",
-	"des-ede3":        "3DES",
-	"des-ede3-cbc":    "3DES",
-	"rc4":             "RC4",
-	"md5":             "MD5",
-	"sha1":            "SHA-1",
-	"sha256":          "SHA-256",
-	"sha384":          "SHA-384",
-	"sha512":          "SHA-512",
-	"sha3-256":        "SHA3-256",
-	"sha3-512":        "SHA3-512",
-	"rsa":             "RSA",
-	"rsa-sha256":      "RSA",
-	"ecdsa":           "ECDSA",
-	"ed25519":         "Ed25519",
-	"x25519":          "X25519",
-	"curve25519":      "X25519",
-	"secp256k1":       "ECDSA",
-	"prime256v1":      "P-256",
-	"secp384r1":       "P-384",
-	"secp521r1":       "P-521",
-	"hs256":           "HMAC-SHA256",
-	"hs384":           "HMAC-SHA384",
-	"hs512":           "HMAC-SHA512",
-	"rs256":           "RS256",
-	"rs384":           "RS384",
-	"rs512":           "RS512",
-	"es256":           "ES256",
-	"es384":           "ES384",
-	"es512":           "ES512",
-	"ps256":           "PS256",
-	"ps384":           "PS384",
-	"ps512":           "PS512",
+	"aes-128-cbc":  "AES-128",
+	"aes-192-cbc":  "AES-192",
+	"aes-256-cbc":  "AES-256",
+	"aes-128-gcm":  "AES-128-GCM",
+	"aes-256-gcm":  "AES-256-GCM",
+	"aes-128-ctr":  "AES-128",
+	"aes-256-ctr":  "AES-256",
+	"des":          "DES",
+	"des-ede3":     "3DES",
+	"des-ede3-cbc": "3DES",
+	"rc4":          "RC4",
+	"md5":          "MD5",
+	"sha1":         "SHA-1",
+	"sha256":       "SHA-256",
+	"sha384":       "SHA-384",
+	"sha512":       "SHA-512",
+	"sha3-256":     "SHA3-256",
+	"sha3-512":     "SHA3-512",
+	"rsa":          "RSA",
+	"rsa-sha256":   "RSA",
+	"ecdsa":        "ECDSA",
+	"ed25519":      "Ed25519",
+	"x25519":       "X25519",
+	"curve25519":   "X25519",
+	"secp256k1":    "ECDSA",
+	"prime256v1":   "P-256",
+	"secp384r1":    "P-384",
+	"secp521r1":    "P-521",
+	"hs256":        "HMAC-SHA256",
+	"hs384":        "HMAC-SHA384",
+	"hs512":        "HMAC-SHA512",
+	"rs256":        "RS256",
+	"rs384":        "RS384",
+	"rs512":        "RS512",
+	"es256":        "ES256",
+	"es384":        "ES384",
+	"es512":        "ES512",
+	"ps256":        "PS256",
+	"ps384":        "PS384",
+	"ps512":        "PS512",
 }
 
 // AnalyzeDirectory analyzes all JavaScript files in a directory.

@@ -5,6 +5,182 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Release-blocking defects found by a fresh-user release test on the 1.3.0
+candidate. 1.3.0 was never tagged.
+
+### Fixed
+
+- **Every machine-readable output reported the wrong tool version.** One binary
+  gave four answers: `version` said 1.3.0 while SARIF and CBOM both claimed
+  1.0.0 and JSON carried no version at all. SARIF and CBOM are provenance
+  artifacts, so a stale literal there is a false record of what produced the
+  document. A new `pkg/version` package is now the single source of truth, fed
+  once from the values GoReleaser injects into `main`. SARIF also gained
+  `semanticVersion`, and JSON gained a top-level `tool` object.
+
+- **A manifest that could not be parsed was dropped silently and the scan still
+  reported a clean summary.** A tree containing a good and a corrupt
+  `package.json` scanned only the good one and never mentioned the other, so a
+  manifest broken by a bad merge became invisible and CI went green. The cause
+  was not the parse-error path: discovery rejected the file before any parser
+  ran. Unreadable manifests are now listed by name with the reason in the table,
+  JSON, markdown and SARIF output, and always exit 2. A tree whose only manifest
+  is corrupt no longer claims that no manifest was found.
+
+- **A scan where every dependency was unknown reported "No cryptographic usage
+  detected".** Nothing had been examined. The three cases (no dependencies, all
+  dependencies unknown, and dependencies analyzed with no findings) are now
+  worded differently, and the `--deep` hints that the analyzer had always
+  generated are finally printed.
+
+- **`--risk` and `--min-severity` did nothing.** Both were stored and never
+  read, so every value, including a misspelt one, produced byte-identical
+  output. They now filter, and the summary and exit code are computed from what
+  survives so that every number describes the same set of findings. Unknown
+  values are rejected instead of ignored. When a filter removes every finding,
+  the report says so rather than reporting a clean scan.
+
+- **Every SARIF result pointed at a literal path `"multiple"`.** Multi-project
+  runs flattened all projects into one synthetic result, discarding the real
+  manifest paths, so every alert landed on a file that does not exist. Results
+  now carry their own project's manifest, relative to the scan root and declared
+  through `SRCROOT` in `originalUriBaseIds`.
+
+- **Output order shuffled between runs of the same scan.** `package.json`
+  dependency blocks were read by ranging over maps, and findings were sorted on
+  risk alone with a non-stable sort. The finding set was stable but the order
+  was not, which breaks golden-file CI and reproducible SBOMs. Discovery,
+  parsing and rendering are now fully ordered, so ordering is stable across runs
+  in all five formats. The JSON scan timestamp and the CBOM serial number
+  necessarily differ between runs; every other byte is identical.
+
+- **A repository containing an unsupported manifest type always exited 2.**
+  Discovery recognised `Cargo.toml`, `Gemfile`, `composer.json` and the Gradle
+  files, but no parser exists for any of them, so each became a reported skip,
+  and a skip forces exit 2. A tree with a `go.mod` beside a `Cargo.toml`
+  reported an analysis error instead of the exit 1 its real quantum-vulnerable
+  findings had earned, so the CI signal the tool exists to emit was replaced by
+  an error about a file cryptodeps never claimed to read. Such files are now
+  reported as an unsupported ecosystem rather than an unread manifest, and only
+  a manifest that should have been readable and was not marks the scan
+  incomplete.
+
+- **A filtered scan reported clean in every format except the table.** The
+  verdict that distinguishes "nothing was found" from "nothing was examined"
+  from "everything was withheld" reached the table only. Markdown still printed
+  "No cryptographic usage detected in dependencies.", SARIF asserted
+  `executionSuccessful` over an empty result set, and CBOM emitted no
+  components and said nothing, so a consumer of any of them read a clean bill
+  of health. All five formats now classify through one shared function, SARIF
+  records coverage as `toolExecutionNotifications`, and CBOM records it as
+  `metadata.properties`.
+
+- **The aggregate summary of a workspace scan omitted the withheld count.**
+  `AggregateResults` summed nine fields and not `filteredOut`, so
+  `totalSummary.filteredOut` stayed absent while the per-project summaries
+  reported dozens. The totals a reader actually looks at described a filtered
+  scan as a complete one.
+
+- **`--min-severity` discarded findings whose severity was not upper case.**
+  Severity ranking is keyed by the upper-case constants and a Go map returns
+  zero for an absent key, so an unrecognised severity ranked as `INFO` and any
+  higher threshold dropped it, uncounted. Database records arrive from a remote
+  feed with no normalisation, so a record carrying `critical` was discarded by
+  the very filter a user reaches for to see critical findings. Ranking is now
+  case-insensitive, and a severity that cannot be ranked is reported rather
+  than withheld.
+
+- **`analyze <manifest-file>` emitted SARIF pointing at nothing.** Passing a
+  file rather than a directory made the `SRCROOT` base the manifest itself, so
+  every result resolved to the literal `"."`. The base is now the containing
+  directory.
+
+- **The markdown remediation table shuffled between runs.** It was the one
+  format still ranging over a map after the determinism work, so ten runs of
+  the same scan produced ten different documents.
+
+- **The GitHub Action published zero counts and could not upload SARIF.** It
+  read `.summary` from JSON, but workspace discovery is the default and a
+  multi-project document carries `.totalSummary`, so `vulnerable-count` was
+  always 0. Its SARIF step also treated any non-zero exit as a step failure,
+  which skipped the upload for exactly the incomplete scans most worth
+  reporting.
+
+- **A CBOM published the operator's filesystem layout.** Manifest paths were
+  rendered relative to the scan root so that a shared bill of materials carries
+  the repository layout and not a home directory or a CI runner's workspace
+  path, but the comparison used the scan root exactly as it was typed while the
+  manifest paths had already been absolutized. `cryptodeps analyze /abs/path`
+  produced relative paths and `cryptodeps analyze .`, which is the default and
+  what the Action runs, emitted absolute ones. SARIF had always normalized the
+  root; both formats now share one implementation, so they cannot disagree again.
+
+- **A scanned repository could write its own lines into the report.** Every
+  filesystem path reached the table and markdown reports uninterpolated, and a
+  path is attacker-controlled: a directory named with embedded newlines and the
+  text `## Scan result: CLEAN` put exactly that heading in the markdown report,
+  above the corrupt manifest the report exists to disclose. A directory named
+  `a|b` shifted a column out of the "Not analyzed" table, because
+  GitHub-flavoured markdown splits a cell on an unescaped pipe even inside a
+  code span. Every path, skip reason and dependency string in the markdown report is now
+  rendered inside a code span, where only a backtick and a pipe are active, rather than
+  escaped character by character: the first attempt at this escaped control
+  characters and left a bare `##` heading, so a directory named `**CLEAN**` or
+  `[no findings](https://...)` still rendered as markup. In the plain-text
+  report, and inside the code spans, anything carrying a control character, a
+  Unicode line or paragraph separator, a bidi override, a zero-width character,
+  a backtick or a pipe is rendered as a quoted string: single-line, reversible,
+  and still naming the file. JSON, CBOM and SARIF were never affected by the
+  line-injection vector, because `encoding/json` escapes what it emits.
+
+- **A dependency string could write its own lines into the report too.** The
+  path fix did not cover the other channel into the same document: a dependency
+  name and version come from the manifest under scan, and both were interpolated
+  bare into the markdown findings tables and the table report. It needs no
+  filesystem access at all, which makes it easier to reach than the directory
+  name that was fixed first: the database lookup falls back from "name@version"
+  to the name alone, so a real package with a version of
+  "1.3.1\n\n## Scan result: CLEAN" still resolved, reached the findings table,
+  and put that heading in the report seven times. Now rendered through the same
+  code spans every path uses. Present in 1.2.2 as well; the fix is not a
+  regression repair.
+
+- **The table and markdown reports named manifests differently from the CBOM and
+  SARIF for the same scan.** Only the two machine-readable formats expressed a
+  manifest relative to the scan root; the table used a string-prefix test that
+  compared the root as typed against absolutized paths, and markdown did not
+  relativize at all. Every surface of one run now names a manifest the same way,
+  with one absolute anchor per document. `getRelativePath` also returned a path
+  that does not exist when the root was a string prefix of a sibling directory,
+  so `("/repo", "/repository/go.mod")` gave `./sitory/go.mod`.
+
+- **`cryptodeps status` reported roughly twice the packages the database holds.**
+  It announced 1731 packages, and every per-ecosystem number was wrong the same
+  way, for a database of 901. The index files each package under two keys,
+  `name@version` and `name`, so a lookup succeeds with or without a version, and
+  the count was of index entries rather than packages. `status` now reports 901,
+  matching the database's own stats block and a direct count of its records, and
+  it lists the ecosystems in a fixed order instead of the order the map happened
+  to iterate in.
+
+### Changed
+
+- `output.PrintSkipped` takes the scan root as its second argument, so it can
+  name a manifest the same way the rest of the report does. This is a breaking
+  change to an exported function in an importable package.
+
+- Coloured emoji in the table output are replaced by the ASCII markers the
+  section headers already use: `[!]` vulnerable, `[~]` partial, `[OK]` safe,
+  `[?]` unknown. They need no legend, and unlike the emoji they survive a pipe
+  into a file, a terminal without an emoji font, and a screen reader. This also
+  brings the tool in line with the CSNP no-emoji standard.
+
+- A runtime failure no longer prints the full flag list after the error. The
+  message that explains the failure was being pushed off the top of the
+  terminal. Usage is still shown for genuine flag mistakes, where it helps.
+
 ## [1.3.0] - 2026-07-27
 
 Fixes both open community issues, plus a silent false negative found while
@@ -85,9 +261,9 @@ reproducing them.
 
 ### Changed
 - **Output formatting**: Clean, professional terminal design with colored status indicators
-  - 🔴 Vulnerable (quantum-broken by Shor's algorithm)
-  - 🟡 Partial risk (weakened by Grover's algorithm)
-  - 🟢 Safe (quantum-resistant)
+  - Vulnerable (quantum-broken by Shor's algorithm)
+  - Partial risk (weakened by Grover's algorithm)
+  - Safe (quantum-resistant)
 - Improved remediation guidance layout with aligned fields
 - Call trace formatting now uses `>` prefix for cleaner output
 

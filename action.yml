@@ -87,9 +87,14 @@ runs:
 
         # Parse summary for outputs (extract from table or JSON)
         if [ "${{ inputs.format }}" = "json" ]; then
-          VULNERABLE=$(echo "$OUTPUT" | jq -r '.summary.quantumVulnerable // 0')
-          PARTIAL=$(echo "$OUTPUT" | jq -r '.summary.quantumPartial // 0')
-          CRYPTO=$(echo "$OUTPUT" | jq -r '.summary.withCrypto // 0')
+          # Workspace discovery is the default, and a multi-project document
+          # carries totalSummary rather than summary. Reading only .summary made
+          # every published count 0 on the default path, so the action reported
+          # "0 vulnerable" for trees that were full of findings.
+          SUMMARY=$(echo "$OUTPUT" | jq -r '(.totalSummary // .summary) // {}')
+          VULNERABLE=$(echo "$SUMMARY" | jq -r '.quantumVulnerable // 0')
+          PARTIAL=$(echo "$SUMMARY" | jq -r '.quantumPartial // 0')
+          CRYPTO=$(echo "$SUMMARY" | jq -r '.withCrypto // 0')
         else
           # Default counts if not parseable
           VULNERABLE=0
@@ -105,16 +110,39 @@ runs:
         exit $EXIT_CODE
 
     - name: Generate SARIF Report
-      if: inputs.sarif-file != ''
+      # !cancelled(), not success(): the analysis step above ends with
+      # `exit $EXIT_CODE` and its default threshold exits 1 on any vulnerable
+      # finding, so the implicit success() skipped the SARIF steps for every
+      # repository that had something to report. Not always() either, which
+      # GitHub documents as running even on cancellation: a cancelled run would
+      # then still push a report into the Security tab.
+      if: ${{ !cancelled() && inputs.sarif-file != '' }}
       shell: bash
       run: |
+        # A non-zero exit here must not stop the upload. --fail-on none silences
+        # the finding-based exit codes, but exit 2 still reports an analysis
+        # error such as a manifest that could not be read, and that report is
+        # precisely the one worth sending to the Security tab. Composite bash
+        # steps run under -e, so without this the step failed and the upload
+        # below never ran. Only a missing or empty document is a real failure.
+        set +e
         cryptodeps analyze "${{ inputs.path }}" \
           --format sarif \
           --fail-on none \
           --offline > "${{ inputs.sarif-file }}"
+        EXIT_CODE=$?
+        set -e
+
+        if [ ! -s "${{ inputs.sarif-file }}" ]; then
+          echo "::error::cryptodeps wrote no SARIF output (exit $EXIT_CODE)"
+          exit 1
+        fi
+        if [ "$EXIT_CODE" -ne 0 ]; then
+          echo "::warning::cryptodeps exited $EXIT_CODE. The SARIF report may be incomplete; see runs[].invocations[].toolExecutionNotifications for what was not analyzed."
+        fi
 
     - name: Upload SARIF to GitHub Security
-      if: inputs.sarif-file != ''
+      if: ${{ !cancelled() && inputs.sarif-file != '' }}
       uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: ${{ inputs.sarif-file }}

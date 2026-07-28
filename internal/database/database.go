@@ -1,4 +1,4 @@
-// Copyright 2024-2025 CSNP (csnp.org)
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
 // SPDX-License-Identifier: Apache-2.0
 
 // Package database provides the crypto knowledge base lookup functionality.
@@ -121,14 +121,33 @@ func enrichWithRemediation(analysis *types.PackageAnalysis, ecosystem types.Ecos
 }
 
 // Stats returns statistics about the database.
+//
+// It counts distinct database records, not index entries. addToIndex deliberately files
+// every package under two keys, "name@version" and "name", so that a lookup
+// succeeds with or without a version. Reporting len(index) as a package count
+// therefore counted every versioned package twice: `cryptodeps status` announced
+// 1731 packages for a database holding 901, and every per-ecosystem number was
+// wrong in the same way. The two keys collapse for a package with no version,
+// which is why the inflation was not a clean doubling and why the number looked
+// plausible enough to survive.
+//
+// Records, not names: the database can hold two records for one package under
+// different spellings of its name, as it does for PGPy/pgpy and PyNaCl/pynacl,
+// and counting records is what makes this agree with the stats block the
+// database publishes about itself. A name-based count would report 899 where
+// the file says 901.
 func (db *Database) Stats() DatabaseStats {
 	stats := DatabaseStats{
 		ByEcosystem: make(map[types.Ecosystem]int),
 	}
 
 	for ecosystem, pkgs := range db.index {
-		stats.ByEcosystem[ecosystem] = len(pkgs)
-		stats.TotalPackages += len(pkgs)
+		distinct := make(map[*types.PackageAnalysis]bool, len(pkgs))
+		for _, pkg := range pkgs {
+			distinct[pkg] = true
+		}
+		stats.ByEcosystem[ecosystem] = len(distinct)
+		stats.TotalPackages += len(distinct)
 	}
 
 	return stats
@@ -195,10 +214,14 @@ func (db *Database) loadEmbeddedData() {
 			Version:   "",
 			Ecosystem: types.EcosystemGo,
 			Analysis: types.AnalysisMetadata{
-				Date:        time.Now(),
-				Method:      "embedded",
-				Tool:        "cryptodeps",
-				ToolVersion: "1.0.0",
+				Date:   time.Now(),
+				Method: "embedded",
+				Tool:   "cryptodeps",
+				// No ToolVersion: the embedded records are curated by hand, so
+				// attributing them to any tool version is a false provenance
+				// claim. The scanner's own version is reported once, at the top
+				// of each output document. This matches the other 69 embedded
+				// records, which have never set the field.
 			},
 			Crypto: []types.CryptoUsage{
 				{Algorithm: "Ed25519", Type: "signature", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityHigh, Remediation: "Migrate to ML-DSA (FIPS 204) for signatures"},
