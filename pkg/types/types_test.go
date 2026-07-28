@@ -375,3 +375,52 @@ func TestAggregateReportsNoFilterWhenNoneWasApplied(t *testing.T) {
 			multi.TotalSummary.FilteredOut)
 	}
 }
+
+// TestExaminedCountsBothMeansOfExamination pins the distinction the summary is
+// built from. A database hit and a successful source read are two answers to
+// one question, and asking only the first is what made a --deep scan report
+// that it had examined nothing.
+func TestExaminedCountsBothMeansOfExamination(t *testing.T) {
+	tests := []struct {
+		name string
+		dep  DependencyResult
+		want bool
+	}{
+		{"in the database", DependencyResult{InDatabase: true}, true},
+		{"read by source analysis", DependencyResult{DeepAnalyzed: true}, true},
+		{"both", DependencyResult{InDatabase: true, DeepAnalyzed: true}, true},
+		{"neither", DependencyResult{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.dep.Examined(); got != tt.want {
+				t.Errorf("Examined() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestAggregateCarriesCoverageFields guards the aggregate against answering the
+// coverage question from a different field than the per-project summaries do.
+// The FilteredOut field was dropped here once already, and the totals are what
+// a reader actually looks at.
+func TestAggregateCarriesCoverageFields(t *testing.T) {
+	examined := &ScanResult{Summary: ScanSummary{
+		TotalDependencies: 2, NotInDatabase: 2, NotExamined: 0, DeepAttempted: true,
+	}}
+	unexamined := &ScanResult{Summary: ScanSummary{
+		TotalDependencies: 3, NotInDatabase: 3, NotExamined: 3,
+	}}
+
+	multi := AggregateResults("/repo", []*ScanResult{examined, unexamined})
+
+	if multi.TotalSummary.NotExamined != 3 {
+		t.Errorf("TotalSummary.NotExamined = %d, want 3", multi.TotalSummary.NotExamined)
+	}
+	if !multi.TotalSummary.DeepAttempted {
+		t.Error("TotalSummary.DeepAttempted = false, want true; one project ran source analysis")
+	}
+	if multi.TotalSummary.NotInDatabase != 5 {
+		t.Errorf("TotalSummary.NotInDatabase = %d, want 5", multi.TotalSummary.NotInDatabase)
+	}
+}

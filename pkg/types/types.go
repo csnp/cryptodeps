@@ -148,6 +148,20 @@ type DependencyResult struct {
 	Error        string           `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
+// Examined reports whether this dependency was inspected by any means.
+//
+// There are two, and reports that asked only about the first were wrong about
+// the second. A database lookup answers "do we already know what this package
+// contains"; source analysis answers the same question by reading the package.
+// A scan that ran source analysis over every dependency and found nothing was
+// still described as having examined nothing, because the only question being
+// asked was the database one. The distinction belongs here rather than in each
+// caller's own condition, so that a third means of examination added later has
+// one place to declare itself.
+func (d DependencyResult) Examined() bool {
+	return d.InDatabase || d.DeepAnalyzed
+}
+
 // ScanResult represents the complete result of scanning a project.
 type ScanResult struct {
 	Project      string             `json:"project" yaml:"project"`
@@ -167,6 +181,21 @@ type ScanSummary struct {
 	QuantumVulnerable  int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
 	QuantumPartial     int `json:"quantumPartial" yaml:"quantumPartial"`
 	NotInDatabase      int `json:"notInDatabase" yaml:"notInDatabase"`
+	// NotExamined counts dependencies that no means of examination reached:
+	// absent from the crypto database, and not read by source analysis either.
+	//
+	// NotInDatabase is not a substitute for it. Using the database count to
+	// answer "was anything examined" was correct only while the database was
+	// the only way to examine a package, and --deep is a second way. A scan
+	// that deep-analyzed every dependency reported that none had been examined,
+	// and told the user to run the flag they had just run.
+	NotExamined int `json:"notExamined" yaml:"notExamined"`
+	// DeepAttempted records whether source analysis ran for the packages the
+	// database did not cover. Without it a report cannot tell "not examined
+	// because you did not ask for source analysis", where the next step is
+	// --deep, from "not examined because source analysis could not fetch the
+	// package", where suggesting --deep is a dead end.
+	DeepAttempted bool `json:"deepAttempted,omitempty" yaml:"deepAttempted,omitempty"`
 	// FilteredOut counts findings that were detected and then withheld by
 	// --risk or --min-severity. Without it, a filter that matches nothing is
 	// indistinguishable from a project with no cryptography, and the report
@@ -238,6 +267,12 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		multi.TotalSummary.QuantumVulnerable += r.Summary.QuantumVulnerable
 		multi.TotalSummary.QuantumPartial += r.Summary.QuantumPartial
 		multi.TotalSummary.NotInDatabase += r.Summary.NotInDatabase
+		// The aggregate answers the same coverage question as each project's
+		// own summary and must not answer it from a different field.
+		multi.TotalSummary.NotExamined += r.Summary.NotExamined
+		if r.Summary.DeepAttempted {
+			multi.TotalSummary.DeepAttempted = true
+		}
 		// Without this the aggregate reported zero withheld findings while the
 		// per-project summaries reported dozens, so the totals a reader
 		// actually looks at described a filtered scan as a complete one.

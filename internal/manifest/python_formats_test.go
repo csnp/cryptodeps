@@ -179,8 +179,11 @@ pytest = "^7.0"
 	if got := byName["cryptography"]; got != "41.0.0" {
 		t.Errorf("cryptography version = %q, want 41.0.0; got all %v", got, byName)
 	}
-	if got, ok := byName["requests"]; !ok || got != "^2.31" {
-		t.Errorf("requests from inline table = %q (present=%v), want ^2.31", got, ok)
+	// The caret is a constraint operator, not part of the version. Keeping it
+	// put "^2.31" in the JSON version field and in the pip spec the fetcher
+	// builds, while the same package declared in requirements.txt gave "2.31".
+	if got, ok := byName["requests"]; !ok || got != "2.31" {
+		t.Errorf("requests from inline table = %q (present=%v), want 2.31", got, ok)
 	}
 	if _, ok := byName["pytest"]; !ok {
 		t.Errorf("dev group dependency pytest missing; got %v", byName)
@@ -218,8 +221,11 @@ pytest = ">=7.0"
 		byName[d.Name] = d.Version
 	}
 
-	if got := byName["cryptography"]; got != "==41.0.0" {
-		t.Errorf("cryptography = %q, want ==41.0.0; got all %v", got, byName)
+	// requirements.txt has always yielded "41.0.0" for the same declaration.
+	// The two formats disagreeing meant one scan's SARIF said
+	// cryptography@==41.0.0 while its CBOM purl said cryptography@41.0.0.
+	if got := byName["cryptography"]; got != "41.0.0" {
+		t.Errorf("cryptography = %q, want 41.0.0; got all %v", got, byName)
 	}
 	if got, ok := byName["requests"]; !ok || got != "" {
 		t.Errorf("wildcard requests = %q (present=%v), want an empty version", got, ok)
@@ -233,18 +239,30 @@ pytest = ">=7.0"
 }
 
 // TestSplitRequirementHandlesPEP508 checks extras and environment markers are
-// stripped rather than becoming part of the package name.
+// stripped rather than becoming part of the package name, and that the version
+// field carries a version.
+//
+// The comparison operator belongs to the constraint, not to the version. The
+// requirements.txt reader drops it, the TOML readers kept it, and the same two
+// packages therefore appeared as pycryptodome@3.20.0 in one scan and
+// pycryptodome@==3.20.0 in another. Within a single scan the CBOM normalised
+// the purl and JSON and SARIF did not, so a consumer could not join the two
+// documents by version.
 func TestSplitRequirementHandlesPEP508(t *testing.T) {
 	tests := []struct {
 		spec        string
 		wantName    string
 		wantVersion string
 	}{
-		{"cryptography==41.0.0", "cryptography", "==41.0.0"},
-		{"cryptography[ssh]>=41.0.0", "cryptography", ">=41.0.0"},
-		{`pyjwt>=2.0; python_version<"4"`, "pyjwt", ">=2.0"},
+		{"cryptography==41.0.0", "cryptography", "41.0.0"},
+		{"cryptography[ssh]>=41.0.0", "cryptography", "41.0.0"},
+		{`pyjwt>=2.0; python_version<"4"`, "pyjwt", "2.0"},
 		{"requests", "requests", ""},
-		{"  flask == 3.0  ", "flask", "== 3.0"},
+		{"  flask == 3.0  ", "flask", "3.0"},
+		// Everything after the leading operator is kept, which is what the
+		// requirements.txt reader has always produced for a compound
+		// constraint.
+		{"urllib3>=1.26,<2.0", "urllib3", "1.26,<2.0"},
 	}
 
 	for _, tt := range tests {

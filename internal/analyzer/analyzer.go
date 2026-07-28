@@ -231,7 +231,18 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 		if !depResult.InDatabase {
 			result.Summary.NotInDatabase++
 		}
+		// Counted here, where the means of examination are known, rather than
+		// re-derived from NotInDatabase by each report that needs it.
+		if !depResult.Examined() {
+			result.Summary.NotExamined++
+		}
 	}
+
+	// Whether source analysis ran at all, which is a property of the scan and
+	// not of any one dependency. a.ondemand is the thing that governs it:
+	// --deep with --offline sets the option without giving the analyzer any way
+	// to fetch, so the option alone would overstate what was attempted.
+	result.Summary.DeepAttempted = a.ondemand != nil
 
 	// Perform reachability analysis if enabled and ecosystem supports it
 	if a.options.Reachability && m.Ecosystem == types.EcosystemGo {
@@ -304,9 +315,14 @@ func (a *Analyzer) generateHints(result *types.ScanResult) []string {
 		}
 	}
 
-	// Hint: no crypto found but packages exist
-	if result.Summary.WithCrypto == 0 && result.Summary.TotalDependencies > 0 {
-		if result.Summary.NotInDatabase == result.Summary.TotalDependencies {
+	// Hint: no crypto found but packages exist.
+	//
+	// Guarded on source analysis not having run, which the hint above it was
+	// already guarded on and this one was not. Without the guard a --deep scan
+	// that read every package and found no cryptography ended with advice to
+	// run --deep.
+	if result.Summary.WithCrypto == 0 && result.Summary.TotalDependencies > 0 && !result.Summary.DeepAttempted {
+		if result.Summary.NotExamined == result.Summary.TotalDependencies {
 			hints = append(hints, "No crypto findings. All packages are unknown - try --deep to analyze source code.")
 		}
 	}

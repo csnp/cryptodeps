@@ -173,10 +173,10 @@ func (p *PythonParser) parsePipfile(path string) ([]types.Dependency, error) {
 func poetryVersion(constraint any) string {
 	switch v := constraint.(type) {
 	case string:
-		return v
+		return stripVersionOperator(v)
 	case map[string]any:
 		if version, ok := v["version"].(string); ok {
-			return version
+			return stripVersionOperator(version)
 		}
 		// Git and path dependencies carry no version.
 		return ""
@@ -215,7 +215,27 @@ func splitRequirement(spec string) (name, version string) {
 			rest = strings.TrimSpace(rest[idx+1:])
 		}
 	}
-	return name, strings.TrimSpace(rest)
+	return name, stripVersionOperator(rest)
+}
+
+// stripVersionOperator removes the comparison operator from a version
+// constraint, leaving the version it names.
+//
+// The requirements.txt reader has always done this, because its regex captures
+// the operator separately and keeps only what follows. The pyproject.toml and
+// Pipfile readers kept the whole constraint, so the same two packages declared
+// in the two formats produced pycryptodome@3.20.0 from one and
+// pycryptodome@==3.20.0 from the other. The CBOM emitter normalises the purl
+// and the JSON and SARIF documents do not, so a single scan disagreed with
+// itself and a consumer could not join the two by version. It also reached the
+// fetcher, which builds a pip spec as name==version and would have asked for
+// pycryptodome===3.20.0.
+//
+// Multi-constraint strings such as ">=1.0,<2.0" keep everything after the
+// leading operator, which is what requirements.txt already produced for them.
+func stripVersionOperator(constraint string) string {
+	trimmed := strings.TrimLeft(strings.TrimSpace(constraint), "<>=!~^")
+	return strings.TrimSpace(trimmed)
 }
 
 // normalizePyPIName applies PEP 503 normalization so that the same package

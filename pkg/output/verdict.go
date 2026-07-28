@@ -28,9 +28,9 @@ const (
 	caseFiltered noFindingsCase = iota
 	// caseNoDependencies means the manifest declared nothing to analyze.
 	caseNoDependencies
-	// caseNothingExamined means every dependency was absent from the database,
-	// so the scan drew no conclusion. Reporting this as clean is a false
-	// negative on the tool's core question.
+	// caseNothingExamined means no dependency was reached by any means of
+	// examination, so the scan drew no conclusion. Reporting this as clean is a
+	// false negative on the tool's core question.
 	caseNothingExamined
 	// caseGenuinelyClean means dependencies were examined and carried no
 	// cryptography.
@@ -39,17 +39,46 @@ const (
 
 // classifyNoFindings decides which case a findings-free summary falls into.
 // Callers must only reach it when no finding survived to be reported.
+//
+// The examination question is asked of NotExamined, not of NotInDatabase. The
+// two were the same number while a database lookup was the only way to examine
+// a package; --deep made them differ, and asking the database question meant a
+// scan that read every dependency's source reported that it had examined
+// nothing. A predicate that merely correlates with the question is a proxy, and
+// this one stopped correlating the moment a second answer path existed.
 func classifyNoFindings(s types.ScanSummary) noFindingsCase {
 	switch {
 	case s.FilteredOut > 0:
 		return caseFiltered
 	case s.TotalDependencies == 0:
 		return caseNoDependencies
-	case s.NotInDatabase >= s.TotalDependencies:
+	case s.NotExamined >= s.TotalDependencies:
 		return caseNothingExamined
 	default:
 		return caseGenuinelyClean
 	}
+}
+
+// examinedCount is how many dependencies the scan actually inspected.
+func examinedCount(s types.ScanSummary) int {
+	n := s.TotalDependencies - s.NotExamined
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// unexaminedAdvice is the next step for dependencies nothing reached, worded
+// for what the user has already done.
+//
+// A tool that answers "run --deep" to someone who ran --deep has given them a
+// dead end. The two states need different sentences because they need different
+// actions.
+func unexaminedAdvice(s types.ScanSummary) string {
+	if s.DeepAttempted {
+		return "source analysis could not read them; see the warnings printed during the scan"
+	}
+	return "not in the crypto database (use --deep to analyze them)"
 }
 
 // hasAnyCrypto reports whether any dependency carried a surviving finding.
@@ -133,9 +162,15 @@ func (n coverageNote) Text() string {
 	case caseNoDependencies:
 		return "No dependencies were declared, so nothing was analyzed."
 	case caseNothingExamined:
-		return fmt.Sprintf("None of the %d dependencies are present in the crypto database, so no "+
-			"conclusion about cryptographic usage was drawn. An empty result set here means "+
-			"nothing was examined, not that nothing was found.", n.Summary.TotalDependencies)
+		if n.Summary.DeepAttempted {
+			return fmt.Sprintf("None of the %d dependencies could be examined: they are absent from the "+
+				"crypto database, and source analysis could not read any of them. An empty result set "+
+				"here means nothing was examined, not that nothing was found.", n.Summary.TotalDependencies)
+		}
+		return fmt.Sprintf("None of the %d dependencies are present in the crypto database and source "+
+			"analysis was not run, so no conclusion about cryptographic usage was drawn. An empty "+
+			"result set here means nothing was examined, not that nothing was found.",
+			n.Summary.TotalDependencies)
 	default:
 		return ""
 	}

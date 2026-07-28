@@ -74,6 +74,46 @@ so everything below ships together in this release.
   worded differently, and the `--deep` hints that the analyzer had always
   generated are finally printed.
 
+- **`--deep` results were then ignored by that same verdict, and the report sent
+  the user back to `--deep`.** Found while release-testing this version, and a
+  regression against 1.2.2 rather than a pre-existing defect: `analyze <tree>
+  --deep`, where the database covers none of the dependencies and source
+  analysis reads all of them, printed "Not analyzed. All 3 dependencies are
+  absent from the crypto database, so no conclusion about cryptographic usage
+  can be drawn from this scan. Run with `--deep`". Every clause of that was
+  false for the run that produced it, the JSON for the same invocation reported
+  `deepAnalyzed` on all three, and 1.2.2 printed a correct clean verdict. The
+  fix above asked whether the database covered a package in order to answer
+  whether anything had examined it, which were the same question until `--deep`
+  became a second way to examine one. Coverage is now counted where examination
+  happens, as `summary.notExamined`, and every format reads it. Reports also
+  distinguish "not examined because you did not ask for source analysis", where
+  the next step is `--deep`, from "not examined because the package could not be
+  fetched", where it is not; `summary.deepAttempted` records which.
+
+- **A cached package that had never been unpacked was counted as analyzed.**
+  The npm and PyPI fetchers returned one directory after extracting an archive
+  and a different one on a cache hit, and the cache-hit check asked only whether
+  the version directory existed. A directory holding nothing but the downloaded
+  tarball answers yes, so its contents were walked, no source file was found,
+  and the package was recorded as read by source analysis with no findings and
+  no warning. The two paths disagreed for real packages too: an npm tarball that
+  does not unpack to `package/`, as `ejs` does not, failed on the first run and
+  was silently analyzed from the wrong root on every run after it, so the same
+  project reported 43 packages analyzed with a warning and then 44 without one.
+  Both paths now resolve the extracted source through one helper, and a cache
+  entry that holds none is refetched rather than accepted. The Maven fetcher
+  accepted an `extracted/` directory that a failed unzip had left empty; that is
+  covered by the same check.
+
+- **`pyproject.toml` and `Pipfile` kept the comparison operator in the version.**
+  The same two packages gave `pycryptodome@3.20.0` through `requirements.txt`
+  and `pycryptodome@==3.20.0` through the other two formats, and within one scan
+  the CBOM purl normalised it while JSON and SARIF did not, so a consumer could
+  not join the two documents by version. It also reached the fetcher, which
+  builds a pip spec as `name==version`. New in 1.3.0, alongside the parsers that
+  made those formats work at all.
+
 - **`--risk` and `--min-severity` did nothing.** Both were stored and never
   read, so every value, including a misspelt one, produced byte-identical
   output. They now filter, and the summary and exit code are computed from what
@@ -204,6 +244,25 @@ so everything below ships together in this release.
   count of its records, and it lists the ecosystems in a fixed order instead of
   the order the map happened to iterate in.
 
+### Security
+
+- **A scanned manifest could point `--deep` at any directory the process could
+  read.** The source cache path was built from the dependency name and version
+  exactly as declared, so a `package.json` carrying
+  `{"ejs": "../../../somewhere"}` resolved the cache entry outside the cache
+  directory. That directory existed, the cache-hit check accepted it, and the
+  analyzer walked it and published its absolute file paths and line numbers as
+  that dependency's source. Scanning an untrusted repository in CI could
+  therefore put the contents of an unrelated directory into the SARIF the run
+  uploads. Present in 1.2.2 and in every earlier release with `--deep`.
+  Manifest-supplied names and versions are now reduced to a single safe path
+  segment before they are joined to the cache path, and a version that names a
+  local path is refused with a message saying so rather than passed to `npm
+  pack` or `pip download`, which would resolve it. Registry and VCS references
+  such as `github:owner/repo` are unaffected. Reading a directory requires the
+  operator to run `--deep` over a manifest they do not control; no write or
+  execute primitive is involved.
+
 ### Changed
 
 - `output.PrintSkipped` takes the scan root as its second argument, so it can
@@ -225,6 +284,16 @@ so everything below ships together in this release.
 - Regression tests for manifest discovery, the three Python formats, PEP 508
   requirement parsing, CBOM dependency attribution, version resolution, serial
   number uniqueness, and primitive enum conformance.
+
+- `summary.notExamined` and `summary.deepAttempted` in JSON and YAML output, and
+  a **Not Examined** row in the markdown summary table. How much of a tree a
+  scan actually covered was previously only derivable, and only wrongly, from
+  the count of packages missing from the database.
+
+- Regression tests for the coverage verdict driven end to end through a real
+  `--deep` scan against a pre-populated source cache, for cache entries that
+  hold no extracted source, and for manifest-supplied paths. Each was confirmed
+  to fail against the code it guards, and each was mutation-tested.
 
 ### Dependencies
 
@@ -271,8 +340,9 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
 
 - **`--deep` requires `pip` on `PATH` for Python packages**, not `pip3`, so it
   fails on a default Homebrew macOS with `exec: "pip": executable file not
-  found`. The failure is reported on stderr, but the report still suggests
-  running `--deep`, which is the command that just failed.
+  found`. The failure is reported on stderr and the report now says the packages
+  could not be read and points at those warnings, rather than suggesting the
+  command that just failed, but the missing `pip3` fallback itself is not fixed.
 
 - **A repository whose only manifests are of an unsupported type exits 2**, with
   the same status as a genuine analysis error. 1.3.0 now names the file and the

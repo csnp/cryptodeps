@@ -140,23 +140,26 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 
 	// Count deep-analyzed packages
 	deepAnalyzed := 0
-	notAnalyzed := 0
 	for _, dep := range result.Dependencies {
 		if dep.DeepAnalyzed {
 			deepAnalyzed++
-		} else if !dep.InDatabase && dep.Analysis == nil {
-			notAnalyzed++
 		}
 	}
+	notAnalyzed := result.Summary.NotExamined
 
 	// Info for deep-analyzed packages
 	if deepAnalyzed > 0 {
 		fmt.Fprintf(w, "[*] %d packages analyzed via AST (--deep)\n", deepAnalyzed)
 	}
 
-	// Warning for packages not analyzed
+	// Warning for packages nothing examined. The wording follows what the user
+	// already did: telling someone who ran --deep to run --deep is a dead end.
 	if notAnalyzed > 0 {
-		fmt.Fprintf(w, "[!] %d packages not in database (use --deep to analyze)\n", notAnalyzed)
+		if result.Summary.DeepAttempted {
+			fmt.Fprintf(w, "[!] %d packages could not be read by source analysis (see warnings above)\n", notAnalyzed)
+		} else {
+			fmt.Fprintf(w, "[!] %d packages not in database (use --deep to analyze)\n", notAnalyzed)
+		}
 	}
 
 	f.printHints(w, result)
@@ -177,7 +180,7 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 // three cases below are genuinely different and are worded differently.
 func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanResult) {
 	total := result.Summary.TotalDependencies
-	unknown := result.Summary.NotInDatabase
+	unexamined := result.Summary.NotExamined
 
 	switch classifyNoFindings(result.Summary) {
 	case caseFiltered:
@@ -190,17 +193,23 @@ func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanR
 		fmt.Fprintln(w, "[?] No dependencies found in this manifest. Nothing to analyze.")
 
 	case caseNothingExamined:
-		fmt.Fprintf(w, "[?] Not analyzed. All %d dependencies are absent from the crypto database,\n", total)
-		fmt.Fprintln(w, "    so no conclusion about cryptographic usage can be drawn from this scan.")
-		fmt.Fprintln(w, "    Run with --deep to analyze package source code directly.")
+		if result.Summary.DeepAttempted {
+			fmt.Fprintf(w, "[?] Not analyzed. None of the %d dependencies could be examined: they are\n", total)
+			fmt.Fprintln(w, "    absent from the crypto database, and source analysis could not read any")
+			fmt.Fprintln(w, "    of them. See the warnings printed during the scan.")
+		} else {
+			fmt.Fprintf(w, "[?] Not analyzed. All %d dependencies are absent from the crypto database,\n", total)
+			fmt.Fprintln(w, "    so no conclusion about cryptographic usage can be drawn from this scan.")
+			fmt.Fprintln(w, "    Run with --deep to analyze package source code directly.")
+		}
 		// The hints for this case say the same thing in other words. Printing
 		// both reads as three separate problems.
 
 	default:
-		fmt.Fprintf(w, "[OK] No cryptographic usage detected in the %d of %d dependencies that were analyzed.\n",
-			total-unknown, total)
-		if unknown > 0 {
-			fmt.Fprintf(w, "[!] %d not in database, so they were not examined (use --deep to analyze).\n", unknown)
+		fmt.Fprintf(w, "[OK] No cryptographic usage detected in the %d of %d dependencies that were examined.\n",
+			examinedCount(result.Summary), total)
+		if unexamined > 0 {
+			fmt.Fprintf(w, "[!] %d could not be examined: %s.\n", unexamined, unexaminedAdvice(result.Summary))
 		}
 		f.printHints(w, result)
 	}

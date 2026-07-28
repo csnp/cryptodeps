@@ -372,7 +372,8 @@ func TestAnalyze_NPMWithCachedSource(t *testing.T) {
 	cacheDir := tmpDir + "/cache"
 
 	// Create a pre-cached npm package structure
-	npmPkgDir := cacheDir + "/npm/test-crypto-pkg/1.0.0"
+	// The layout a real npm extraction leaves: the tarball beside package/.
+	npmPkgDir := cacheDir + "/npm/test-crypto-pkg/1.0.0/package"
 	os.MkdirAll(npmPkgDir, 0755)
 
 	// Write a JavaScript file with crypto
@@ -420,7 +421,8 @@ func TestAnalyze_PyPIWithCachedSource(t *testing.T) {
 	cacheDir := tmpDir + "/cache"
 
 	// Create a pre-cached PyPI package structure
-	pyPkgDir := cacheDir + "/pypi/test-crypto-lib/2.0.0"
+	// pip downloads a wheel and this fetcher unzips it into extracted/.
+	pyPkgDir := cacheDir + "/pypi/test-crypto-lib/2.0.0/extracted"
 	os.MkdirAll(pyPkgDir, 0755)
 
 	// Write a Python file with crypto
@@ -523,7 +525,7 @@ func TestAnalyze_NoCryptoFound(t *testing.T) {
 	cacheDir := tmpDir + "/cache"
 
 	// Create a cached package with no crypto code
-	npmPkgDir := cacheDir + "/npm/no-crypto-pkg/1.0.0"
+	npmPkgDir := cacheDir + "/npm/no-crypto-pkg/1.0.0/package"
 	os.MkdirAll(npmPkgDir, 0755)
 
 	// Write a JavaScript file WITHOUT crypto
@@ -564,7 +566,7 @@ func TestAnalyze_MultipleCryptoAlgorithms(t *testing.T) {
 	cacheDir := tmpDir + "/cache"
 
 	// Create a cached package with multiple crypto algorithms
-	npmPkgDir := cacheDir + "/npm/multi-crypto/1.0.0"
+	npmPkgDir := cacheDir + "/npm/multi-crypto/1.0.0/package"
 	os.MkdirAll(npmPkgDir, 0755)
 
 	jsCode := `const crypto = require('crypto');

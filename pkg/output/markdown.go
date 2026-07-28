@@ -48,6 +48,10 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	fmt.Fprintf(w, "| **Quantum Vulnerable** | %d |\n", result.Summary.QuantumVulnerable)
 	fmt.Fprintf(w, "| **Quantum Partial** | %d |\n", result.Summary.QuantumPartial)
 	fmt.Fprintf(w, "| **Not in Database** | %d |\n", result.Summary.NotInDatabase)
+	// Not the same number once --deep is in play, and the difference is the
+	// part a reader needs in order to know how much of the tree this report
+	// actually covers.
+	fmt.Fprintf(w, "| **Not Examined** | %d |\n", result.Summary.NotExamined)
 	fmt.Fprintf(w, "\n")
 
 	if !hasAnyCrypto(result.Dependencies) {
@@ -170,12 +174,19 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	fmt.Fprintf(w, "| [FIPS 205](https://csrc.nist.gov/pubs/fips/205/final) | SLH-DSA (SPHINCS+) | Stateless Hash Signatures |\n")
 	fmt.Fprintf(w, "\n")
 
-	// Notes section for packages not in database
-	if result.Summary.NotInDatabase > 0 {
+	// Notes section for packages nothing examined. Keyed on NotExamined rather
+	// than NotInDatabase: a package the database does not carry and source
+	// analysis read is covered, and telling the reader to run --deep for it
+	// repeats a step they have already taken.
+	if result.Summary.NotExamined > 0 {
 		fmt.Fprintf(w, "## Notes\n\n")
-		pct := float64(result.Summary.NotInDatabase) / float64(result.Summary.TotalDependencies) * 100
-		fmt.Fprintf(w, "> **%d packages (%.0f%%) were not in the crypto database.**\n", result.Summary.NotInDatabase, pct)
-		fmt.Fprintf(w, "> Run with `--deep` flag to analyze these packages via source code inspection.\n\n")
+		pct := float64(result.Summary.NotExamined) / float64(result.Summary.TotalDependencies) * 100
+		fmt.Fprintf(w, "> **%d packages (%.0f%%) were not examined.**\n", result.Summary.NotExamined, pct)
+		if result.Summary.DeepAttempted {
+			fmt.Fprintf(w, "> Source analysis could not read them; see the warnings printed during the scan.\n\n")
+		} else {
+			fmt.Fprintf(w, "> Run with `--deep` flag to analyze these packages via source code inspection.\n\n")
+		}
 	}
 
 	// Footer
@@ -199,16 +210,21 @@ func writeMarkdownNoFindingsVerdict(w io.Writer, s types.ScanSummary) {
 		fmt.Fprintf(w, "**No dependencies found in this manifest.** Nothing to analyze.\n")
 
 	case caseNothingExamined:
-		fmt.Fprintf(w, "**Not analyzed.** All %d dependencies are absent from the crypto database, "+
-			"so no conclusion about cryptographic usage can be drawn from this scan. "+
-			"Run with `--deep` to analyze package source code directly.\n", s.TotalDependencies)
+		if s.DeepAttempted {
+			fmt.Fprintf(w, "**Not analyzed.** None of the %d dependencies could be examined: they are absent "+
+				"from the crypto database, and source analysis could not read any of them. "+
+				"See the warnings printed during the scan.\n", s.TotalDependencies)
+		} else {
+			fmt.Fprintf(w, "**Not analyzed.** All %d dependencies are absent from the crypto database, "+
+				"so no conclusion about cryptographic usage can be drawn from this scan. "+
+				"Run with `--deep` to analyze package source code directly.\n", s.TotalDependencies)
+		}
 
 	default:
-		fmt.Fprintf(w, "No cryptographic usage detected in the %d of %d dependencies that were analyzed.\n",
-			s.TotalDependencies-s.NotInDatabase, s.TotalDependencies)
-		if s.NotInDatabase > 0 {
-			fmt.Fprintf(w, "\n%d not in database, so they were not examined (use `--deep` to analyze).\n",
-				s.NotInDatabase)
+		fmt.Fprintf(w, "No cryptographic usage detected in the %d of %d dependencies that were examined.\n",
+			examinedCount(s), s.TotalDependencies)
+		if s.NotExamined > 0 {
+			fmt.Fprintf(w, "\n%d could not be examined: %s.\n", s.NotExamined, unexaminedAdvice(s))
 		}
 	}
 }
