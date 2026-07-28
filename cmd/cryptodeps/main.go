@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -372,8 +373,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Total packages: %d\n", stats.TotalPackages)
 	fmt.Println()
 	fmt.Println("By ecosystem:")
-	for ecosystem, count := range stats.ByEcosystem {
-		fmt.Printf("  %-8s %d packages\n", ecosystem+":", count)
+	// Sorted. Ranging over the map printed the ecosystems in a different order
+	// on almost every run, which is the same nondeterminism the five output
+	// formats were fixed for: it defeats diffing two runs and any golden file.
+	ecosystems := make([]string, 0, len(stats.ByEcosystem))
+	for ecosystem := range stats.ByEcosystem {
+		ecosystems = append(ecosystems, string(ecosystem))
+	}
+	sort.Strings(ecosystems)
+	for _, ecosystem := range ecosystems {
+		fmt.Printf("  %-8s %d packages\n", ecosystem+":", stats.ByEcosystem[types.Ecosystem(ecosystem)])
 	}
 	fmt.Println()
 

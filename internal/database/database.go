@@ -121,14 +121,27 @@ func enrichWithRemediation(analysis *types.PackageAnalysis, ecosystem types.Ecos
 }
 
 // Stats returns statistics about the database.
+//
+// It counts distinct packages, not index entries. addToIndex deliberately files
+// every package under two keys, "name@version" and "name", so that a lookup
+// succeeds with or without a version. Reporting len(index) as a package count
+// therefore counted every versioned package twice: `cryptodeps status` announced
+// 1731 packages for a database holding 901, and every per-ecosystem number was
+// wrong in the same way. The two keys collapse for a package with no version,
+// which is why the inflation was not a clean doubling and why the number looked
+// plausible enough to survive.
 func (db *Database) Stats() DatabaseStats {
 	stats := DatabaseStats{
 		ByEcosystem: make(map[types.Ecosystem]int),
 	}
 
 	for ecosystem, pkgs := range db.index {
-		stats.ByEcosystem[ecosystem] = len(pkgs)
-		stats.TotalPackages += len(pkgs)
+		distinct := make(map[*types.PackageAnalysis]bool, len(pkgs))
+		for _, pkg := range pkgs {
+			distinct[pkg] = true
+		}
+		stats.ByEcosystem[ecosystem] = len(distinct)
+		stats.TotalPackages += len(distinct)
 	}
 
 	return stats

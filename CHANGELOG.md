@@ -127,6 +127,15 @@ candidate. 1.3.0 was never tagged.
   a pipe are now rendered as a quoted string: single-line, reversible, and still
   naming the file. JSON, CBOM and SARIF were never affected.
 
+- **`cryptodeps status` reported roughly twice the packages the database holds.**
+  It announced 1731 packages, and every per-ecosystem number was wrong the same
+  way, for a database of 901. The index files each package under two keys,
+  `name@version` and `name`, so a lookup succeeds with or without a version, and
+  the count was of index entries rather than packages. `status` now reports 901,
+  matching the database's own stats block and a direct count of its records, and
+  it lists the ecosystems in a fixed order instead of the order the map happened
+  to iterate in.
+
 ### Changed
 
 - Coloured emoji in the table output are replaced by the ASCII markers the
