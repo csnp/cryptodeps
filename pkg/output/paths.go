@@ -6,6 +6,7 @@ package output
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -57,4 +58,43 @@ func relativeToRoot(absRoot, manifest string) (path string, underRoot bool) {
 		return filepath.ToSlash(absManifest), false
 	}
 	return filepath.ToSlash(rel), true
+}
+
+// reportSafe renders a filesystem path, or an error string quoting one, for a
+// plain-text report.
+//
+// Both are attacker-controlled. Any repository can hold a directory whose name
+// carries newlines, and the scan report is published by the bundled GitHub
+// Action, so a scanned repository could write its own lines into the document
+// that judges it: a directory named with an embedded "## Scan result: CLEAN"
+// put exactly that heading in the markdown report, above the real findings.
+// Anything carrying a control character, a backtick or a pipe is rendered as a
+// Go-quoted string, which is single-line, unambiguous and reversible. A path
+// with none of those, which is every real one, is returned unchanged.
+func reportSafe(s string) string {
+	if !needsEscaping(s) {
+		return s
+	}
+	return strconv.Quote(s)
+}
+
+// markdownSafe is reportSafe plus the two escapes markdown itself needs: a
+// backtick would close a code span early, and GitHub-flavoured markdown requires
+// a pipe to be escaped even inside one, or it splits the table cell.
+func markdownSafe(s string) string {
+	out := reportSafe(s)
+	out = strings.ReplaceAll(out, "`", `\x60`)
+	out = strings.ReplaceAll(out, "|", `\|`)
+	return out
+}
+
+// needsEscaping reports whether a string can break out of the line, the code
+// span or the table cell it is about to be rendered into.
+func needsEscaping(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || r == '`' || r == '|' {
+			return true
+		}
+	}
+	return false
 }

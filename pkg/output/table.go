@@ -38,7 +38,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		return errors.New("writer cannot be nil")
 	}
 	// Header
-	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", result.Manifest, result.Summary.TotalDependencies)
+	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(result.Manifest), result.Summary.TotalDependencies)
 
 	// Check if there are any crypto findings
 	hasCrypto := false
@@ -232,8 +232,8 @@ func PrintSkipped(w io.Writer, skipped []types.SkippedManifest) {
 	if len(unread) > 0 {
 		fmt.Fprintf(w, "[!] %d manifest file(s) found but NOT analyzed:\n", len(unread))
 		for _, s := range unread {
-			fmt.Fprintf(w, "    %s\n", s.Path)
-			fmt.Fprintf(w, "      reason: %s\n", s.Reason)
+			fmt.Fprintf(w, "    %s\n", reportSafe(s.Path))
+			fmt.Fprintf(w, "      reason: %s\n", reportSafe(s.Reason))
 		}
 		fmt.Fprintln(w, "    These dependencies are missing from the results below.")
 		fmt.Fprintln(w)
@@ -243,7 +243,7 @@ func PrintSkipped(w io.Writer, skipped []types.SkippedManifest) {
 		fmt.Fprintf(w, "[?] %d manifest file(s) found for ecosystems cryptodeps does not support:\n",
 			len(unsupported))
 		for _, s := range unsupported {
-			fmt.Fprintf(w, "    %s\n", s.Path)
+			fmt.Fprintf(w, "    %s\n", reportSafe(s.Path))
 		}
 		fmt.Fprintln(w, "    Their dependencies were not analyzed. This does not affect the exit code.")
 		fmt.Fprintln(w)
@@ -714,18 +714,18 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	}
 
 	// Header showing discovered projects
-	fmt.Fprintf(w, "\nScanning %s...\n", result.RootPath)
+	fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(result.RootPath))
 	fmt.Fprintf(w, "Found %d projects:\n", len(result.Projects))
 	for _, p := range result.Projects {
 		relPath := getRelativePath(result.RootPath, p.Manifest)
-		fmt.Fprintf(w, "  - %s (%s)\n", relPath, p.Ecosystem)
+		fmt.Fprintf(w, "  - %s (%s)\n", reportSafe(relPath), p.Ecosystem)
 	}
 	fmt.Fprintln(w)
 
 	// Format each project
 	for i, project := range result.Projects {
 		relPath := getRelativePath(result.RootPath, project.Manifest)
-		fmt.Fprintf(w, "=== %s (%s) ===\n", relPath, project.Ecosystem)
+		fmt.Fprintf(w, "=== %s (%s) ===\n", reportSafe(relPath), project.Ecosystem)
 
 		// Use the single-project formatter for each project
 		if err := f.Format(project, w); err != nil {

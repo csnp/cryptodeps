@@ -32,7 +32,7 @@ func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error 
 	fmt.Fprintf(w, "## Summary\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", result.Manifest)
+	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownSafe(result.Manifest))
 	fmt.Fprintf(w, "| **Ecosystem** | %s |\n", result.Ecosystem)
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.Summary.TotalDependencies)
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.Summary.WithCrypto)
@@ -228,7 +228,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 		fmt.Fprintf(w, "| Manifest | Reason |\n")
 		fmt.Fprintf(w, "|----------|--------|\n")
 		for _, s := range unread {
-			fmt.Fprintf(w, "| `%s` | %s |\n", s.Path, s.Reason)
+			fmt.Fprintf(w, "| `%s` | %s |\n", markdownSafe(s.Path), markdownSafe(s.Reason))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -238,7 +238,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 			"Their dependencies were not analyzed, and this does not affect the exit code.\n\n",
 			len(unsupported))
 		for _, s := range unsupported {
-			fmt.Fprintf(w, "- `%s`\n", s.Path)
+			fmt.Fprintf(w, "- `%s`\n", markdownSafe(s.Path))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -247,7 +247,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	fmt.Fprintf(w, "## Overview\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", result.RootPath)
+	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", markdownSafe(result.RootPath))
 	fmt.Fprintf(w, "| **Projects Scanned** | %d |\n", len(result.Projects))
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.TotalSummary.TotalDependencies)
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.TotalSummary.WithCrypto)
@@ -265,14 +265,14 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	// Project list
 	fmt.Fprintf(w, "### Projects\n\n")
 	for _, project := range result.Projects {
-		fmt.Fprintf(w, "- `%s` (%s)\n", project.Manifest, project.Ecosystem)
+		fmt.Fprintf(w, "- `%s` (%s)\n", markdownSafe(project.Manifest), project.Ecosystem)
 	}
 	fmt.Fprintf(w, "\n")
 
 	// Individual project reports
 	for _, project := range result.Projects {
 		fmt.Fprintf(w, "---\n\n")
-		fmt.Fprintf(w, "## %s\n\n", project.Manifest)
+		fmt.Fprintf(w, "## %s\n\n", markdownSafe(project.Manifest))
 
 		// Use the single-project formatter for detailed output
 		if err := f.Format(project, w); err != nil {
