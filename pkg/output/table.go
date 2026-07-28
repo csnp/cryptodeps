@@ -31,6 +31,13 @@ type cryptoDetail struct {
 
 // Format writes the scan result as a table.
 func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	return f.formatProject(result, "", w)
+}
+
+// formatProject renders one project. root is the scan root when this render is
+// part of a workspace report and empty when it stands alone, so the manifest is
+// named the same way here as in the project list above it.
+func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
@@ -38,7 +45,7 @@ func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		return errors.New("writer cannot be nil")
 	}
 	// Header
-	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(result.Manifest), result.Summary.TotalDependencies)
+	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(manifestForReport(root, result.Manifest)), result.Summary.TotalDependencies)
 
 	// Check if there are any crypto findings
 	hasCrypto := false
@@ -212,7 +219,7 @@ func (f *TableFormatter) printHints(w io.Writer, result *types.ScanResult) {
 // PrintSkipped reports manifests that were found but not analyzed. It is
 // deliberately loud: a silently skipped manifest is how a scanner reports a
 // clean tree it never read.
-func PrintSkipped(w io.Writer, skipped []types.SkippedManifest) {
+func PrintSkipped(w io.Writer, root string, skipped []types.SkippedManifest) {
 	if len(skipped) == 0 {
 		return
 	}
@@ -232,7 +239,7 @@ func PrintSkipped(w io.Writer, skipped []types.SkippedManifest) {
 	if len(unread) > 0 {
 		fmt.Fprintf(w, "[!] %d manifest file(s) found but NOT analyzed:\n", len(unread))
 		for _, s := range unread {
-			fmt.Fprintf(w, "    %s\n", reportSafe(s.Path))
+			fmt.Fprintf(w, "    %s\n", reportSafe(getRelativePath(root, s.Path)))
 			fmt.Fprintf(w, "      reason: %s\n", reportSafe(s.Reason))
 		}
 		fmt.Fprintln(w, "    These dependencies are missing from the results below.")
@@ -243,7 +250,7 @@ func PrintSkipped(w io.Writer, skipped []types.SkippedManifest) {
 		fmt.Fprintf(w, "[?] %d manifest file(s) found for ecosystems cryptodeps does not support:\n",
 			len(unsupported))
 		for _, s := range unsupported {
-			fmt.Fprintf(w, "    %s\n", reportSafe(s.Path))
+			fmt.Fprintf(w, "    %s\n", reportSafe(getRelativePath(root, s.Path)))
 		}
 		fmt.Fprintln(w, "    Their dependencies were not analyzed. This does not affect the exit code.")
 		fmt.Fprintln(w)
@@ -706,7 +713,7 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 
 	// Report unread manifests first. They change how every number below should
 	// be read, so they cannot go in a footer.
-	PrintSkipped(w, result.Skipped)
+	PrintSkipped(w, result.RootPath, result.Skipped)
 
 	// If there's only one project, just format it normally
 	if len(result.Projects) == 1 {
@@ -714,7 +721,7 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	}
 
 	// Header showing discovered projects
-	fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(result.RootPath))
+	fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(scanRootDir(result.RootPath)))
 	fmt.Fprintf(w, "Found %d projects:\n", len(result.Projects))
 	for _, p := range result.Projects {
 		relPath := getRelativePath(result.RootPath, p.Manifest)
@@ -728,7 +735,7 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 		fmt.Fprintf(w, "=== %s (%s) ===\n", reportSafe(relPath), project.Ecosystem)
 
 		// Use the single-project formatter for each project
-		if err := f.Format(project, w); err != nil {
+		if err := f.formatProject(project, result.RootPath, w); err != nil {
 			return err
 		}
 
@@ -766,16 +773,23 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	return nil
 }
 
-// getRelativePath returns a relative path from root to target.
+// getRelativePath renders target relative to the scan root, in the "./x" form
+// the project list uses.
+//
+// It asks relativeToRoot, the same helper CBOM and SARIF use. The string-prefix
+// test it replaced was a third implementation of that comparison, and it was
+// wrong in both directions: it compared the raw root against absolutized
+// manifest paths, so `cryptodeps analyze .` printed absolute paths while
+// `cryptodeps analyze /abs/path` printed relative ones for the same tree; and a
+// shared string prefix produced a path that does not exist, with
+// getRelativePath("/repo", "/repository/go.mod") returning "./sitory/go.mod".
 func getRelativePath(root, target string) string {
-	// Simple approach: remove root prefix if present
-	if strings.HasPrefix(target, root) {
-		rel := strings.TrimPrefix(target, root)
-		rel = strings.TrimPrefix(rel, "/")
-		if rel == "" {
-			return "."
-		}
-		return "./" + rel
+	rel, underRoot := relativeToRoot(scanRootDir(root), target)
+	if !underRoot {
+		return rel
 	}
-	return target
+	if rel == "." {
+		return "."
+	}
+	return "./" + rel
 }

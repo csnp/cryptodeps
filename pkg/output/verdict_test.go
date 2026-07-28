@@ -136,7 +136,7 @@ func TestSkippedManifestsAreReported(t *testing.T) {
 	}
 	out := buf.String()
 
-	if !strings.Contains(out, "/repo/broken/package.json") {
+	if !strings.Contains(out, "./broken/package.json") {
 		t.Errorf("skipped manifest is not named in the output:\n%s", out)
 	}
 	if !strings.Contains(out, "not valid JSON") {

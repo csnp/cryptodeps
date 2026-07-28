@@ -98,3 +98,16 @@ func needsEscaping(s string) bool {
 	}
 	return false
 }
+
+// manifestForReport names a manifest inside a report.
+//
+// With a scan root it is expressed relative to it, matching every other surface
+// of the same run. Standalone, which is what `--no-workspaces` and a
+// single-manifest scan produce, there is no root to express it against and the
+// absolute path is the only anchor the reader has.
+func manifestForReport(root, manifest string) string {
+	if root == "" {
+		return manifest
+	}
+	return getRelativePath(root, manifest)
+}

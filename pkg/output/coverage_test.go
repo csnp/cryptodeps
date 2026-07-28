@@ -93,10 +93,10 @@ func nothingExaminedScan() *types.MultiProjectResult {
 // wrong assertion, and so is a digit.
 var withheldAssertion = map[Format]func(t *testing.T, out string, want int){
 	FormatTable: func(t *testing.T, out string, want int) {
-		assertWithheldSentence(t, FormatTable, out, want)
+		assertWithheldSentence(t, FormatTable, out, want, emptiedByFilter(FormatTable, want)...)
 	},
 	FormatMarkdown: func(t *testing.T, out string, want int) {
-		assertWithheldSentence(t, FormatMarkdown, out, want)
+		assertWithheldSentence(t, FormatMarkdown, out, want, emptiedByFilter(FormatMarkdown, want)...)
 	},
 	FormatJSON: func(t *testing.T, out string, want int) {
 		var doc struct {
@@ -172,28 +172,57 @@ var withheldAssertion = map[Format]func(t *testing.T, out string, want int){
 	},
 }
 
-// assertWithheldSentence checks that a human format states the withheld count in
-// one of the two sentences it is allowed to use for it, and that the count in
-// that sentence is the real one.
+// assertWithheldSentence checks that a human format states the withheld count,
+// in every statement that format is supposed to make about it.
 //
-// Two sentences because the wording genuinely differs: a scan filtered to
-// nothing explains itself where the verdict would go, while a scan that still
-// has something to show annotates the summary. Both are checked against the
-// count so neither can be satisfied by a digit appearing somewhere else.
-func assertWithheldSentence(t *testing.T, format Format, out string, want int) {
+// Not an any-of list. Markdown states it twice in a workspace report, once per
+// project and once in the Overview table, so accepting either one alone left
+// both deletable with the suite green, and the single-project renderer that
+// --no-workspaces uses has only the first. The two scenarios genuinely word it
+// differently: a scan filtered to nothing explains itself where the verdict
+// would go, while a scan that still has something to show annotates the summary.
+func assertWithheldSentence(t *testing.T, format Format, out string, want int, sentences ...string) {
 	t.Helper()
-	sentences := []string{
-		fmt.Sprintf("%d finding(s) were detected and", want),
-		fmt.Sprintf("%d further finding(s) excluded by --risk or --min-severity", want),
-		fmt.Sprintf("%d further finding(s) were excluded by `--risk` or `--min-severity`", want),
-		fmt.Sprintf("| **Withheld by filter** | %d |", want),
+	if len(sentences) == 0 {
+		t.Fatalf("%s: no sentence supplied, so this asserts nothing", format)
 	}
-	for _, s := range sentences {
-		if strings.Contains(out, s) {
-			return
+	for _, sentence := range sentences {
+		if !strings.Contains(out, sentence) {
+			t.Errorf("%s does not state %q, so it does not say that %d finding(s) were "+
+				"withheld:\n%s", format, sentence, want, out)
 		}
 	}
-	t.Errorf("%s never states that %d finding(s) were withheld:\n%s", format, want, out)
+}
+
+// emptiedByFilter is what the table and markdown say when a filter withheld
+// everything, and partiallyFiltered is what they say when something survived.
+func emptiedByFilter(format Format, n int) []string {
+	switch format {
+	case FormatTable:
+		return []string{fmt.Sprintf("%d finding(s) were detected and", n),
+			"excluded by --risk or --min-severity"}
+	case FormatMarkdown:
+		return []string{fmt.Sprintf("%d finding(s) were detected and "+
+			"excluded by `--risk` or `--min-severity`", n)}
+	}
+	return nil
+}
+
+func partiallyFiltered(format Format, n int) []string {
+	switch format {
+	case FormatTable:
+		return []string{fmt.Sprintf("FILTERED: %d further finding(s) excluded by "+
+			"--risk or --min-severity", n)}
+	case FormatMarkdown:
+		// Both. Each is the only statement on some rendering path: the first is
+		// all the single-project report has, the second is what a reader of the
+		// workspace Overview takes away.
+		return []string{
+			fmt.Sprintf("> %d further finding(s) were excluded by `--risk` or `--min-severity`", n),
+			fmt.Sprintf("| **Withheld by filter** | %d |", n),
+		}
+	}
+	return nil
 }
 
 // TestEveryFormatSaysFindingsWereWithheld covers the filtered-to-empty case.
@@ -550,7 +579,12 @@ func TestWithheldFindingsAreReportedEvenWhenSomeSurvive(t *testing.T) {
 			// the CBOM's random serial number satisfy on their own: it passed
 			// against an implementation that reported no withheld findings at
 			// all, which is the entire defect it was written for.
-			withheldAssertion[format](t, out, 7)
+			switch format {
+			case FormatTable, FormatMarkdown:
+				assertWithheldSentence(t, format, out, 7, partiallyFiltered(format, 7)...)
+			default:
+				withheldAssertion[format](t, out, 7)
+			}
 			if !strings.Contains(out, "DES") {
 				t.Fatalf("fixture produced no surviving finding in %s:\n%s", format, out)
 			}
@@ -588,6 +622,70 @@ func TestCoverageNotesAreEmittedPerProjectNotJustFirst(t *testing.T) {
 				if !strings.Contains(out, name) {
 					t.Errorf("%s does not attribute a coverage note to %s:\n%s", format, name, out)
 				}
+			}
+		})
+	}
+}
+
+// renderSingle formats one project the way `--no-workspaces` does.
+func renderSingle(t *testing.T, format Format, result *types.ScanResult) string {
+	t.Helper()
+	f, err := GetFormatter(format)
+	if err != nil {
+		t.Fatalf("GetFormatter(%s): %v", format, err)
+	}
+	var buf bytes.Buffer
+	if err := f.Format(result, &buf); err != nil {
+		t.Fatalf("Format(%s): %v", format, err)
+	}
+	return buf.String()
+}
+
+// TestSingleProjectReportsAlsoStateWithheldFindings covers the rendering path
+// that had no test at all.
+//
+// `cryptodeps analyze <path> --no-workspaces` calls Format, not FormatMulti, so
+// none of the workspace-level statements exist on it: the markdown Overview
+// table with its "Withheld by filter" row is not rendered, and the one line that
+// says findings were withheld is the only one there is. Deleting it left the
+// whole suite green, because the workspace test was satisfied by the Overview row
+// instead.
+func TestSingleProjectReportsAlsoStateWithheldFindings(t *testing.T) {
+	partial := &types.ScanResult{
+		Project:   "/repo/a",
+		Manifest:  "/repo/a/package.json",
+		Ecosystem: types.EcosystemNPM,
+		Dependencies: []types.DependencyResult{{
+			Dependency: types.Dependency{Name: "node-forge", Version: "1.3.1"},
+			InDatabase: true,
+			Analysis: &types.PackageAnalysis{Package: "node-forge", Crypto: []types.CryptoUsage{
+				{Algorithm: "DES", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical},
+			}},
+		}},
+		Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1,
+			QuantumVulnerable: 1, FilteredOut: 7},
+	}
+	// Guard the fixture: a finding must survive, or this is the filtered-to-empty
+	// case that the verdict already covers.
+	if !hasAnyCrypto(partial.Dependencies) {
+		t.Fatal("fixture has no surviving finding, so it cannot exercise the partial-filter case")
+	}
+
+	for _, format := range []Format{FormatTable, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderSingle(t, format, partial)
+			if !strings.Contains(out, "DES") {
+				t.Fatalf("fixture produced no surviving finding in %s:\n%s", format, out)
+			}
+			// The single-project wording, which is the first of the two
+			// statements the workspace report makes.
+			want := "FILTERED: 7 further finding(s) excluded by --risk or --min-severity"
+			if format == FormatMarkdown {
+				want = "> 7 further finding(s) were excluded by `--risk` or `--min-severity`"
+			}
+			if !strings.Contains(out, want) {
+				t.Errorf("%s single-project report does not state %q, so a --no-workspaces "+
+					"scan reads as complete while 7 findings were withheld:\n%s", format, want, out)
 			}
 		})
 	}

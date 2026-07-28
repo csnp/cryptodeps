@@ -19,6 +19,15 @@ type MarkdownFormatter struct {
 
 // Format writes the scan result as Markdown.
 func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	return f.formatProject(result, "", w)
+}
+
+// formatProject renders one project. root is the scan root when this render is
+// part of a workspace report and empty when it stands alone, so that a manifest
+// is named the same way here as in the project list above it. Threaded as an
+// argument rather than held on the formatter, which is what cbom.go does, so the
+// formatter stays stateless.
+func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
@@ -32,7 +41,7 @@ func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error 
 	fmt.Fprintf(w, "## Summary\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownSafe(result.Manifest))
+	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownSafe(manifestForReport(root, result.Manifest)))
 	fmt.Fprintf(w, "| **Ecosystem** | %s |\n", result.Ecosystem)
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.Summary.TotalDependencies)
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.Summary.WithCrypto)
@@ -228,7 +237,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 		fmt.Fprintf(w, "| Manifest | Reason |\n")
 		fmt.Fprintf(w, "|----------|--------|\n")
 		for _, s := range unread {
-			fmt.Fprintf(w, "| `%s` | %s |\n", markdownSafe(s.Path), markdownSafe(s.Reason))
+			fmt.Fprintf(w, "| `%s` | %s |\n", markdownSafe(getRelativePath(result.RootPath, s.Path)), markdownSafe(s.Reason))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -238,7 +247,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 			"Their dependencies were not analyzed, and this does not affect the exit code.\n\n",
 			len(unsupported))
 		for _, s := range unsupported {
-			fmt.Fprintf(w, "- `%s`\n", markdownSafe(s.Path))
+			fmt.Fprintf(w, "- `%s`\n", markdownSafe(getRelativePath(result.RootPath, s.Path)))
 		}
 		fmt.Fprintf(w, "\n")
 	}
@@ -247,7 +256,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	fmt.Fprintf(w, "## Overview\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
-	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", markdownSafe(result.RootPath))
+	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", markdownSafe(scanRootDir(result.RootPath)))
 	fmt.Fprintf(w, "| **Projects Scanned** | %d |\n", len(result.Projects))
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.TotalSummary.TotalDependencies)
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.TotalSummary.WithCrypto)
@@ -265,17 +274,17 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	// Project list
 	fmt.Fprintf(w, "### Projects\n\n")
 	for _, project := range result.Projects {
-		fmt.Fprintf(w, "- `%s` (%s)\n", markdownSafe(project.Manifest), project.Ecosystem)
+		fmt.Fprintf(w, "- `%s` (%s)\n", markdownSafe(getRelativePath(result.RootPath, project.Manifest)), project.Ecosystem)
 	}
 	fmt.Fprintf(w, "\n")
 
 	// Individual project reports
 	for _, project := range result.Projects {
 		fmt.Fprintf(w, "---\n\n")
-		fmt.Fprintf(w, "## %s\n\n", markdownSafe(project.Manifest))
+		fmt.Fprintf(w, "## %s\n\n", markdownSafe(getRelativePath(result.RootPath, project.Manifest)))
 
 		// Use the single-project formatter for detailed output
-		if err := f.Format(project, w); err != nil {
+		if err := f.formatProject(project, result.RootPath, w); err != nil {
 			return err
 		}
 	}
