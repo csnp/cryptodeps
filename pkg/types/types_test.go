@@ -335,3 +335,43 @@ func TestSeverityConstants(t *testing.T) {
 		})
 	}
 }
+
+// TestAggregateSumsFilteredOut guards the number a reader of a workspace scan
+// actually looks at.
+//
+// AggregateResults sums nine summary fields, and FilteredOut was not one of
+// them, so TotalSummary.FilteredOut stayed 0 while the per-project summaries
+// reported dozens of withheld findings. The aggregate row and the multi-project
+// JSON therefore described a filtered scan as though it were complete, which is
+// the same false-clean claim the per-project verdict was rewritten to avoid.
+func TestAggregateSumsFilteredOut(t *testing.T) {
+	multi := AggregateResults("/repo", []*ScanResult{
+		{Summary: ScanSummary{TotalDependencies: 3, FilteredOut: 4}},
+		{Summary: ScanSummary{TotalDependencies: 2, FilteredOut: 6}},
+		{Summary: ScanSummary{TotalDependencies: 1}},
+	})
+
+	if got, want := multi.TotalSummary.FilteredOut, 10; got != want {
+		t.Errorf("TotalSummary.FilteredOut = %d, want %d; a workspace scan reports the "+
+			"aggregate, so withheld findings that are not summed are invisible", got, want)
+	}
+	// Guard the fixture: if the projects carried no withheld findings the
+	// assertion above would pass against an implementation that never sums.
+	if multi.TotalSummary.TotalDependencies != 6 {
+		t.Fatalf("fixture did not aggregate at all: TotalDependencies = %d, want 6",
+			multi.TotalSummary.TotalDependencies)
+	}
+}
+
+// TestAggregateReportsNoFilterWhenNoneWasApplied is the paired guard: the field
+// must stay absent from an unfiltered scan rather than acquiring a stray count.
+func TestAggregateReportsNoFilterWhenNoneWasApplied(t *testing.T) {
+	multi := AggregateResults("/repo", []*ScanResult{
+		{Summary: ScanSummary{TotalDependencies: 3, QuantumVulnerable: 2}},
+		{Summary: ScanSummary{TotalDependencies: 2, QuantumVulnerable: 1}},
+	})
+	if multi.TotalSummary.FilteredOut != 0 {
+		t.Errorf("TotalSummary.FilteredOut = %d on an unfiltered scan, want 0",
+			multi.TotalSummary.FilteredOut)
+	}
+}

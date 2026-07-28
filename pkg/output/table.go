@@ -172,21 +172,17 @@ func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanR
 	total := result.Summary.TotalDependencies
 	unknown := result.Summary.NotInDatabase
 
-	switch {
-	// Checked first, and deliberately: findings that exist but were withheld by
-	// a filter must never be reported as an absence of findings. This is the
-	// same false-clean verdict as the all-unknown case, reached from a
-	// different direction.
-	case result.Summary.FilteredOut > 0:
+	switch classifyNoFindings(result.Summary) {
+	case caseFiltered:
 		fmt.Fprintf(w, "[?] No findings matched the active filter. %d finding(s) were detected and\n",
 			result.Summary.FilteredOut)
 		fmt.Fprintln(w, "    excluded by --risk or --min-severity. This is not a clean result.")
 		fmt.Fprintln(w, "    Re-run without the filter to see them.")
 
-	case total == 0:
+	case caseNoDependencies:
 		fmt.Fprintln(w, "[?] No dependencies found in this manifest. Nothing to analyze.")
 
-	case unknown == total:
+	case caseNothingExamined:
 		fmt.Fprintf(w, "[?] Not analyzed. All %d dependencies are absent from the crypto database,\n", total)
 		fmt.Fprintln(w, "    so no conclusion about cryptographic usage can be drawn from this scan.")
 		fmt.Fprintln(w, "    Run with --deep to analyze package source code directly.")
@@ -726,6 +722,13 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 		result.TotalSummary.QuantumVulnerable,
 		result.TotalSummary.QuantumPartial,
 	)
+	// The aggregate is the line a reader takes away, so it carries the filter
+	// annotation too. Printing it only under each project left the TOTAL row
+	// describing a filtered scan as though it were complete.
+	if result.TotalSummary.FilteredOut > 0 {
+		fmt.Fprintf(w, "FILTERED: %d further finding(s) excluded by --risk or --min-severity.\n",
+			result.TotalSummary.FilteredOut)
+	}
 	if result.TotalSummary.ReachabilityAnalyzed {
 		fmt.Fprintf(w, "REACHABILITY: %d confirmed | %d reachable | %d available-only\n",
 			result.TotalSummary.ConfirmedCrypto,

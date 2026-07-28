@@ -458,7 +458,7 @@ qramm-cryptodeps/
 │   ├── crypto/              # Algorithm patterns & remediation
 │   ├── output/              # Formatters (table, JSON, CBOM, SARIF)
 │   └── types/               # Shared type definitions
-├── data/                    # Curated crypto database (1,100+ packages)
+├── data/                    # Crypto database (901 packages)
 └── examples/                # Sample projects for testing
 ```
 
@@ -474,7 +474,7 @@ qramm-cryptodeps/
 - [x] Quantum risk classification with CNSA 2.0 timeline
 - [x] Smart remediation guidance with NIST references
 - [x] GitHub repository URL scanning
-- [x] Curated database of 1,100+ packages
+- [x] Crypto database of 901 packages (69 verified, 832 inferred)
 - [x] Workspace & monorepo support (npm, pnpm, Go workspaces)
 - [x] Multi-project aggregated results
 

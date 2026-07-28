@@ -34,11 +34,11 @@ type DatabaseExport struct {
 
 // DatabaseStats contains statistics about the database.
 type DatabaseStats struct {
-	TotalPackages    int                       `json:"totalPackages"`
-	VerifiedPackages int                       `json:"verifiedPackages"`
-	InferredPackages int                       `json:"inferredPackages"`
-	ByEcosystem      map[types.Ecosystem]int   `json:"byEcosystem"`
-	ByConfidence     map[types.Confidence]int  `json:"byConfidence"`
+	TotalPackages    int                      `json:"totalPackages"`
+	VerifiedPackages int                      `json:"verifiedPackages"`
+	InferredPackages int                      `json:"inferredPackages"`
+	ByEcosystem      map[types.Ecosystem]int  `json:"byEcosystem"`
+	ByConfidence     map[types.Confidence]int `json:"byConfidence"`
 }
 
 var (

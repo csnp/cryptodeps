@@ -41,14 +41,14 @@ type mavenSearchResponse struct {
 	Response struct {
 		NumFound int `json:"numFound"`
 		Docs     []struct {
-			ID             string `json:"id"`
-			Group          string `json:"g"`
-			Artifact       string `json:"a"`
-			LatestVersion  string `json:"latestVersion"`
-			RepositoryID   string `json:"repositoryId"`
-			Timestamp      int64  `json:"timestamp"`
-			VersionCount   int    `json:"versionCount"`
-			Text           []string `json:"text"`
+			ID            string   `json:"id"`
+			Group         string   `json:"g"`
+			Artifact      string   `json:"a"`
+			LatestVersion string   `json:"latestVersion"`
+			RepositoryID  string   `json:"repositoryId"`
+			Timestamp     int64    `json:"timestamp"`
+			VersionCount  int      `json:"versionCount"`
+			Text          []string `json:"text"`
 		} `json:"docs"`
 	} `json:"response"`
 }

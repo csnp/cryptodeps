@@ -29,24 +29,24 @@ var (
 	javaImportPattern = regexp.MustCompile(`^\s*import\s+([a-zA-Z0-9_.]+(?:\.\*)?)\s*;`)
 
 	// JCA/JCE patterns (Java Cryptography Architecture) - with string literals
-	cipherPattern      = regexp.MustCompile(`Cipher\.getInstance\s*\(\s*["']([^"']+)["']`)
-	messageDigestPattern = regexp.MustCompile(`MessageDigest\.getInstance\s*\(\s*["']([^"']+)["']`)
-	keyGeneratorPattern  = regexp.MustCompile(`KeyGenerator\.getInstance\s*\(\s*["']([^"']+)["']`)
-	keyPairGenPattern    = regexp.MustCompile(`KeyPairGenerator\.getInstance\s*\(\s*["']([^"']+)["']`)
-	signaturePattern     = regexp.MustCompile(`Signature\.getInstance\s*\(\s*["']([^"']+)["']`)
-	macPattern           = regexp.MustCompile(`Mac\.getInstance\s*\(\s*["']([^"']+)["']`)
-	keyFactoryPattern    = regexp.MustCompile(`KeyFactory\.getInstance\s*\(\s*["']([^"']+)["']`)
-	keyAgreementPattern  = regexp.MustCompile(`KeyAgreement\.getInstance\s*\(\s*["']([^"']+)["']`)
+	cipherPattern           = regexp.MustCompile(`Cipher\.getInstance\s*\(\s*["']([^"']+)["']`)
+	messageDigestPattern    = regexp.MustCompile(`MessageDigest\.getInstance\s*\(\s*["']([^"']+)["']`)
+	keyGeneratorPattern     = regexp.MustCompile(`KeyGenerator\.getInstance\s*\(\s*["']([^"']+)["']`)
+	keyPairGenPattern       = regexp.MustCompile(`KeyPairGenerator\.getInstance\s*\(\s*["']([^"']+)["']`)
+	signaturePattern        = regexp.MustCompile(`Signature\.getInstance\s*\(\s*["']([^"']+)["']`)
+	macPattern              = regexp.MustCompile(`Mac\.getInstance\s*\(\s*["']([^"']+)["']`)
+	keyFactoryPattern       = regexp.MustCompile(`KeyFactory\.getInstance\s*\(\s*["']([^"']+)["']`)
+	keyAgreementPattern     = regexp.MustCompile(`KeyAgreement\.getInstance\s*\(\s*["']([^"']+)["']`)
 	secretKeyFactoryPattern = regexp.MustCompile(`SecretKeyFactory\.getInstance\s*\(\s*["']([^"']+)["']`)
 
 	// JCA/JCE patterns - variable-based (detects crypto API usage without literal)
-	cipherVarPattern       = regexp.MustCompile(`(?:javax\.crypto\.)?Cipher\.getInstance\s*\(`)
+	cipherVarPattern        = regexp.MustCompile(`(?:javax\.crypto\.)?Cipher\.getInstance\s*\(`)
 	messageDigestVarPattern = regexp.MustCompile(`(?:java\.security\.)?MessageDigest\.getInstance\s*\(`)
-	keyGenVarPattern       = regexp.MustCompile(`(?:javax\.crypto\.)?KeyGenerator\.getInstance\s*\(`)
-	keyPairGenVarPattern   = regexp.MustCompile(`KeyPairGenerator\.getInstance\s*\(`)
-	signatureVarPattern    = regexp.MustCompile(`(?:java\.security\.)?Signature\.getInstance\s*\(`)
-	macVarPattern          = regexp.MustCompile(`(?:javax\.crypto\.)?Mac\.getInstance\s*\(`)
-	secureRandomPattern    = regexp.MustCompile(`SecureRandom\.getInstance\s*\(`)
+	keyGenVarPattern        = regexp.MustCompile(`(?:javax\.crypto\.)?KeyGenerator\.getInstance\s*\(`)
+	keyPairGenVarPattern    = regexp.MustCompile(`KeyPairGenerator\.getInstance\s*\(`)
+	signatureVarPattern     = regexp.MustCompile(`(?:java\.security\.)?Signature\.getInstance\s*\(`)
+	macVarPattern           = regexp.MustCompile(`(?:javax\.crypto\.)?Mac\.getInstance\s*\(`)
+	secureRandomPattern     = regexp.MustCompile(`SecureRandom\.getInstance\s*\(`)
 
 	// SecretKeySpec usage (indicates symmetric encryption)
 	secretKeySpecPattern = regexp.MustCompile(`new\s+SecretKeySpec\s*\(`)
@@ -68,46 +68,46 @@ var (
 // Java crypto algorithm mappings
 var javaCryptoAlgorithms = map[string]string{
 	// Ciphers
-	"AES":                    "AES",
-	"AES/CBC/PKCS5Padding":   "AES",
-	"AES/GCM/NoPadding":      "AES-GCM",
-	"AES/ECB/PKCS5Padding":   "AES-ECB",
-	"AES/CTR/NoPadding":      "AES",
-	"DES":                    "DES",
-	"DES/CBC/PKCS5Padding":   "DES",
-	"DESede":                 "3DES",
-	"DESede/CBC/PKCS5Padding": "3DES",
-	"RSA":                    "RSA",
-	"RSA/ECB/PKCS1Padding":   "RSA",
+	"AES":                                   "AES",
+	"AES/CBC/PKCS5Padding":                  "AES",
+	"AES/GCM/NoPadding":                     "AES-GCM",
+	"AES/ECB/PKCS5Padding":                  "AES-ECB",
+	"AES/CTR/NoPadding":                     "AES",
+	"DES":                                   "DES",
+	"DES/CBC/PKCS5Padding":                  "DES",
+	"DESede":                                "3DES",
+	"DESede/CBC/PKCS5Padding":               "3DES",
+	"RSA":                                   "RSA",
+	"RSA/ECB/PKCS1Padding":                  "RSA",
 	"RSA/ECB/OAEPWithSHA-256AndMGF1Padding": "RSA-OAEP",
-	"Blowfish":               "Blowfish",
-	"RC4":                    "RC4",
-	"ChaCha20":               "ChaCha20",
-	"ChaCha20-Poly1305":      "ChaCha20-Poly1305",
+	"Blowfish":                              "Blowfish",
+	"RC4":                                   "RC4",
+	"ChaCha20":                              "ChaCha20",
+	"ChaCha20-Poly1305":                     "ChaCha20-Poly1305",
 
 	// Message Digests
-	"MD5":         "MD5",
-	"SHA-1":       "SHA-1",
-	"SHA1":        "SHA-1",
-	"SHA-256":     "SHA-256",
-	"SHA256":      "SHA-256",
-	"SHA-384":     "SHA-384",
-	"SHA384":      "SHA-384",
-	"SHA-512":     "SHA-512",
-	"SHA512":      "SHA-512",
-	"SHA3-256":    "SHA3-256",
-	"SHA3-512":    "SHA3-512",
+	"MD5":      "MD5",
+	"SHA-1":    "SHA-1",
+	"SHA1":     "SHA-1",
+	"SHA-256":  "SHA-256",
+	"SHA256":   "SHA-256",
+	"SHA-384":  "SHA-384",
+	"SHA384":   "SHA-384",
+	"SHA-512":  "SHA-512",
+	"SHA512":   "SHA-512",
+	"SHA3-256": "SHA3-256",
+	"SHA3-512": "SHA3-512",
 
 	// Signatures
-	"SHA256withRSA":     "RSA",
-	"SHA384withRSA":     "RSA",
-	"SHA512withRSA":     "RSA",
-	"SHA256withECDSA":   "ECDSA",
-	"SHA384withECDSA":   "ECDSA",
-	"SHA512withECDSA":   "ECDSA",
-	"SHA256withDSA":     "DSA",
-	"Ed25519":           "Ed25519",
-	"Ed448":             "Ed448",
+	"SHA256withRSA":   "RSA",
+	"SHA384withRSA":   "RSA",
+	"SHA512withRSA":   "RSA",
+	"SHA256withECDSA": "ECDSA",
+	"SHA384withECDSA": "ECDSA",
+	"SHA512withECDSA": "ECDSA",
+	"SHA256withDSA":   "DSA",
+	"Ed25519":         "Ed25519",
+	"Ed448":           "Ed448",
 
 	// MACs
 	"HmacMD5":    "HMAC-MD5",
@@ -117,15 +117,15 @@ var javaCryptoAlgorithms = map[string]string{
 	"HmacSHA512": "HMAC-SHA512",
 
 	// Key Agreement
-	"DH":        "DH",
-	"ECDH":      "ECDH",
-	"X25519":    "X25519",
-	"X448":      "X448",
-	"XDH":       "X25519",
+	"DH":     "DH",
+	"ECDH":   "ECDH",
+	"X25519": "X25519",
+	"X448":   "X448",
+	"XDH":    "X25519",
 
 	// Key Factories
-	"EC":        "ECDSA",
-	"DSA":       "DSA",
+	"EC":  "ECDSA",
+	"DSA": "DSA",
 
 	// Password-based
 	"PBKDF2WithHmacSHA256": "PBKDF2",
@@ -136,9 +136,9 @@ var javaCryptoAlgorithms = map[string]string{
 
 // javaFuncContext tracks function context during Java file analysis.
 type javaFuncContext struct {
-	Name      string
-	ClassName string
-	IsPublic  bool
+	Name       string
+	ClassName  string
+	IsPublic   bool
 	BraceDepth int
 }
 
@@ -306,7 +306,7 @@ func (a *JavaAnalyzer) checkCryptoUsageWithContext(line string, lineNum int, fil
 
 	// Check JCA/JCE patterns with string literals
 	patterns := []struct {
-		pattern  *regexp.Regexp
+		pattern    *regexp.Regexp
 		cryptoType string
 	}{
 		{cipherPattern, "encryption"},
@@ -338,14 +338,14 @@ func (a *JavaAnalyzer) checkCryptoUsageWithContext(line string, lineNum int, fil
 		cryptoType string
 		fallback   string
 	}{
-		{cipherVarPattern, "encryption", "AES"},          // Most common cipher
-		{messageDigestVarPattern, "hash", "SHA-256"},     // Most common hash
-		{keyGenVarPattern, "key-generation", "AES"},      // Most common symmetric key
-		{keyPairGenVarPattern, "key-generation", "RSA"},  // Most common asymmetric
-		{signatureVarPattern, "signature", "RSA"},        // Most common signature
-		{macVarPattern, "mac", "HMAC"},                   // HMAC is the standard
-		{secureRandomPattern, "random", "SecureRandom"},  // Track secure random usage
-		{secretKeySpecPattern, "encryption", "AES"},      // Most common symmetric
+		{cipherVarPattern, "encryption", "AES"},         // Most common cipher
+		{messageDigestVarPattern, "hash", "SHA-256"},    // Most common hash
+		{keyGenVarPattern, "key-generation", "AES"},     // Most common symmetric key
+		{keyPairGenVarPattern, "key-generation", "RSA"}, // Most common asymmetric
+		{signatureVarPattern, "signature", "RSA"},       // Most common signature
+		{macVarPattern, "mac", "HMAC"},                  // HMAC is the standard
+		{secureRandomPattern, "random", "SecureRandom"}, // Track secure random usage
+		{secretKeySpecPattern, "encryption", "AES"},     // Most common symmetric
 	}
 
 	for _, p := range varPatterns {

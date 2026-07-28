@@ -7,7 +7,7 @@ import "github.com/csnp/qramm-cryptodeps/pkg/types"
 
 // ImportPattern represents a crypto library import pattern for an ecosystem.
 type ImportPattern struct {
-	Pattern     string          // Import path or module pattern
+	Pattern     string // Import path or module pattern
 	Ecosystem   types.Ecosystem
 	Description string
 	Algorithms  []string // Known algorithms this library provides

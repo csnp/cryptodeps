@@ -47,20 +47,35 @@ var DefaultSkipDirs = map[string]bool{
 	"bower_components": true,
 }
 
-// ManifestFiles contains filenames that indicate a project manifest.
+// ManifestFiles maps a manifest filename to whether cryptodeps can parse it.
+// Discovery only picks up the names mapped to true.
+//
+// The false entries are listed rather than deleted because the reason they are
+// excluded is not obvious. Discovering a manifest cryptodeps has no parser for
+// turned it into a reported skip, and a skip forces exit 2. That made every
+// polyglot repository an analysis error: a tree with a go.mod beside a
+// Cargo.toml reported exit 2 rather than the exit 1 its two real quantum
+// vulnerable findings had earned, so the CI signal the tool exists to emit was
+// replaced by an error about a file cryptodeps never claimed to read.
+// SupportedManifests has never listed these names.
+//
+// go.work is false for the same reason: workspace membership is resolved by
+// parseGoWorkspace, which reads it directly and contributes the member go.mod
+// files. The workspace file itself holds no dependencies to scan.
 var ManifestFiles = map[string]bool{
 	"go.mod":           true,
-	"go.work":          true,
 	"package.json":     true,
 	"requirements.txt": true,
 	"pyproject.toml":   true,
 	"Pipfile":          true,
 	"pom.xml":          true,
-	"build.gradle":     true,
-	"build.gradle.kts": true,
-	"Cargo.toml":       true,
-	"Gemfile":          true,
-	"composer.json":    true,
+
+	"go.work":          false,
+	"build.gradle":     false,
+	"build.gradle.kts": false,
+	"Cargo.toml":       false,
+	"Gemfile":          false,
+	"composer.json":    false,
 }
 
 // DiscoverManifests finds all manifest files in a directory tree.

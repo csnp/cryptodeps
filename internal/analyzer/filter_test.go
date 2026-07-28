@@ -275,3 +275,58 @@ func TestFilterValidationRejectsUnknownValues(t *testing.T) {
 		})
 	}
 }
+
+// TestSeverityRankingIsCaseInsensitive guards --min-severity against a database
+// record whose severity is not upper case.
+//
+// severityRank is keyed by the upper-case types.Severity constants, and a Go map
+// returns the zero value for an absent key. Ranking an unrecognised severity
+// therefore gave 0, which is INFO, so every threshold above INFO discarded the
+// finding. Database records arrive from a remote feed and are unmarshalled with
+// no normalisation, so a record carrying "critical" was thrown away by the exact
+// filter a user reaches for to see critical findings, and it was not even
+// counted as withheld.
+func TestSeverityRankingIsCaseInsensitive(t *testing.T) {
+	for _, severity := range []types.Severity{"critical", "CRITICAL", "Critical", "cRiTiCaL"} {
+		for _, threshold := range []string{"info", "low", "medium", "high", "critical"} {
+			a := &Analyzer{options: Options{MinSeverity: threshold}}
+			if !a.keepCrypto(types.CryptoUsage{Algorithm: "DES", Severity: severity}) {
+				t.Errorf("severity %q was withheld by --min-severity %s; a CRITICAL finding "+
+					"must not be discarded because of its case", severity, threshold)
+			}
+		}
+	}
+}
+
+// TestUnrankableSeverityIsReportedNotWithheld pins the fail-safe direction.
+//
+// A severity this build cannot rank has not been shown to be below the
+// threshold, so it is reported. Withholding it would let an unrecognised value
+// in remote data silently suppress a finding.
+func TestUnrankableSeverityIsReportedNotWithheld(t *testing.T) {
+	for _, severity := range []types.Severity{"", "SEV1", "urgent", "  "} {
+		a := &Analyzer{options: Options{MinSeverity: "critical"}}
+		if !a.keepCrypto(types.CryptoUsage{Algorithm: "DES", Severity: severity}) {
+			t.Errorf("severity %q was withheld; an unrankable severity must fail towards "+
+				"reporting, not towards silence", severity)
+		}
+	}
+}
+
+// TestRankableSeveritiesBelowThresholdAreStillWithheld proves the two tests
+// above did not simply disable the filter.
+//
+// Without this, making keepCrypto always return true would pass them both.
+func TestRankableSeveritiesBelowThresholdAreStillWithheld(t *testing.T) {
+	a := &Analyzer{options: Options{MinSeverity: "high"}}
+	for _, severity := range []types.Severity{types.SeverityInfo, types.SeverityLow, types.SeverityMedium, "low", "medium"} {
+		if a.keepCrypto(types.CryptoUsage{Algorithm: "AES", Severity: severity}) {
+			t.Errorf("severity %q survived --min-severity high; the filter is not filtering", severity)
+		}
+	}
+	for _, severity := range []types.Severity{types.SeverityHigh, types.SeverityCritical} {
+		if !a.keepCrypto(types.CryptoUsage{Algorithm: "DES", Severity: severity}) {
+			t.Errorf("severity %q was withheld by --min-severity high", severity)
+		}
+	}
+}

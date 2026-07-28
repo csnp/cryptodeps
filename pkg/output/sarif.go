@@ -6,7 +6,9 @@ package output
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -38,7 +40,7 @@ type sarifRun struct {
 // executionSuccessful, which is how a SARIF consumer learns the scan did not
 // cover everything it was pointed at.
 type sarifInvocation struct {
-	ExecutionSuccessful       bool                `json:"executionSuccessful"`
+	ExecutionSuccessful        bool                `json:"executionSuccessful"`
 	ToolExecutionNotifications []sarifNotification `json:"toolExecutionNotifications,omitempty"`
 }
 
@@ -59,11 +61,11 @@ type sarifTool struct {
 }
 
 type sarifDriver struct {
-	Name           string      `json:"name"`
-	Version        string      `json:"version"`
-	SemanticVersion string     `json:"semanticVersion,omitempty"`
-	InformationURI string      `json:"informationUri"`
-	Rules          []sarifRule `json:"rules"`
+	Name            string      `json:"name"`
+	Version         string      `json:"version"`
+	SemanticVersion string      `json:"semanticVersion,omitempty"`
+	InformationURI  string      `json:"informationUri"`
+	Rules           []sarifRule `json:"rules"`
 }
 
 type sarifRule struct {
@@ -84,10 +86,10 @@ type sarifDefaultConfig struct {
 }
 
 type sarifResult struct {
-	RuleID    string           `json:"ruleId"`
-	Level     string           `json:"level"`
-	Message   sarifMessage     `json:"message"`
-	Locations []sarifLocation  `json:"locations"`
+	RuleID    string          `json:"ruleId"`
+	Level     string          `json:"level"`
+	Message   sarifMessage    `json:"message"`
+	Locations []sarifLocation `json:"locations"`
 }
 
 type sarifLocation struct {
@@ -142,6 +144,14 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 	if err != nil {
 		absRoot = root
 	}
+	// A uriBaseId names a directory. When the scan root is a manifest file,
+	// which is what `cryptodeps analyze ./package.json` passes, using it
+	// unchanged declared a base of "file:///.../package.json/" and made every
+	// result relative to itself, so each one resolved to the literal ".". That
+	// is the same unusable-literal defect as the "multiple" path it replaced.
+	if info, statErr := os.Stat(absRoot); statErr == nil && !info.IsDir() {
+		absRoot = filepath.Dir(absRoot)
+	}
 
 	log := sarifLog{
 		Schema:  "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
@@ -179,6 +189,39 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 					ArtifactLocation: sarifArtifactLocation{URI: uri, URIBaseID: baseID},
 				}},
 			},
+		})
+	}
+	// Say what the run did not cover, for the same reason the table does. A
+	// consumer reading only `results` cannot tell an empty array produced by a
+	// clean tree from one produced by a filter that withheld everything, or by a
+	// scan where no dependency was in the database. Both used to emit zero
+	// results and assert executionSuccessful, which reads as a clean bill of
+	// health. These are coverage statements rather than tool failures, so they
+	// are notifications and do not clear executionSuccessful.
+	var filteredOut, totalDeps, notInDatabase int
+	for _, p := range projects {
+		if p == nil {
+			continue
+		}
+		filteredOut += p.Summary.FilteredOut
+		totalDeps += p.Summary.TotalDependencies
+		notInDatabase += p.Summary.NotInDatabase
+	}
+	if filteredOut > 0 {
+		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{
+			Level: "note",
+			Message: sarifMessage{Text: fmt.Sprintf(
+				"%d finding(s) were detected and withheld by --risk or --min-severity. "+
+					"This run reports a filtered subset, not every finding.", filteredOut)},
+		})
+	}
+	if totalDeps > 0 && notInDatabase == totalDeps {
+		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{
+			Level: "warning",
+			Message: sarifMessage{Text: fmt.Sprintf(
+				"None of the %d dependencies are present in the crypto database, so no "+
+					"conclusion about cryptographic usage can be drawn from this run. "+
+					"An empty result set here means nothing was examined, not that nothing was found.", totalDeps)},
 		})
 	}
 	log.Runs[0].Invocations = []sarifInvocation{invocation}
@@ -281,4 +324,3 @@ func severityToSARIFLevel(severity types.Severity) string {
 		return "note"
 	}
 }
-

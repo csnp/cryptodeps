@@ -20,10 +20,10 @@ import (
 
 // Exit codes for CI/CD integration
 const (
-	ExitSuccess         = 0 // No issues found
-	ExitVulnerable      = 1 // Quantum-vulnerable findings detected
-	ExitError           = 2 // Analysis error occurred
-	ExitPartial         = 3 // Partial-risk findings detected (when --fail-on=partial)
+	ExitSuccess    = 0 // No issues found
+	ExitVulnerable = 1 // Quantum-vulnerable findings detected
+	ExitError      = 2 // Analysis error occurred
+	ExitPartial    = 3 // Partial-risk findings detected (when --fail-on=partial)
 )
 
 // Build identity. GoReleaser injects these via -X main.version and friends, so

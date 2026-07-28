@@ -55,6 +55,56 @@ candidate. 1.3.0 was never tagged.
   parsing and rendering are now fully ordered; all five output formats are
   byte-identical across runs.
 
+- **A repository containing an unsupported manifest type always exited 2.**
+  Discovery recognised `Cargo.toml`, `Gemfile`, `composer.json` and the Gradle
+  files, but no parser exists for any of them, so each became a reported skip,
+  and a skip forces exit 2. A tree with a `go.mod` beside a `Cargo.toml`
+  reported an analysis error instead of the exit 1 its real quantum-vulnerable
+  findings had earned, so the CI signal the tool exists to emit was replaced by
+  an error about a file cryptodeps never claimed to read. Discovery is now
+  driven by which names actually have a parser.
+
+- **A filtered scan reported clean in every format except the table.** The
+  verdict that distinguishes "nothing was found" from "nothing was examined"
+  from "everything was withheld" reached the table only. Markdown still printed
+  "No cryptographic usage detected in dependencies.", SARIF asserted
+  `executionSuccessful` over an empty result set, and CBOM emitted no
+  components and said nothing, so a consumer of any of them read a clean bill
+  of health. All five formats now classify through one shared function, SARIF
+  records coverage as `toolExecutionNotifications`, and CBOM records it as
+  `metadata.properties`.
+
+- **The aggregate summary of a workspace scan omitted the withheld count.**
+  `AggregateResults` summed nine fields and not `filteredOut`, so
+  `totalSummary.filteredOut` stayed absent while the per-project summaries
+  reported dozens. The totals a reader actually looks at described a filtered
+  scan as a complete one.
+
+- **`--min-severity` discarded findings whose severity was not upper case.**
+  Severity ranking is keyed by the upper-case constants and a Go map returns
+  zero for an absent key, so an unrecognised severity ranked as `INFO` and any
+  higher threshold dropped it, uncounted. Database records arrive from a remote
+  feed with no normalisation, so a record carrying `critical` was discarded by
+  the very filter a user reaches for to see critical findings. Ranking is now
+  case-insensitive, and a severity that cannot be ranked is reported rather
+  than withheld.
+
+- **`analyze <manifest-file>` emitted SARIF pointing at nothing.** Passing a
+  file rather than a directory made the `SRCROOT` base the manifest itself, so
+  every result resolved to the literal `"."`. The base is now the containing
+  directory.
+
+- **The markdown remediation table shuffled between runs.** It was the one
+  format still ranging over a map after the determinism work, so ten runs of
+  the same scan produced ten different documents.
+
+- **The GitHub Action published zero counts and could not upload SARIF.** It
+  read `.summary` from JSON, but workspace discovery is the default and a
+  multi-project document carries `.totalSummary`, so `vulnerable-count` was
+  always 0. Its SARIF step also treated any non-zero exit as a step failure,
+  which skipped the upload for exactly the incomplete scans most worth
+  reporting.
+
 ### Changed
 
 - Coloured emoji in the table output are replaced by the ASCII markers the

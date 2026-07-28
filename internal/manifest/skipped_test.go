@@ -5,6 +5,7 @@ package manifest
 
 import (
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -112,10 +113,27 @@ func TestValidTreeSkipsNothing(t *testing.T) {
 }
 
 // TestDiscoveryOrderIsStable checks that repeated discovery returns the same
-// order. Discovery previously merged two layers without sorting, so the report
-// order depended on how the layers happened to interleave.
+// order.
+//
+// This is a preservation guard, not a regression test, and the distinction was
+// previously misstated here. The old comment claimed discovery "merged two
+// layers without sorting" so the order depended on how they interleaved. That
+// was wrong on both counts: filepath.Glob returns sorted matches and
+// filepath.Walk is lexical, so the pre-fix code was already stable, and the old
+// fixture declared no workspaces at all so it never engaged the workspace layer
+// it claimed to test. Measured against the pre-fix build, the order was
+// identical across 50 runs.
+//
+// The fixture below does declare a workspace, so both layers contribute and the
+// sort actually has something to order. What the added sort changed is where the
+// root package.json lands, not whether the order is stable. This test fails if
+// anyone reintroduces map iteration into discovery; it does not claim to prove
+// the sort fixed a nondeterminism that existed.
 func TestDiscoveryOrderIsStable(t *testing.T) {
 	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "package.json"),
+		`{"name":"root","private":true,"workspaces":["zeta","alpha","mid","beta"],`+
+			`"dependencies":{"left-pad":"1.3.0"}}`)
 	for _, name := range []string{"zeta", "alpha", "mid", "beta"} {
 		writeFile(t, filepath.Join(root, name, "package.json"),
 			`{"name":"`+name+`","dependencies":{"left-pad":"1.3.0"}}`)
@@ -135,7 +153,67 @@ func TestDiscoveryOrderIsStable(t *testing.T) {
 			t.Fatalf("discovery order changed between runs:\nfirst: %v\nnow:   %v", first, found)
 		}
 	}
-	if len(first) != 4 {
-		t.Fatalf("got %d manifests, want 4", len(first))
+	if len(first) != 5 {
+		t.Fatalf("got %d manifests, want 5 (root plus four workspace members); "+
+			"a fixture that does not engage the workspace layer cannot guard its ordering", len(first))
+	}
+	if !sort.StringsAreSorted(first) {
+		t.Errorf("discovery returned an unsorted list, so the two layers are being "+
+			"concatenated rather than ordered: %v", first)
+	}
+}
+
+// TestUnsupportedManifestTypesAreNotReportedAsSkips guards the exit code of
+// every polyglot repository.
+//
+// Discovery recognised Cargo.toml, Gemfile, composer.json and the Gradle files
+// as manifests, but no parser exists for any of them, so each one became a
+// reported skip. A skip forces exit 2, so a tree holding a go.mod beside a
+// Cargo.toml reported an analysis error instead of the exit 1 its real
+// quantum-vulnerable findings had earned. SupportedManifests has never listed
+// these names: the tool was erroring on files it never claimed to read.
+//
+// This is the case TestValidTreeSkipsNothing was too narrow to catch, because
+// its fixture used only the three manifest types that do have parsers.
+func TestUnsupportedManifestTypesAreNotReportedAsSkips(t *testing.T) {
+	for _, name := range []string{
+		"Cargo.toml", "Gemfile", "composer.json", "build.gradle", "build.gradle.kts", "go.work",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/x\n\ngo 1.21\n")
+			writeFile(t, filepath.Join(root, name), "placeholder\n")
+
+			manifests, skipped, err := DetectAndParseAll(root)
+			if err != nil {
+				t.Fatalf("DetectAndParseAll: %v", err)
+			}
+			for _, s := range skipped {
+				if filepath.Base(s.Path) == name {
+					t.Errorf("%s was reported as a skipped manifest (%s); every skip forces "+
+						"exit 2, so this turns a normal polyglot repository into an analysis error",
+						name, s.Reason)
+				}
+			}
+			// The guard must not pass by discovering nothing at all.
+			if len(manifests) != 1 {
+				t.Fatalf("got %d parsed manifests, want the 1 go.mod; fixture did not exercise discovery", len(manifests))
+			}
+		})
+	}
+}
+
+// TestSupportedManifestsAllHaveParsers is the structural version of the test
+// above: it fails by construction if a name is ever added to discovery without a
+// parser behind it, rather than waiting for someone to notice the exit code.
+func TestSupportedManifestsAllHaveParsers(t *testing.T) {
+	for name, parsable := range ManifestFiles {
+		if !parsable {
+			continue
+		}
+		if _, err := getParser(name); err != nil {
+			t.Errorf("%q is discoverable but has no parser (%v); it would be discovered, "+
+				"fail to parse, and force exit 2 on every scan that meets one", name, err)
+		}
 	}
 }

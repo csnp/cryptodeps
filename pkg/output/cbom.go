@@ -33,8 +33,22 @@ type cycloneDXBOM struct {
 }
 
 type cycloneDXMetadata struct {
-	Timestamp string          `json:"timestamp"`
-	Tools     []cycloneDXTool `json:"tools"`
+	Timestamp  string              `json:"timestamp"`
+	Tools      []cycloneDXTool     `json:"tools"`
+	Properties []cycloneDXProperty `json:"properties,omitempty"`
+}
+
+// cycloneDXProperty is the spec's name/value pair, used here to record what the
+// scan did not cover.
+//
+// A CBOM asserts a cryptographic bill of materials. Emitting one from a scan
+// that could not read a manifest, or that withheld findings behind a filter,
+// with nothing to say so, is the same false-completeness claim that unreadable
+// manifests used to produce in the table. The component list alone cannot
+// express an absence.
+type cycloneDXProperty struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type cycloneDXTool struct {
@@ -75,6 +89,11 @@ type cycloneDXAlgorithmProperties struct {
 
 // Format writes the scan result as CycloneDX CBOM.
 func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	return f.format(result, nil, w)
+}
+
+// format writes a CBOM, recording any manifest that was not read.
+func (f *CBOMFormatter) format(result *types.ScanResult, skipped []types.SkippedManifest, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
@@ -98,6 +117,7 @@ func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
 		},
 		Components: make([]cycloneDXComponent, 0),
 	}
+	bom.Metadata.Properties = cbomCoverageProperties(result.Summary, skipped)
 
 	// Emit each dependency as a component, then each algorithm it provides as a
 	// cryptographic asset, and link the two through the dependencies graph.
@@ -304,5 +324,43 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 		merged.Dependencies = append(merged.Dependencies, project.Dependencies...)
 	}
 
-	return f.Format(merged, w)
+	return f.format(merged, result.Skipped, w)
+}
+
+// cbomCoverageProperties records what this bill of materials does not cover.
+//
+// Named under a cryptodeps: prefix because CycloneDX property names are
+// namespaced by convention and these are tool-specific, not spec fields.
+func cbomCoverageProperties(summary types.ScanSummary, skipped []types.SkippedManifest) []cycloneDXProperty {
+	var props []cycloneDXProperty
+
+	for _, s := range skipped {
+		props = append(props, cycloneDXProperty{
+			Name:  "cryptodeps:manifestNotAnalyzed",
+			Value: s.Path + ": " + s.Reason,
+		})
+	}
+	if len(skipped) > 0 {
+		props = append(props, cycloneDXProperty{
+			Name: "cryptodeps:coverage",
+			Value: fmt.Sprintf("incomplete: %d manifest(s) were found but could not be read, "+
+				"so the dependencies they declare are absent from this document", len(skipped)),
+		})
+	}
+	if summary.FilteredOut > 0 {
+		props = append(props, cycloneDXProperty{
+			Name: "cryptodeps:findingsWithheld",
+			Value: fmt.Sprintf("%d finding(s) were detected and withheld by --risk or --min-severity; "+
+				"this document describes a filtered subset", summary.FilteredOut),
+		})
+	}
+	if summary.TotalDependencies > 0 && summary.NotInDatabase >= summary.TotalDependencies {
+		props = append(props, cycloneDXProperty{
+			Name: "cryptodeps:coverage",
+			Value: fmt.Sprintf("none of the %d dependencies are present in the crypto database, "+
+				"so no conclusion about cryptographic usage was drawn", summary.TotalDependencies),
+		})
+	}
+
+	return props
 }

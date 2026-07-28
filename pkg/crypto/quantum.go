@@ -51,15 +51,15 @@ var algorithmDatabase = map[string]AlgorithmInfo{
 	"ps512": {Name: "PS512", Type: "signature", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityHigh, Description: "RSASSA-PSS with SHA-512", Remediation: "Use HS512 for symmetric signing, or wait for PQ-JWT standards"},
 
 	// Symmetric - PARTIAL (Grover's reduces security by half)
-	"aes":         {Name: "AES", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "Advanced Encryption Standard", Remediation: "Use AES-256 for 128-bit post-quantum security"},
-	"aes-128":     {Name: "AES-128", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityLow, Description: "AES with 128-bit key (64-bit post-quantum)", Remediation: "Upgrade to AES-256 for 128-bit post-quantum security"},
-	"aes-192":     {Name: "AES-192", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "AES with 192-bit key", Remediation: "Consider upgrading to AES-256"},
-	"aes-256":     {Name: "AES-256", Type: "encryption", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "AES with 256-bit key (128-bit post-quantum)", Remediation: "No action needed - quantum safe"},
-	"aes-gcm":     {Name: "AES-GCM", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "AES Galois/Counter Mode", Remediation: "Use AES-256-GCM for post-quantum security"},
-	"aes-cbc":     {Name: "AES-CBC", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "AES Cipher Block Chaining", Remediation: "Consider AES-256-GCM for authenticated encryption"},
-	"chacha20":    {Name: "ChaCha20", Type: "encryption", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "ChaCha20 stream cipher", Remediation: "No action needed - quantum safe"},
-	"xchacha20":   {Name: "XChaCha20", Type: "encryption", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Extended nonce ChaCha20", Remediation: "No action needed - quantum safe"},
-	"poly1305":    {Name: "Poly1305", Type: "hash", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Poly1305 MAC", Remediation: "No action needed - quantum safe"},
+	"aes":       {Name: "AES", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "Advanced Encryption Standard", Remediation: "Use AES-256 for 128-bit post-quantum security"},
+	"aes-128":   {Name: "AES-128", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityLow, Description: "AES with 128-bit key (64-bit post-quantum)", Remediation: "Upgrade to AES-256 for 128-bit post-quantum security"},
+	"aes-192":   {Name: "AES-192", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "AES with 192-bit key", Remediation: "Consider upgrading to AES-256"},
+	"aes-256":   {Name: "AES-256", Type: "encryption", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "AES with 256-bit key (128-bit post-quantum)", Remediation: "No action needed - quantum safe"},
+	"aes-gcm":   {Name: "AES-GCM", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "AES Galois/Counter Mode", Remediation: "Use AES-256-GCM for post-quantum security"},
+	"aes-cbc":   {Name: "AES-CBC", Type: "encryption", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "AES Cipher Block Chaining", Remediation: "Consider AES-256-GCM for authenticated encryption"},
+	"chacha20":  {Name: "ChaCha20", Type: "encryption", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "ChaCha20 stream cipher", Remediation: "No action needed - quantum safe"},
+	"xchacha20": {Name: "XChaCha20", Type: "encryption", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Extended nonce ChaCha20", Remediation: "No action needed - quantum safe"},
+	"poly1305":  {Name: "Poly1305", Type: "hash", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Poly1305 MAC", Remediation: "No action needed - quantum safe"},
 
 	// HMAC algorithms
 	"hs256":       {Name: "HS256", Type: "signature", QuantumRisk: types.RiskPartial, Severity: types.SeverityInfo, Description: "HMAC with SHA-256", Remediation: "Consider HS512 for stronger post-quantum security"},
@@ -87,18 +87,18 @@ var algorithmDatabase = map[string]AlgorithmInfo{
 	"blake3":  {Name: "BLAKE3", Type: "hash", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "BLAKE3 hash", Remediation: "No action needed - quantum safe"},
 
 	// Broken classical algorithms
-	"des":    {Name: "DES", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "DES (56-bit, broken)", Remediation: "Replace immediately with AES-256"},
-	"3des":   {Name: "3DES", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityHigh, Description: "Triple DES", Remediation: "Replace with AES-256"},
-	"rc4":    {Name: "RC4", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "RC4 (broken)", Remediation: "Replace immediately with AES-256 or ChaCha20"},
-	"rc2":    {Name: "RC2", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "RC2 (weak)", Remediation: "Replace immediately with AES-256"},
+	"des":  {Name: "DES", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "DES (56-bit, broken)", Remediation: "Replace immediately with AES-256"},
+	"3des": {Name: "3DES", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityHigh, Description: "Triple DES", Remediation: "Replace with AES-256"},
+	"rc4":  {Name: "RC4", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "RC4 (broken)", Remediation: "Replace immediately with AES-256 or ChaCha20"},
+	"rc2":  {Name: "RC2", Type: "encryption", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical, Description: "RC2 (weak)", Remediation: "Replace immediately with AES-256"},
 
 	// Post-Quantum - SAFE
-	"ml-kem":     {Name: "ML-KEM", Type: "key-exchange", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "NIST FIPS 203 (Kyber)", Remediation: "No action needed - quantum safe"},
-	"ml-dsa":     {Name: "ML-DSA", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "NIST FIPS 204 (Dilithium)", Remediation: "No action needed - quantum safe"},
-	"slh-dsa":    {Name: "SLH-DSA", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "NIST FIPS 205 (SPHINCS+)", Remediation: "No action needed - quantum safe"},
-	"kyber":      {Name: "Kyber", Type: "key-exchange", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Kyber KEM", Remediation: "No action needed - quantum safe"},
-	"dilithium":  {Name: "Dilithium", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Dilithium signature", Remediation: "No action needed - quantum safe"},
-	"sphincs":    {Name: "SPHINCS+", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "SPHINCS+ signature", Remediation: "No action needed - quantum safe"},
+	"ml-kem":    {Name: "ML-KEM", Type: "key-exchange", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "NIST FIPS 203 (Kyber)", Remediation: "No action needed - quantum safe"},
+	"ml-dsa":    {Name: "ML-DSA", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "NIST FIPS 204 (Dilithium)", Remediation: "No action needed - quantum safe"},
+	"slh-dsa":   {Name: "SLH-DSA", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "NIST FIPS 205 (SPHINCS+)", Remediation: "No action needed - quantum safe"},
+	"kyber":     {Name: "Kyber", Type: "key-exchange", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Kyber KEM", Remediation: "No action needed - quantum safe"},
+	"dilithium": {Name: "Dilithium", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "Dilithium signature", Remediation: "No action needed - quantum safe"},
+	"sphincs":   {Name: "SPHINCS+", Type: "signature", QuantumRisk: types.RiskSafe, Severity: types.SeverityInfo, Description: "SPHINCS+ signature", Remediation: "No action needed - quantum safe"},
 }
 
 // ClassifyAlgorithm returns information about an algorithm.

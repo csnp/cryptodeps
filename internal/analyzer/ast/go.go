@@ -112,9 +112,9 @@ type cryptoVisitor struct {
 
 // funcContext tracks a function context during AST traversal.
 type funcContext struct {
-	Name       string // function or method name
-	Receiver   string // receiver type for methods (empty for functions)
-	IsExported bool   // whether the function is exported (uppercase first letter)
+	Name       string    // function or method name
+	Receiver   string    // receiver type for methods (empty for functions)
+	IsExported bool      // whether the function is exported (uppercase first letter)
 	EndPos     token.Pos // position where function ends
 }
 

@@ -397,13 +397,13 @@ func TestJWTSigningMethods(t *testing.T) {
 func TestKnownCryptoTargets(t *testing.T) {
 	// Verify essential crypto targets are present
 	expectedTargets := map[string]string{
-		"crypto/rsa":                          "RSA",
-		"crypto/ecdsa":                        "ECDSA",
-		"crypto/ed25519":                      "Ed25519",
-		"crypto/aes":                          "AES",
-		"crypto/sha256":                       "SHA-256",
-		"golang.org/x/crypto/bcrypt":          "bcrypt",
-		"golang.org/x/crypto/argon2":          "Argon2",
+		"crypto/rsa":                           "RSA",
+		"crypto/ecdsa":                         "ECDSA",
+		"crypto/ed25519":                       "Ed25519",
+		"crypto/aes":                           "AES",
+		"crypto/sha256":                        "SHA-256",
+		"golang.org/x/crypto/bcrypt":           "bcrypt",
+		"golang.org/x/crypto/argon2":           "Argon2",
 		"golang.org/x/crypto/chacha20poly1305": "ChaCha20-Poly1305",
 	}
 

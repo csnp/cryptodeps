@@ -87,12 +87,24 @@ func (a *Analyzer) keepCrypto(c types.CryptoUsage) bool {
 	min := strings.ToUpper(strings.TrimSpace(a.options.MinSeverity))
 	if min != "" {
 		threshold, ok := severityRank[types.Severity(min)]
-		if ok && severityRank[c.Severity] < threshold {
+		// A severity this build does not recognise is reported, not withheld.
+		// Ranking an unmapped key gave 0, which is INFO, so any threshold above
+		// INFO silently dropped it. Database records arrive from a remote feed
+		// and are unmarshalled without normalising case, so a record carrying
+		// "critical" rather than "CRITICAL" was discarded by the very filter a
+		// user reaches for to see critical findings. A finding whose severity
+		// cannot be ranked has not been shown to be below the threshold.
+		if rank, known := severityRank[normalizeSeverity(c.Severity)]; ok && known && rank < threshold {
 			return false
 		}
 	}
 
 	return true
+}
+
+// normalizeSeverity puts a severity into the case severityRank is keyed by.
+func normalizeSeverity(s types.Severity) types.Severity {
+	return types.Severity(strings.ToUpper(strings.TrimSpace(string(s))))
 }
 
 // filtersActive reports whether any reporting filter is set.

@@ -10,10 +10,10 @@ import "time"
 type Ecosystem string
 
 const (
-	EcosystemGo     Ecosystem = "go"
-	EcosystemNPM    Ecosystem = "npm"
-	EcosystemPyPI   Ecosystem = "pypi"
-	EcosystemMaven  Ecosystem = "maven"
+	EcosystemGo      Ecosystem = "go"
+	EcosystemNPM     Ecosystem = "npm"
+	EcosystemPyPI    Ecosystem = "pypi"
+	EcosystemMaven   Ecosystem = "maven"
 	EcosystemUnknown Ecosystem = "unknown"
 )
 
@@ -47,7 +47,7 @@ type Dependency struct {
 	Name      string    `json:"name" yaml:"name"`
 	Version   string    `json:"version" yaml:"version"`
 	Ecosystem Ecosystem `json:"ecosystem" yaml:"ecosystem"`
-	Direct    bool      `json:"direct" yaml:"direct"`       // true if direct dependency, false if transitive
+	Direct    bool      `json:"direct" yaml:"direct"`                     // true if direct dependency, false if transitive
 	Parent    string    `json:"parent,omitempty" yaml:"parent,omitempty"` // parent dependency (for transitive)
 }
 
@@ -101,13 +101,13 @@ type CryptoUsage struct {
 	QuantumRisk  QuantumRisk  `json:"quantumRisk" yaml:"quantumRisk"`
 	Severity     Severity     `json:"severity" yaml:"severity"`
 	Location     Location     `json:"location" yaml:"location"`
-	CallPath     []string     `json:"callPath,omitempty" yaml:"callPath,omitempty"` // trace from public API to crypto
-	InExported   bool         `json:"inExported,omitempty" yaml:"inExported,omitempty"` // whether in exported/public function
-	Function     string       `json:"function,omitempty" yaml:"function,omitempty"` // containing function name
-	Remediation  string       `json:"remediation,omitempty" yaml:"remediation,omitempty"` // migration guidance
-	Confidence   Confidence   `json:"confidence,omitempty" yaml:"confidence,omitempty"` // verified, high, medium, low
+	CallPath     []string     `json:"callPath,omitempty" yaml:"callPath,omitempty"`         // trace from public API to crypto
+	InExported   bool         `json:"inExported,omitempty" yaml:"inExported,omitempty"`     // whether in exported/public function
+	Function     string       `json:"function,omitempty" yaml:"function,omitempty"`         // containing function name
+	Remediation  string       `json:"remediation,omitempty" yaml:"remediation,omitempty"`   // migration guidance
+	Confidence   Confidence   `json:"confidence,omitempty" yaml:"confidence,omitempty"`     // verified, high, medium, low
 	Reachability Reachability `json:"reachability,omitempty" yaml:"reachability,omitempty"` // CONFIRMED, REACHABLE, AVAILABLE
-	Traces       []CallTrace  `json:"traces,omitempty" yaml:"traces,omitempty"` // paths from user code to this crypto
+	Traces       []CallTrace  `json:"traces,omitempty" yaml:"traces,omitempty"`             // paths from user code to this crypto
 }
 
 // AnalysisMetadata contains information about how the analysis was performed.
@@ -161,12 +161,12 @@ type ScanResult struct {
 
 // ScanSummary provides aggregate statistics for a scan.
 type ScanSummary struct {
-	TotalDependencies    int `json:"totalDependencies" yaml:"totalDependencies"`
-	DirectDependencies   int `json:"directDependencies" yaml:"directDependencies"`
-	WithCrypto           int `json:"withCrypto" yaml:"withCrypto"`
-	QuantumVulnerable    int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
-	QuantumPartial       int `json:"quantumPartial" yaml:"quantumPartial"`
-	NotInDatabase        int `json:"notInDatabase" yaml:"notInDatabase"`
+	TotalDependencies  int `json:"totalDependencies" yaml:"totalDependencies"`
+	DirectDependencies int `json:"directDependencies" yaml:"directDependencies"`
+	WithCrypto         int `json:"withCrypto" yaml:"withCrypto"`
+	QuantumVulnerable  int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
+	QuantumPartial     int `json:"quantumPartial" yaml:"quantumPartial"`
+	NotInDatabase      int `json:"notInDatabase" yaml:"notInDatabase"`
 	// FilteredOut counts findings that were detected and then withheld by
 	// --risk or --min-severity. Without it, a filter that matches nothing is
 	// indistinguishable from a project with no cryptography, and the report
@@ -174,9 +174,9 @@ type ScanSummary struct {
 	FilteredOut int `json:"filteredOut,omitempty" yaml:"filteredOut,omitempty"`
 	// Reachability stats (only populated when reachability analysis is enabled)
 	ReachabilityAnalyzed bool `json:"reachabilityAnalyzed,omitempty" yaml:"reachabilityAnalyzed,omitempty"`
-	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"`   // Direct calls from user code
-	ReachableCrypto      int  `json:"reachableCrypto,omitempty" yaml:"reachableCrypto,omitempty"`   // In call graph
-	AvailableCrypto      int  `json:"availableCrypto,omitempty" yaml:"availableCrypto,omitempty"`   // In deps but not called
+	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"` // Direct calls from user code
+	ReachableCrypto      int  `json:"reachableCrypto,omitempty" yaml:"reachableCrypto,omitempty"` // In call graph
+	AvailableCrypto      int  `json:"availableCrypto,omitempty" yaml:"availableCrypto,omitempty"` // In deps but not called
 }
 
 // SkippedManifest records a file that was recognised as a manifest but could not
@@ -217,6 +217,10 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		multi.TotalSummary.QuantumVulnerable += r.Summary.QuantumVulnerable
 		multi.TotalSummary.QuantumPartial += r.Summary.QuantumPartial
 		multi.TotalSummary.NotInDatabase += r.Summary.NotInDatabase
+		// Without this the aggregate reported zero withheld findings while the
+		// per-project summaries reported dozens, so the totals a reader
+		// actually looks at described a filtered scan as a complete one.
+		multi.TotalSummary.FilteredOut += r.Summary.FilteredOut
 		multi.TotalSummary.ConfirmedCrypto += r.Summary.ConfirmedCrypto
 		multi.TotalSummary.ReachableCrypto += r.Summary.ReachableCrypto
 		multi.TotalSummary.AvailableCrypto += r.Summary.AvailableCrypto
