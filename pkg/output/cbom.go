@@ -89,11 +89,17 @@ type cycloneDXAlgorithmProperties struct {
 
 // Format writes the scan result as CycloneDX CBOM.
 func (f *CBOMFormatter) Format(result *types.ScanResult, w io.Writer) error {
-	return f.format(result, nil, w)
+	return f.format(result, []*types.ScanResult{result}, nil, w)
 }
 
-// format writes a CBOM, recording any manifest that was not read.
-func (f *CBOMFormatter) format(result *types.ScanResult, skipped []types.SkippedManifest, w io.Writer) error {
+// format writes a CBOM, recording any manifest that was not read and anything
+// the scan did not establish.
+//
+// projects is the per-project view, kept separate from the merged result because
+// coverage has to be judged per project. Judging it on the merged summary let a
+// workspace where one project was entirely unexamined emit a document that said
+// nothing about it.
+func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanResult, skipped []types.SkippedManifest, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
@@ -117,7 +123,7 @@ func (f *CBOMFormatter) format(result *types.ScanResult, skipped []types.Skipped
 		},
 		Components: make([]cycloneDXComponent, 0),
 	}
-	bom.Metadata.Properties = cbomCoverageProperties(result.Summary, skipped)
+	bom.Metadata.Properties = cbomCoverageProperties(projects, skipped)
 
 	// Emit each dependency as a component, then each algorithm it provides as a
 	// cryptographic asset, and link the two through the dependencies graph.
@@ -324,42 +330,46 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 		merged.Dependencies = append(merged.Dependencies, project.Dependencies...)
 	}
 
-	return f.format(merged, result.Skipped, w)
+	return f.format(merged, result.Projects, result.Skipped, w)
 }
 
 // cbomCoverageProperties records what this bill of materials does not cover.
 //
 // Named under a cryptodeps: prefix because CycloneDX property names are
 // namespaced by convention and these are tool-specific, not spec fields.
-func cbomCoverageProperties(summary types.ScanSummary, skipped []types.SkippedManifest) []cycloneDXProperty {
+// Coverage is judged per project through the shared classifier, so this cannot
+// disagree with what the table and markdown reports say.
+func cbomCoverageProperties(projects []*types.ScanResult, skipped []types.SkippedManifest) []cycloneDXProperty {
 	var props []cycloneDXProperty
 
+	var unread int
 	for _, s := range skipped {
-		props = append(props, cycloneDXProperty{
-			Name:  "cryptodeps:manifestNotAnalyzed",
-			Value: s.Path + ": " + s.Reason,
-		})
+		name := "cryptodeps:manifestNotAnalyzed"
+		if s.Unsupported {
+			name = "cryptodeps:manifestNotSupported"
+		} else {
+			unread++
+		}
+		props = append(props, cycloneDXProperty{Name: name, Value: s.Path + ": " + s.Reason})
 	}
-	if len(skipped) > 0 {
+	if unread > 0 {
 		props = append(props, cycloneDXProperty{
 			Name: "cryptodeps:coverage",
 			Value: fmt.Sprintf("incomplete: %d manifest(s) were found but could not be read, "+
-				"so the dependencies they declare are absent from this document", len(skipped)),
+				"so the dependencies they declare are absent from this document", unread),
 		})
 	}
-	if summary.FilteredOut > 0 {
-		props = append(props, cycloneDXProperty{
-			Name: "cryptodeps:findingsWithheld",
-			Value: fmt.Sprintf("%d finding(s) were detected and withheld by --risk or --min-severity; "+
-				"this document describes a filtered subset", summary.FilteredOut),
-		})
-	}
-	if summary.TotalDependencies > 0 && summary.NotInDatabase >= summary.TotalDependencies {
-		props = append(props, cycloneDXProperty{
-			Name: "cryptodeps:coverage",
-			Value: fmt.Sprintf("none of the %d dependencies are present in the crypto database, "+
-				"so no conclusion about cryptographic usage was drawn", summary.TotalDependencies),
-		})
+
+	for _, note := range coverageNotes(projects) {
+		name := "cryptodeps:coverage"
+		if note.Case == caseFiltered {
+			name = "cryptodeps:findingsWithheld"
+		}
+		value := note.Text()
+		if note.Manifest != "" && len(projects) > 1 {
+			value = note.Manifest + ": " + value
+		}
+		props = append(props, cycloneDXProperty{Name: name, Value: value})
 	}
 
 	return props

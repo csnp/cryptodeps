@@ -188,6 +188,27 @@ type ScanSummary struct {
 type SkippedManifest struct {
 	Path   string `json:"path" yaml:"path"`
 	Reason string `json:"reason" yaml:"reason"`
+	// Unsupported separates "cryptodeps has no parser for this ecosystem" from
+	// "this file should have been readable and was not".
+	//
+	// Both are reported, because a file that looks like a manifest and was not
+	// read is something the user is entitled to know either way. Only the second
+	// means the scan is incomplete, so only the second forces exit 2. Collapsing
+	// the two made every polyglot repository an analysis error, and then
+	// dropping the unsupported ones from discovery to fix that made them
+	// invisible instead, which is the failure this type exists to prevent.
+	Unsupported bool `json:"unsupported,omitempty" yaml:"unsupported,omitempty"`
+}
+
+// IncompleteScan reports whether any skip means the scan failed to cover input
+// it should have covered. An unsupported ecosystem is not such a case.
+func IncompleteScan(skipped []SkippedManifest) bool {
+	for _, s := range skipped {
+		if !s.Unsupported {
+			return true
+		}
+	}
+	return false
 }
 
 // MultiProjectResult represents the result of scanning multiple projects/manifests.

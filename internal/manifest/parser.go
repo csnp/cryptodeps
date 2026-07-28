@@ -179,12 +179,16 @@ func DetectAndParseAll(path string) ([]*Manifest, []types.SkippedManifest, error
 	for _, manifestPath := range manifestPaths {
 		parser, err := getParserForPath(manifestPath)
 		if err != nil {
-			// Recognised by discovery but not by any parser. Report it: the
-			// user is entitled to know a file that looks like a manifest was
-			// not read.
+			// Recognised by discovery but not by any parser. Report it, because
+			// the user is entitled to know a file that looks like a manifest was
+			// not read, but mark it unsupported so it does not make the scan
+			// look incomplete. cryptodeps never claimed to read Cargo.toml, and
+			// erroring on one turned every polyglot repository into a build
+			// failure.
 			skipped = append(skipped, types.SkippedManifest{
-				Path:   manifestPath,
-				Reason: "no parser for this manifest type",
+				Path:        manifestPath,
+				Reason:      "no parser for this manifest type",
+				Unsupported: true,
 			})
 			continue
 		}

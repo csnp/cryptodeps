@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
 // TestCorruptManifestIsReportedNotDropped is the regression test for a scanner
@@ -163,57 +165,96 @@ func TestDiscoveryOrderIsStable(t *testing.T) {
 	}
 }
 
-// TestUnsupportedManifestTypesAreNotReportedAsSkips guards the exit code of
-// every polyglot repository.
+// TestSupportedManifestsAllHaveParsers is the structural version of the test
+// above: it fails by construction if the parsable set and the parsers disagree,
+// rather than waiting for someone to notice an exit code.
 //
-// Discovery recognised Cargo.toml, Gemfile, composer.json and the Gradle files
-// as manifests, but no parser exists for any of them, so each one became a
-// reported skip. A skip forces exit 2, so a tree holding a go.mod beside a
-// Cargo.toml reported an analysis error instead of the exit 1 its real
-// quantum-vulnerable findings had earned. SupportedManifests has never listed
-// these names: the tool was erroring on files it never claimed to read.
+// Both directions, because the first version checked only one. A parsable name
+// with no parser forces exit 2 on every scan that meets the file. A parser that
+// is no longer reachable from discovery silently stops scanning an entire
+// ecosystem, which is the more dangerous of the two: flipping "pom.xml" to false
+// disabled all Maven scanning and left the whole suite green.
+func TestSupportedManifestsAllHaveParsers(t *testing.T) {
+	for name, parsable := range ManifestFiles {
+		_, err := getParser(name)
+		switch {
+		case parsable && err != nil:
+			t.Errorf("%q is marked parsable but has no parser (%v); it would be discovered, "+
+				"fail to parse, and be reported as unsupported on every scan that meets one", name, err)
+		case !parsable && err == nil:
+			t.Errorf("%q has a parser but is marked unparsable, so discovery routes it to the "+
+				"unsupported path and that ecosystem is never scanned", name)
+		}
+	}
+
+	// Every manifest the tool advertises must be reachable from discovery.
+	for _, name := range SupportedManifests() {
+		if !IsParsableManifest(name) {
+			t.Errorf("SupportedManifests advertises %q but discovery does not treat it as "+
+				"parsable, so a documented ecosystem is silently never scanned", name)
+		}
+	}
+}
+
+// TestUnsupportedManifestsAreStillReported is the other half of the polyglot
+// fix, and the half that was got wrong first.
 //
-// This is the case TestValidTreeSkipsNothing was too narrow to catch, because
-// its fixture used only the three manifest types that do have parsers.
-func TestUnsupportedManifestTypesAreNotReportedAsSkips(t *testing.T) {
-	for _, name := range []string{
-		"Cargo.toml", "Gemfile", "composer.json", "build.gradle", "build.gradle.kts", "go.work",
-	} {
+// Narrowing discovery stopped the spurious exit 2 by making these files vanish
+// from every output format at exit 0. A build.gradle full of crypto dependencies
+// became invisible, which is exactly the silent skip this branch exists to
+// remove, and it contradicted the tool's own message that "a silently skipped
+// manifest is how a scanner reports a clean tree it never read". They must be
+// reported AND must not force exit 2.
+func TestUnsupportedManifestsAreStillReported(t *testing.T) {
+	for _, name := range []string{"Cargo.toml", "Gemfile", "composer.json", "build.gradle", "build.gradle.kts"} {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeFile(t, filepath.Join(root, "go.mod"), "module example.com/x\n\ngo 1.21\n")
 			writeFile(t, filepath.Join(root, name), "placeholder\n")
 
-			manifests, skipped, err := DetectAndParseAll(root)
+			_, skipped, err := DetectAndParseAll(root)
 			if err != nil {
 				t.Fatalf("DetectAndParseAll: %v", err)
 			}
-			for _, s := range skipped {
-				if filepath.Base(s.Path) == name {
-					t.Errorf("%s was reported as a skipped manifest (%s); every skip forces "+
-						"exit 2, so this turns a normal polyglot repository into an analysis error",
-						name, s.Reason)
+
+			var found *types.SkippedManifest
+			for i := range skipped {
+				if filepath.Base(skipped[i].Path) == name {
+					found = &skipped[i]
 				}
 			}
-			// The guard must not pass by discovering nothing at all.
-			if len(manifests) != 1 {
-				t.Fatalf("got %d parsed manifests, want the 1 go.mod; fixture did not exercise discovery", len(manifests))
+			if found == nil {
+				t.Fatalf("%s was not reported at all; a manifest the tool cannot read must "+
+					"never be silently dropped, whatever the reason", name)
+			}
+			if !found.Unsupported {
+				t.Errorf("%s is reported as an unread manifest rather than an unsupported "+
+					"ecosystem, so it forces exit 2 and masks the real finding-based code", name)
 			}
 		})
 	}
 }
 
-// TestSupportedManifestsAllHaveParsers is the structural version of the test
-// above: it fails by construction if a name is ever added to discovery without a
-// parser behind it, rather than waiting for someone to notice the exit code.
-func TestSupportedManifestsAllHaveParsers(t *testing.T) {
-	for name, parsable := range ManifestFiles {
-		if !parsable {
-			continue
-		}
-		if _, err := getParser(name); err != nil {
-			t.Errorf("%q is discoverable but has no parser (%v); it would be discovered, "+
-				"fail to parse, and force exit 2 on every scan that meets one", name, err)
-		}
+// TestUnreadableManifestStillMarksTheScanIncomplete is the paired guard: the
+// Unsupported flag must not become a way for a genuinely broken manifest to stop
+// counting.
+func TestUnreadableManifestStillMarksTheScanIncomplete(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "good", "package.json"), `{"name":"g","dependencies":{"left-pad":"1.3.0"}}`)
+	writeFile(t, filepath.Join(root, "bad", "package.json"), `{"name":"b","dependencies":`)
+
+	_, skipped, err := DetectAndParseAll(root)
+	if err != nil {
+		t.Fatalf("DetectAndParseAll: %v", err)
+	}
+	if len(skipped) != 1 {
+		t.Fatalf("got %d skipped, want 1: %+v", len(skipped), skipped)
+	}
+	if skipped[0].Unsupported {
+		t.Error("a corrupt package.json was marked unsupported, so the scan would report " +
+			"itself complete while a dependency file went unread")
+	}
+	if !types.IncompleteScan(skipped) {
+		t.Error("IncompleteScan is false for an unreadable manifest, so the scan exits 0")
 	}
 }

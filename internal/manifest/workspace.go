@@ -47,21 +47,21 @@ var DefaultSkipDirs = map[string]bool{
 	"bower_components": true,
 }
 
-// ManifestFiles maps a manifest filename to whether cryptodeps can parse it.
-// Discovery only picks up the names mapped to true.
+// ManifestFiles maps a manifest filename to whether cryptodeps has a parser for
+// it. Every name here is discovered; the value decides what happens next.
 //
-// The false entries are listed rather than deleted because the reason they are
-// excluded is not obvious. Discovering a manifest cryptodeps has no parser for
-// turned it into a reported skip, and a skip forces exit 2. That made every
-// polyglot repository an analysis error: a tree with a go.mod beside a
-// Cargo.toml reported exit 2 rather than the exit 1 its two real quantum
-// vulnerable findings had earned, so the CI signal the tool exists to emit was
-// replaced by an error about a file cryptodeps never claimed to read.
-// SupportedManifests has never listed these names.
+// A name mapped to false is still found and still reported, as an unsupported
+// ecosystem rather than an unread file, and it does not affect the exit code.
+// Both halves of that matter, and getting either wrong has already shipped a
+// defect. Treating these as ordinary skips made every polyglot repository exit 2
+// and masked the exit 1 that real findings had earned. Dropping them from
+// discovery to fix that made a build.gradle full of crypto dependencies vanish
+// from all five output formats at exit 0, which is precisely the silent skip
+// this branch exists to remove.
 //
-// go.work is false for the same reason: workspace membership is resolved by
-// parseGoWorkspace, which reads it directly and contributes the member go.mod
-// files. The workspace file itself holds no dependencies to scan.
+// go.work is false because workspace membership is resolved by parseGoWorkspace,
+// which reads it directly and contributes the member go.mod files. The workspace
+// file declares no dependencies of its own.
 var ManifestFiles = map[string]bool{
 	"go.mod":           true,
 	"package.json":     true,
@@ -76,6 +76,11 @@ var ManifestFiles = map[string]bool{
 	"Cargo.toml":       false,
 	"Gemfile":          false,
 	"composer.json":    false,
+}
+
+// IsParsableManifest reports whether a filename has a parser behind it.
+func IsParsableManifest(name string) bool {
+	return ManifestFiles[name] || isRequirementsFile(name)
 }
 
 // DiscoverManifests finds all manifest files in a directory tree.
@@ -390,8 +395,13 @@ func isRequirementsFile(name string) bool {
 }
 
 // isManifestFile checks if a filename is a recognized manifest file.
+//
+// Membership, not the mapped value: a name cryptodeps cannot parse is still
+// discovered so that it can be reported as an unsupported ecosystem. Testing the
+// value here instead is what made those files vanish from every output format.
 func isManifestFile(name string) bool {
-	return ManifestFiles[name] || isRequirementsFile(name)
+	_, known := ManifestFiles[name]
+	return known || isRequirementsFile(name)
 }
 
 // isManifestPath checks whether a path is a manifest, including layouts that

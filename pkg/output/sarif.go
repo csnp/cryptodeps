@@ -6,7 +6,6 @@ package output
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -178,12 +177,19 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 	// Record unread manifests as execution notifications. Emitting results
 	// without saying that part of the input was never read would let a consumer
 	// treat an incomplete scan as a complete one.
-	invocation := sarifInvocation{ExecutionSuccessful: len(skipped) == 0}
+	// An unsupported ecosystem is reported but does not clear
+	// executionSuccessful: the tool did not fail to read the file, it has no
+	// parser for it, which is a declared limit rather than an incomplete run.
+	invocation := sarifInvocation{ExecutionSuccessful: !types.IncompleteScan(skipped)}
 	for _, s := range skipped {
 		uri, baseID := sarifArtifactURI(absRoot, s.Path)
+		level, prefix := "error", "manifest found but not analyzed: "
+		if s.Unsupported {
+			level, prefix = "warning", "manifest found but not supported: "
+		}
 		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{
-			Level:   "error",
-			Message: sarifMessage{Text: "manifest found but not analyzed: " + s.Reason},
+			Level:   level,
+			Message: sarifMessage{Text: prefix + s.Reason},
 			Locations: []sarifLocation{
 				{PhysicalLocation: sarifPhysicalLocation{
 					ArtifactLocation: sarifArtifactLocation{URI: uri, URIBaseID: baseID},
@@ -191,37 +197,27 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 			},
 		})
 	}
-	// Say what the run did not cover, for the same reason the table does. A
-	// consumer reading only `results` cannot tell an empty array produced by a
-	// clean tree from one produced by a filter that withheld everything, or by a
-	// scan where no dependency was in the database. Both used to emit zero
-	// results and assert executionSuccessful, which reads as a clean bill of
-	// health. These are coverage statements rather than tool failures, so they
-	// are notifications and do not clear executionSuccessful.
-	var filteredOut, totalDeps, notInDatabase int
-	for _, p := range projects {
-		if p == nil {
-			continue
+	// Say what the run did not cover, for the same reason the table does, and
+	// through the same classification so the two cannot disagree. A consumer
+	// reading only `results` cannot tell an empty array produced by a clean tree
+	// from one produced by a filter that withheld everything, or by a scan where
+	// no dependency was in the database.
+	//
+	// Per project, and only for projects that produced no findings. Evaluated
+	// over the whole run instead, these notes contradicted the results beside
+	// them: a scan with two CRITICAL findings carried a notification saying no
+	// conclusion could be drawn, and a workspace where one project of two went
+	// entirely unexamined carried no note at all. These are coverage statements
+	// rather than tool failures, so they do not clear executionSuccessful.
+	for _, note := range coverageNotes(projects) {
+		message := note.Text()
+		if note.Manifest != "" && len(projects) > 1 {
+			uri, _ := sarifArtifactURI(absRoot, note.Manifest)
+			message = uri + ": " + message
 		}
-		filteredOut += p.Summary.FilteredOut
-		totalDeps += p.Summary.TotalDependencies
-		notInDatabase += p.Summary.NotInDatabase
-	}
-	if filteredOut > 0 {
 		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{
-			Level: "note",
-			Message: sarifMessage{Text: fmt.Sprintf(
-				"%d finding(s) were detected and withheld by --risk or --min-severity. "+
-					"This run reports a filtered subset, not every finding.", filteredOut)},
-		})
-	}
-	if totalDeps > 0 && notInDatabase == totalDeps {
-		invocation.ToolExecutionNotifications = append(invocation.ToolExecutionNotifications, sarifNotification{
-			Level: "warning",
-			Message: sarifMessage{Text: fmt.Sprintf(
-				"None of the %d dependencies are present in the crypto database, so no "+
-					"conclusion about cryptographic usage can be drawn from this run. "+
-					"An empty result set here means nothing was examined, not that nothing was found.", totalDeps)},
+			Level:   note.Level(),
+			Message: sarifMessage{Text: message},
 		})
 	}
 	log.Runs[0].Invocations = []sarifInvocation{invocation}

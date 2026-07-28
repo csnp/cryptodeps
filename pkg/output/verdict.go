@@ -3,7 +3,11 @@
 
 package output
 
-import "github.com/csnp/qramm-cryptodeps/pkg/types"
+import (
+	"fmt"
+
+	"github.com/csnp/qramm-cryptodeps/pkg/types"
+)
 
 // noFindingsCase says why a scan produced no findings.
 //
@@ -56,4 +60,70 @@ func hasAnyCrypto(deps []types.DependencyResult) bool {
 		}
 	}
 	return false
+}
+
+// coverageNote is what one project's scan failed to establish.
+//
+// The machine-readable formats need this as data rather than prose, but they
+// must reach it through the same classification the human formats use. The first
+// attempt at this re-derived the conditions inline in sarif.go and cbom.go
+// instead, with the test applied to the whole run rather than per project and
+// without checking whether the project had findings at all. The result was a
+// SARIF document carrying two CRITICAL findings alongside a notification saying
+// no conclusion about cryptographic usage could be drawn, and a mixed workspace
+// where 21 of 24 dependencies went unexamined without either format saying so.
+type coverageNote struct {
+	// Manifest is the project the note is about, empty for a single-project run.
+	Manifest string
+	// Case is the shared classification.
+	Case noFindingsCase
+	// Summary is that project's summary, for rendering the numbers.
+	Summary types.ScanSummary
+}
+
+// coverageNotes returns a note for each project that produced no findings and
+// whose emptiness therefore needs explaining.
+//
+// A project with findings gets no note: its results speak for it, and saying
+// "nothing was examined" beside a populated result set is simply false.
+// caseGenuinelyClean also gets no note, because an empty result set is exactly
+// what it means.
+func coverageNotes(projects []*types.ScanResult) []coverageNote {
+	var notes []coverageNote
+	for _, p := range projects {
+		if p == nil || hasAnyCrypto(p.Dependencies) {
+			continue
+		}
+		c := classifyNoFindings(p.Summary)
+		if c == caseGenuinelyClean {
+			continue
+		}
+		notes = append(notes, coverageNote{Manifest: p.Manifest, Case: c, Summary: p.Summary})
+	}
+	return notes
+}
+
+// Text renders a note for a machine-readable consumer.
+func (n coverageNote) Text() string {
+	switch n.Case {
+	case caseFiltered:
+		return fmt.Sprintf("%d finding(s) were detected and withheld by --risk or --min-severity. "+
+			"This is a filtered subset, not every finding.", n.Summary.FilteredOut)
+	case caseNoDependencies:
+		return "No dependencies were declared, so nothing was analyzed."
+	case caseNothingExamined:
+		return fmt.Sprintf("None of the %d dependencies are present in the crypto database, so no "+
+			"conclusion about cryptographic usage was drawn. An empty result set here means "+
+			"nothing was examined, not that nothing was found.", n.Summary.TotalDependencies)
+	default:
+		return ""
+	}
+}
+
+// Level maps a note to a SARIF notification level.
+func (n coverageNote) Level() string {
+	if n.Case == caseFiltered {
+		return "note"
+	}
+	return "warning"
 }

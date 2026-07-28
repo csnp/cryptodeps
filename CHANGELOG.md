@@ -61,8 +61,10 @@ candidate. 1.3.0 was never tagged.
   and a skip forces exit 2. A tree with a `go.mod` beside a `Cargo.toml`
   reported an analysis error instead of the exit 1 its real quantum-vulnerable
   findings had earned, so the CI signal the tool exists to emit was replaced by
-  an error about a file cryptodeps never claimed to read. Discovery is now
-  driven by which names actually have a parser.
+  an error about a file cryptodeps never claimed to read. Such files are now
+  reported as an unsupported ecosystem rather than an unread manifest, and only
+  a manifest that should have been readable and was not marks the scan
+  incomplete.
 
 - **A filtered scan reported clean in every format except the table.** The
   verdict that distinguishes "nothing was found" from "nothing was examined"

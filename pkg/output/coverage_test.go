@@ -81,6 +81,68 @@ func nothingExaminedScan() *types.MultiProjectResult {
 	}})
 }
 
+// withheldAssertion checks, per format, that the withheld findings are actually
+// reported in a way a consumer of THAT format can act on.
+//
+// Each assertion names the concrete field or sentence, never a bare substring.
+// The first version of this test asserted strings.Contains(out, "9"), which the
+// CBOM's random v4 serialNumber and the JSON scanDate satisfy by accident: it
+// passed against an implementation with the CBOM property and the JSON
+// aggregation both deliberately disabled, and was flaky besides. A count is the
+// wrong assertion, and so is a digit.
+var withheldAssertion = map[Format]func(*testing.T, string){
+	FormatTable: func(t *testing.T, out string) {
+		if !strings.Contains(out, "9 finding(s) were detected") {
+			t.Errorf("table does not state the withheld findings:\n%s", out)
+		}
+	},
+	FormatMarkdown: func(t *testing.T, out string) {
+		if !strings.Contains(out, "9 finding(s) were detected") {
+			t.Errorf("markdown does not state the withheld findings:\n%s", out)
+		}
+	},
+	FormatJSON: func(t *testing.T, out string) {
+		var doc struct {
+			TotalSummary struct {
+				FilteredOut int `json:"filteredOut"`
+			} `json:"totalSummary"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("JSON is not valid: %v", err)
+		}
+		if doc.TotalSummary.FilteredOut != 9 {
+			t.Errorf("totalSummary.filteredOut = %d, want 9; a consumer reading the "+
+				"aggregate cannot tell this filtered scan from a clean one",
+				doc.TotalSummary.FilteredOut)
+		}
+	},
+	FormatCBOM: func(t *testing.T, out string) {
+		var doc struct {
+			Metadata struct {
+				Properties []struct {
+					Name  string `json:"name"`
+					Value string `json:"value"`
+				} `json:"properties"`
+			} `json:"metadata"`
+		}
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			t.Fatalf("CBOM is not valid JSON: %v", err)
+		}
+		for _, p := range doc.Metadata.Properties {
+			if p.Name == "cryptodeps:findingsWithheld" && strings.Contains(p.Value, "9") {
+				return
+			}
+		}
+		t.Errorf("CBOM has no cryptodeps:findingsWithheld property, so it asserts a "+
+			"complete bill of materials for a filtered scan: %+v", doc.Metadata.Properties)
+	},
+	FormatSARIF: func(t *testing.T, out string) {
+		if !strings.Contains(out, "withheld by --risk or --min-severity") {
+			t.Errorf("SARIF has no notification about withheld findings:\n%s", out)
+		}
+	},
+}
+
 // TestEveryFormatSaysFindingsWereWithheld covers the filtered-to-empty case.
 func TestEveryFormatSaysFindingsWereWithheld(t *testing.T) {
 	for _, format := range []Format{FormatTable, FormatMarkdown, FormatJSON, FormatCBOM, FormatSARIF} {
@@ -91,13 +153,133 @@ func TestEveryFormatSaysFindingsWereWithheld(t *testing.T) {
 				t.Errorf("%s reports a clean scan while 9 findings were withheld by a filter:\n%s",
 					format, out)
 			}
-			// The withheld count has to appear somewhere a consumer of this
-			// format can find it. A format that renders an empty result set and
-			// says nothing else is indistinguishable from a clean tree.
-			if !strings.Contains(out, "9") {
-				t.Errorf("%s never mentions the 9 withheld findings:\n%s", format, out)
+			withheldAssertion[format](t, out)
+		})
+	}
+}
+
+// TestCoverageNotesDoNotContradictResults is the guard for a statement that was
+// false on the face of the document that carried it.
+//
+// SARIF and CBOM evaluated "nothing was examined" over the whole run and without
+// checking whether findings existed, so a --deep scan that found two CRITICAL
+// algorithms in packages absent from the database emitted both those findings
+// AND a notice saying no conclusion about cryptographic usage could be drawn.
+// A project with findings gets no coverage note.
+func TestCoverageNotesDoNotContradictResults(t *testing.T) {
+	withFindings := &types.ScanResult{
+		Manifest: "/repo/a/go.mod",
+		Dependencies: []types.DependencyResult{{
+			Dependency: types.Dependency{Name: "github.com/google/uuid", Version: "v1.6.0"},
+			Analysis: &types.PackageAnalysis{Package: "github.com/google/uuid", Crypto: []types.CryptoUsage{
+				{Algorithm: "MD5", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityCritical},
+			}},
+		}},
+		// Deliberately the shape --deep produces: findings exist even though
+		// every dependency is absent from the database.
+		Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1,
+			QuantumVulnerable: 1, NotInDatabase: 1},
+	}
+
+	if notes := coverageNotes([]*types.ScanResult{withFindings}); len(notes) != 0 {
+		t.Fatalf("a project with findings produced coverage notes %+v; the document would "+
+			"assert that nothing was examined beside the findings it just reported", notes)
+	}
+
+	for _, format := range []Format{FormatSARIF, FormatCBOM, FormatTable, FormatMarkdown} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, types.AggregateResults("/repo", []*types.ScanResult{withFindings}))
+			if strings.Contains(out, "nothing was examined") ||
+				strings.Contains(out, "no conclusion about cryptographic usage") {
+				t.Errorf("%s claims nothing was examined while reporting findings:\n%s", format, out)
+			}
+			if !strings.Contains(out, "MD5") {
+				t.Fatalf("fixture produced no MD5 finding in %s, so it cannot detect the "+
+					"contradiction:\n%s", format, out)
 			}
 		})
+	}
+}
+
+// TestCoverageIsJudgedPerProject guards the opposite direction of the same bug.
+//
+// Summing notInDatabase and totalDependencies across a whole workspace hid a
+// project that was entirely unexamined behind a sibling that was fully analyzed:
+// 21 of 24 dependencies went unexamined and no machine-readable format said so,
+// while the table said it plainly.
+func TestCoverageIsJudgedPerProject(t *testing.T) {
+	unexamined := &types.ScanResult{
+		Manifest: "/repo/unknown/package.json",
+		Dependencies: []types.DependencyResult{
+			{Dependency: types.Dependency{Name: "left-pad"}},
+			{Dependency: types.Dependency{Name: "is-odd"}},
+		},
+		Summary: types.ScanSummary{TotalDependencies: 2, DirectDependencies: 2, NotInDatabase: 2},
+	}
+	analyzed := &types.ScanResult{
+		Manifest: "/repo/known/go.mod",
+		Dependencies: []types.DependencyResult{{
+			Dependency: types.Dependency{Name: "golang.org/x/crypto", Version: "v0.31.0"},
+			InDatabase: true,
+			Analysis: &types.PackageAnalysis{Package: "golang.org/x/crypto", Crypto: []types.CryptoUsage{
+				{Algorithm: "RSA", QuantumRisk: types.RiskVulnerable, Severity: types.SeverityHigh},
+			}},
+		}},
+		Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1, QuantumVulnerable: 1},
+	}
+	multi := types.AggregateResults("/repo", []*types.ScanResult{unexamined, analyzed})
+
+	// Guard the fixture: the aggregate must NOT satisfy notInDatabase == total,
+	// or the old whole-run test would have caught this and there is no bug.
+	if multi.TotalSummary.NotInDatabase >= multi.TotalSummary.TotalDependencies {
+		t.Fatalf("fixture does not mix examined and unexamined projects: %+v", multi.TotalSummary)
+	}
+
+	notes := coverageNotes(multi.Projects)
+	if len(notes) != 1 || notes[0].Case != caseNothingExamined {
+		t.Fatalf("expected exactly one nothing-examined note for the unexamined project, got %+v", notes)
+	}
+
+	for _, format := range []Format{FormatSARIF, FormatCBOM} {
+		t.Run(string(format), func(t *testing.T) {
+			out := renderMulti(t, format, multi)
+			if !strings.Contains(out, "nothing was examined") {
+				t.Errorf("%s does not report the project where no dependency was examined:\n%s",
+					format, out)
+			}
+		})
+	}
+}
+
+// TestClassifyNoFindingsChecksFilterFirst pins the ordering the package
+// documents as its safety property.
+//
+// Nothing else in the suite fails if the cases are reordered, yet a summary of
+// {Total: 2, NotInDatabase: 2, FilteredOut: 2} is reachable whenever --deep finds
+// crypto in packages absent from the database and a filter withholds it. Ordered
+// wrongly, that scan reports "not analyzed" and never mentions the two withheld
+// findings.
+func TestClassifyNoFindingsChecksFilterFirst(t *testing.T) {
+	both := types.ScanSummary{TotalDependencies: 2, NotInDatabase: 2, FilteredOut: 2}
+	if got := classifyNoFindings(both); got != caseFiltered {
+		t.Errorf("classifyNoFindings(%+v) = %v, want caseFiltered; withheld findings must "+
+			"outrank every other explanation for an empty report", both, got)
+	}
+
+	// And each other case in isolation, so the test above cannot be satisfied by
+	// always returning caseFiltered.
+	for _, tc := range []struct {
+		name    string
+		summary types.ScanSummary
+		want    noFindingsCase
+	}{
+		{"no dependencies", types.ScanSummary{}, caseNoDependencies},
+		{"all unknown", types.ScanSummary{TotalDependencies: 3, NotInDatabase: 3}, caseNothingExamined},
+		{"examined and clean", types.ScanSummary{TotalDependencies: 3, NotInDatabase: 1}, caseGenuinelyClean},
+	} {
+		if got := classifyNoFindings(tc.summary); got != tc.want {
+			t.Errorf("%s: classifyNoFindings(%+v) = %v, want %v", tc.name, tc.summary, got, tc.want)
+		}
 	}
 }
 

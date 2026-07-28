@@ -265,7 +265,12 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		// findings say. That is an analysis error, so it takes precedence over
 		// the finding-based codes and over --fail-on none: a build must not go
 		// green on a report that silently omits a dependency file.
-		if len(multiResult.Skipped) > 0 {
+		//
+		// A manifest for an ecosystem cryptodeps has no parser for is reported
+		// but does not count. It is not a failure to read something; it is a
+		// declared limit of the tool, and treating it as an error made every
+		// repository holding a Cargo.toml or a build.gradle exit 2.
+		if types.IncompleteScan(multiResult.Skipped) {
 			exitCode = ExitError
 		}
 	}
