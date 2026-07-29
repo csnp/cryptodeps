@@ -34,7 +34,18 @@ Thumbs.db
 # Private/local files
 .private/
 .env
+.env.local
+.env.*.local
 *.local
+
+# Credentials and keys. A scanner that publishes findings about other people's
+# secrets should not be able to commit its own by accident.
+secrets.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Downloaded package sources (cache)
 .cache/
