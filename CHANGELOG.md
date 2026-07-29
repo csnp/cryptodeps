@@ -256,12 +256,37 @@ so everything below ships together in this release.
   therefore put the contents of an unrelated directory into the SARIF the run
   uploads. Present in 1.2.2 and in every earlier release with `--deep`.
   Manifest-supplied names and versions are now reduced to a single safe path
-  segment before they are joined to the cache path, and a version that names a
-  local path is refused with a message saying so rather than passed to `npm
-  pack` or `pip download`, which would resolve it. Registry and VCS references
-  such as `github:owner/repo` are unaffected. Reading a directory requires the
-  operator to run `--deep` over a manifest they do not control; no write or
-  execute primitive is involved.
+  segment before they are joined to the cache path, and a name or a version that
+  names a local path is refused with a message saying so rather than passed to
+  `npm pack` or `pip download`, which would resolve it. Registry and VCS
+  references such as `github:owner/repo` are unaffected.
+
+- **The same class reached the dependency name, not only the version.** Reducing
+  the name to a safe path segment kept the cache entry in place, which made the
+  name look handled, but the name is also given to the package manager as a
+  spec, and `npm pack ../../../../victim` resolves a directory. A manifest
+  declaring `{"../../../../victim": ""}` packed a tree outside the project,
+  walked it and published its file names and line numbers. A path and a package
+  spec are different guarantees; both are now checked, for every ecosystem, at
+  the point the fetch is built.
+
+- **A scanned `pom.xml` could write any file the scanning process could write.**
+  This one is not a read. `fetchMavenArtifact` joined the `artifactId` from the
+  manifest straight onto the download path handed to `curl -o`, and
+  `filepath.Join` resolves `..` lexically, so the target escaped the cache. A
+  `?` in the `artifactId` split the Maven URL so that its path portion still
+  named a real artifact while the file portion traversed, which supplies the 200
+  that `curl -f` needs in order to write at all. Reproduced against 1.2.2 and
+  against the 1.3.0 candidate: a 26-byte file outside the cache was replaced
+  with 234540 bytes of an unrelated archive by one `analyze --deep`. The
+  attacker chooses the path; the content is any artifact on Maven Central.
+  Coordinates are now validated as coordinates, which closes the URL and the
+  path at once, and the file name the fetcher writes is derived from sanitized
+  segments regardless.
+
+  Present in 1.2.2 and in every earlier release with `--deep`, alongside the
+  read above. All three require the operator to run `--deep` over a manifest
+  they do not control, which is what a CI scan of an untrusted repository does.
 
 ### Changed
 

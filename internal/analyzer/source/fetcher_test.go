@@ -1052,23 +1052,172 @@ func TestCacheSegmentCannotEscape(t *testing.T) {
 	}
 }
 
-// TestLocalPathVersionLeavesRemoteReferencesAlone guards the other direction:
+// TestLocalPathReferenceLeavesRemoteReferencesAlone guards the other direction:
 // narrowing what is fetched must not stop the references that legitimately
 // resolve to a remote package.
-func TestLocalPathVersionLeavesRemoteReferencesAlone(t *testing.T) {
+func TestLocalPathReferenceLeavesRemoteReferencesAlone(t *testing.T) {
 	local := []string{"../x", "./x", "/x", "~/x", "file:../x", "FILE:../x", "a/../../x"}
 	remote := []string{"1.2.3", "^1.2.3", ">=1.0,<2.0", "v0.14.0", "latest", "",
 		"github:owner/repo", "git+https://github.com/owner/repo.git", "npm:alias@1.0.0"}
 
 	for _, v := range local {
-		if !localPathVersion(v) {
-			t.Errorf("localPathVersion(%q) = false, want true", v)
+		if !localPathReference(v) {
+			t.Errorf("localPathReference(%q) = false, want true", v)
 		}
 	}
 	for _, v := range remote {
-		if localPathVersion(v) {
-			t.Errorf("localPathVersion(%q) = true, want false; this reference resolves to a "+
+		if localPathReference(v) {
+			t.Errorf("localPathReference(%q) = true, want false; this reference resolves to a "+
 				"published package and deep analysis of it works", v)
+		}
+	}
+}
+
+// TestFetchRefusesLocalPathName covers the half of the traversal class that the
+// version guard did not reach.
+//
+// cacheSegment sanitizes the name for the cache PATH, so the cache entry stays
+// where it belongs and the defect is invisible there. The name is also handed
+// to the package manager as a SPEC, and `npm pack ../../../../victim` resolves
+// a directory. Path safety and spec safety are different guarantees, and only
+// the first one was in place: a manifest declaring
+// {"../../../../victim": ""} packed a tree outside the project, walked it, and
+// published its file names and line numbers as the dependency's source.
+func TestFetchRefusesLocalPathName(t *testing.T) {
+	// No downloader on PATH, so nothing here touches the network. That is also
+	// why the assertion below is on the refusal REASON: without it this test
+	// would pass on a machine with no npm even if the guard were deleted.
+	withoutFetchTools(t)
+
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, "cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+
+	f := NewFetcher(cacheDir)
+	for _, name := range []string{
+		"../../../../victim",
+		"./victim",
+		"/tmp/victim",
+		"~/victim",
+		"file:../victim",
+		"pkg/../../../victim",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir, err := f.Fetch(types.Dependency{
+				Name:      name,
+				Ecosystem: types.EcosystemNPM,
+			})
+			if err == nil {
+				t.Fatalf("dependency name %q was fetched to %q; npm resolves a name that "+
+					"names a directory, so the tool reads and publishes a tree the "+
+					"manifest author chose", name, dir)
+			}
+			if !strings.Contains(err.Error(), "refers to a local path") {
+				t.Errorf("name %q failed for the wrong reason: %v; it has to be refused on "+
+					"its own terms, not incidentally by a missing downloader", name, err)
+			}
+			if dir != "" {
+				t.Errorf("returned path %q alongside an error", dir)
+			}
+		})
+	}
+}
+
+// TestMavenFetchNeverWritesOutsideTheCache covers the write primitive.
+//
+// fetchMavenArtifact built the curl -o target by joining the artifactId from
+// the scanned pom.xml straight onto the cache directory. filepath.Join resolves
+// .. lexically, so the download target escaped, and a '?' in the artifactId
+// split the Maven URL so that its path portion still named a real artifact
+// while the file portion traversed: curl -f then got its 200 and wrote. That is
+// an arbitrary file write and truncate driven by a scanned manifest, which is a
+// different and worse class than the read the version guard closed.
+func TestMavenFetchNeverWritesOutsideTheCache(t *testing.T) {
+	withoutFetchTools(t)
+
+	root := t.TempDir()
+	cacheDir := filepath.Join(root, "cache")
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		t.Fatalf("create cache dir: %v", err)
+	}
+
+	const version = "1"
+	artifactID := "junit/4.13.2/junit-4.13.2-sources.jar?a=" +
+		strings.Repeat("/..", 8) + "/pwned"
+	name := "junit:" + artifactID
+
+	// Guard: the fixture has to actually land outside the cache. If it does
+	// not, every assertion below passes for the wrong reason and the test is
+	// decorative. This mirrors the join the fetcher performs.
+	packageDir := filepath.Join(cacheDir, "maven", cacheSegment(name), cacheSegment(version))
+	wouldWrite := filepath.Join(packageDir, artifactID+"-"+version+"-sources.jar")
+	if strings.HasPrefix(filepath.Clean(wouldWrite), filepath.Clean(cacheDir)+string(filepath.Separator)) {
+		t.Fatalf("fixture does not escape the cache: %q is inside %q, so this test would "+
+			"not exercise the write primitive", wouldWrite, cacheDir)
+	}
+
+	f := NewFetcher(cacheDir)
+	dir, err := f.Fetch(types.Dependency{
+		Name:      name,
+		Version:   version,
+		Ecosystem: types.EcosystemMaven,
+	})
+	if err == nil {
+		t.Fatalf("a manifest-declared Maven coordinate was fetched to %q; the download "+
+			"target resolves to %q, outside the cache", dir, wouldWrite)
+	}
+	if !strings.Contains(err.Error(), "not a valid Maven coordinate") {
+		t.Errorf("failed for the wrong reason: %v; the coordinate has to be refused on its "+
+			"own terms, not incidentally by a missing downloader", err)
+	}
+
+	// Nothing may have been created along the escape path, at any depth.
+	if _, statErr := os.Stat(wouldWrite); statErr == nil {
+		t.Errorf("the refused fetch still created %q", wouldWrite)
+	}
+}
+
+// TestFetchAcceptsOrdinaryNames guards the test above from over-reaching: a
+// refusal that also rejects real package names would be a worse defect than the
+// one being fixed, and would not show up in a test that only feeds it attacks.
+func TestFetchAcceptsOrdinaryNames(t *testing.T) {
+	for _, name := range []string{
+		"ejs", "lodash", "@scope/pkg", "zope.interface", "python-dateutil",
+		"com.google.guava:guava", "github.com/spf13/cobra",
+	} {
+		if localPathReference(name) {
+			t.Errorf("ordinary package name %q was treated as a local path reference", name)
+		}
+	}
+}
+
+// TestMavenCoordinateValidationAcceptsRealArtifacts is the companion guard: the
+// validator must not reject the coordinates the tool exists to read.
+func TestMavenCoordinateValidationAcceptsRealArtifacts(t *testing.T) {
+	for _, name := range []string{
+		"junit:junit",
+		"com.google.guava:guava",
+		"org.bouncycastle:bcprov-jdk18on",
+		"io.jsonwebtoken:jjwt-api",
+		"com.squareup.okhttp3:okhttp",
+	} {
+		parts := strings.SplitN(name, ":", 2)
+		if err := validMavenCoordinate(parts[0], parts[1]); err != nil {
+			t.Errorf("real Maven coordinate %q was rejected: %v", name, err)
+		}
+	}
+	for _, bad := range [][2]string{
+		{"junit", "junit/../../../x"},
+		{"junit", "junit?a=b"},
+		{"../../etc", "junit"},
+		{"junit", ""},
+		{"", "junit"},
+		{"junit", "junit\x00"},
+	} {
+		if err := validMavenCoordinate(bad[0], bad[1]); err == nil {
+			t.Errorf("coordinate %q:%q was accepted", bad[0], bad[1])
 		}
 	}
 }

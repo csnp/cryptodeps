@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
@@ -27,9 +28,37 @@ const (
 	npmExtractedDir  = "package"   // npm tarballs conventionally unpack to package/
 	zipExtractedDir  = "extracted" // where this fetcher unzips wheels and JARs
 	maxCacheSegment  = 96          // long enough for any real name or version
-	pathTraversalMsg = "version %q refers to a local path, which is not fetched: " +
+	pathTraversalMsg = "%s %q refers to a local path, which is not fetched: " +
 		"deep analysis reads package archives, not directories on this machine"
 )
+
+// mavenCoordinatePart is the character set Maven allows in a groupId or an
+// artifactId. Anything else in a coordinate is not a coordinate: it is a way to
+// reach the URL the fetch is built from, or the path it is written to.
+var mavenCoordinatePart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// validMavenCoordinate rejects a groupId or artifactId that could steer the
+// fetch rather than name an artifact.
+//
+// The Maven fetcher interpolates both into a URL and joins the artifactId into
+// the path curl writes to. A '/' in the artifactId escapes that path, and a '?'
+// splits the URL so that its path portion still names a real artifact while the
+// file portion traverses, which is what turned a scanned pom.xml into an
+// arbitrary file write: curl -f does not create on a 404, and the query-string
+// trick supplies a 200. Validating the coordinate is the layer that closes it,
+// because it holds for the URL and the path at once.
+func validMavenCoordinate(groupID, artifactID string) error {
+	for _, part := range [...]struct{ label, value string }{
+		{"groupId", groupID},
+		{"artifactId", artifactID},
+	} {
+		if !mavenCoordinatePart.MatchString(part.value) {
+			return fmt.Errorf("%q is not a valid Maven coordinate: %s %q must match %s",
+				groupID+":"+artifactID, part.label, part.value, mavenCoordinatePart)
+		}
+	}
+	return nil
+}
 
 // cacheSegment reduces a manifest-supplied name or version to one safe path
 // segment.
@@ -68,15 +97,20 @@ func cacheSegment(s string) string {
 	return out
 }
 
-// localPathVersion reports whether a version string points at a directory on
-// this machine rather than at a published release.
+// localPathReference reports whether a manifest-supplied string points at a
+// directory on this machine rather than at a published release.
 //
 // npm and pip both accept such a reference as a package spec, so passing one
 // through to `npm pack` or `pip download` would fetch and analyze a local
 // directory of the manifest author's choosing. Registry and VCS references
 // (github:owner/repo, git+https://...) are left alone: those are remote, and
 // deep analysis of them works.
-func localPathVersion(v string) bool {
+//
+// This applies to the NAME as well as the version. cacheSegment already keeps
+// the name from steering the cache path, and that made the name look safe, but
+// a path and a package spec are different guarantees: `npm pack ../../../x`
+// resolves a directory no matter how the cache entry is named.
+func localPathReference(v string) bool {
 	v = strings.TrimSpace(v)
 	if v == "" {
 		return false
@@ -179,8 +213,14 @@ func NewFetcher(cacheDir string) *Fetcher {
 
 // Fetch downloads the source code for a package and returns the local path.
 func (f *Fetcher) Fetch(dep types.Dependency) (string, error) {
-	if localPathVersion(dep.Version) {
-		return "", fmt.Errorf(pathTraversalMsg, dep.Version)
+	// Both fields come from the manifest under scan, and both reach a package
+	// manager as part of a spec. Guarding one and not the other left the same
+	// class open through the name.
+	if localPathReference(dep.Version) {
+		return "", fmt.Errorf(pathTraversalMsg, "version", dep.Version)
+	}
+	if localPathReference(dep.Name) {
+		return "", fmt.Errorf(pathTraversalMsg, "name", dep.Name)
 	}
 
 	switch dep.Ecosystem {
@@ -380,6 +420,9 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	}
 	groupID := parts[0]
 	artifactID := parts[1]
+	if err := validMavenCoordinate(groupID, artifactID); err != nil {
+		return "", err
+	}
 
 	// Create cache directory for this artifact
 	packageDir := filepath.Join(f.cacheDir, "maven", cacheSegment(dep.Name), cacheSegment(dep.Version))
@@ -405,8 +448,13 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	sourcesURL := fmt.Sprintf("https://repo1.maven.org/maven2/%s/%s/%s/%s-%s-sources.jar",
 		groupPath, artifactID, dep.Version, artifactID, dep.Version)
 
-	// Download the sources JAR
-	jarPath := filepath.Join(packageDir, artifactID+"-"+dep.Version+"-sources.jar")
+	// Download the sources JAR. The coordinate is validated above, so this
+	// cannot traverse today; it goes through cacheSegment anyway so that the
+	// write target stays inside the cache even if the validation is ever
+	// loosened. The file the process writes should not depend on a second
+	// function staying strict.
+	jarBase := cacheSegment(artifactID) + "-" + cacheSegment(dep.Version)
+	jarPath := filepath.Join(packageDir, jarBase+"-sources.jar")
 
 	// Use curl to download (available on most systems)
 	cmd := exec.Command("curl", "-sL", "-o", jarPath, "-f", sourcesURL)
@@ -414,7 +462,7 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 		// Try without -sources suffix (main jar) as fallback
 		mainURL := fmt.Sprintf("https://repo1.maven.org/maven2/%s/%s/%s/%s-%s.jar",
 			groupPath, artifactID, dep.Version, artifactID, dep.Version)
-		jarPath = filepath.Join(packageDir, artifactID+"-"+dep.Version+".jar")
+		jarPath = filepath.Join(packageDir, jarBase+".jar")
 		cmd = exec.Command("curl", "-sL", "-o", jarPath, "-f", mainURL)
 		if err := cmd.Run(); err != nil {
 			os.RemoveAll(packageDir)
