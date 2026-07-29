@@ -388,6 +388,17 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   this is not. Identical on 1.2.2. The default, `--fail-on vulnerable`, is
   unaffected and behaves as documented.
 
+- **A deep scan of a package with no readable source still counts as an
+  examination.** `--deep` marks a dependency analyzed when the source fetch and
+  the walk both return without error, and a walk over a tree holding no file the
+  analyzer understands returns nothing rather than an error. A Maven artifact
+  whose sources JAR does not exist falls back to the main JAR, which carries
+  compiled classes only, so no `.java` file is ever read and the report still
+  says the dependency was examined. 1.2.2 answers the same scan with a plain
+  clean verdict, so this is not a regression, but the new wording asserts an
+  examination that did not happen. Being fixed by counting the files the walker
+  actually parses rather than the absence of an error.
+
 - **`--offline` silently disables `--deep`, and the report then suggests
   `--deep`.** Source analysis fetches package archives, so it cannot run with
   downloads refused, but passing both prints no warning that one was ignored.
