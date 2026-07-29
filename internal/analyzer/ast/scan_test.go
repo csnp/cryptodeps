@@ -4,6 +4,7 @@
 package ast
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -95,6 +96,19 @@ func TestDirectoryScanCountsOnlyTextItCouldRead(t *testing.T) {
 		{"empty go", "main.go", []byte{}, func(d string) (DirectoryScan, error) {
 			return NewGoAnalyzer().AnalyzeDirectory(d)
 		}},
+		// Larger than the head that is checked for being text, and carrying no
+		// NUL byte, so neither the NUL test nor a head shorter than the boundary
+		// catches it. The first version of the text check walked the head down
+		// to nothing looking for a rune boundary and then called an empty slice
+		// valid UTF-8, so every binary of this shape counted as parsed source.
+		{"large binary named java without a NUL byte", "Big.java",
+			bytes.Repeat([]byte{0xff}, 2000),
+			func(d string) (DirectoryScan, error) { return NewJavaAnalyzer().AnalyzeDirectory(d) }},
+		{"large binary named js without a NUL byte", "big.js",
+			bytes.Repeat([]byte{0xfe}, 4096),
+			func(d string) (DirectoryScan, error) {
+				return NewJavaScriptAnalyzer().AnalyzeDirectory(d)
+			}},
 	}
 
 	for _, tc := range cases {

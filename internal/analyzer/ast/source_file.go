@@ -18,6 +18,11 @@ import (
 // on with an archive it was handed.
 const maxSourceFile = 8 << 20 // 8 MiB
 
+// headBytes is how much of a file is checked for being text. A magic number
+// lives in the first few bytes, and validating megabytes to reject the first
+// eight is not a trade worth making.
+const headBytes = 1024
+
 // openSource reads a file that an analyzer is about to walk line by line, and
 // refuses one it cannot actually read.
 //
@@ -90,14 +95,20 @@ func isText(content []byte) bool {
 	// megabytes of a legitimate file to reject the first eight bytes of a class
 	// file is not a trade worth making.
 	head := content
-	if len(head) > 1024 {
-		head = head[:1024]
-		// Do not split a rune across the boundary and call the file binary for it.
-		for len(head) > 0 && !utf8.Valid(head) && len(content) > len(head) {
+	if len(head) > headBytes {
+		head = head[:headBytes]
+		// A rune can straddle the boundary, so trim up to the three continuation
+		// bytes one can occupy rather than calling a legitimate file binary.
+		//
+		// Bounded deliberately: an unbounded "shrink while invalid" loop walks a
+		// binary file's head down to nothing, and utf8.Valid on an empty slice
+		// is true, so every NUL-free binary over headBytes passed as text. 2000
+		// bytes of 0xff was accepted as source.
+		for i := 0; i < utf8.UTFMax-1 && len(head) > 0 && !utf8.Valid(head); i++ {
 			head = head[:len(head)-1]
 		}
 	}
-	return utf8.Valid(head)
+	return len(head) > 0 && utf8.Valid(head)
 }
 
 // scanErr reports a scanner failure that occurred after the file was opened,
