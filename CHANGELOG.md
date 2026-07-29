@@ -132,6 +132,42 @@ so everything below ships together in this release.
   regression; the wording introduced in this release asserted an examination
   that had not happened.
 
+  The count is of files **parsed**, not files opened, which is a distinction the
+  first version of this fix did not make. Three of the four analyzers are line
+  scanners whose only failure was `os.Open`, so any openable file with a
+  matching extension counted: a zero-byte `Empty.java`, or compiled class bytes
+  under a `.java` name, each produced `filesAnalyzed: 1` and restored the exact
+  verdict above. An extension is a descriptor rather than the thing itself, so a
+  file now counts only if it holds text the analyzer can read.
+
+- **A symlink in an extracted archive was followed out of the source cache.**
+  The directory walk lstats, so a symlink is not a directory and fell through to
+  the file analyzer, which opened whatever it pointed at. Both `tar` and `unzip`
+  restore absolute symlink targets, so a package could ship `Leak.java` pointing
+  at any file the scanning process can read and have this tool read it, count it
+  as evidence that the package was examined, and publish its contents as that
+  dependency's source in JSON, SARIF and CBOM. Symlinks are no longer read: an
+  extracted package is analyzed from its own contents.
+
+- **CBOM and SARIF omitted the dependencies a scan could not examine, whenever
+  it had findings for the others.** The coverage question was asked only of
+  reports that produced nothing, and a partially examined project produces
+  something. So a Maven scan that told the operator on three separate streams
+  that it could not read one of its dependencies handed GitHub code scanning a
+  SARIF run reporting success with no notification, and produced a CBOM listing
+  the libraries it had findings for with no coverage property. The two formats
+  that omitted it are the two that get uploaded. Incomplete coverage is now
+  reported as a property of the scan, in the same place a withheld-findings
+  filter already was, so it reaches every format whether or not findings were
+  also produced.
+
+- **`--fail-on` accepted any value and silently loosened the gate.** It was the
+  one enum flag of the three that did not validate, and the only one that
+  decides an exit code: a project exiting 3 under `--fail-on partial` exited 0
+  under `--fail-on partail`, with nothing on either stream, because an
+  unrecognised value fell through to the default policy. It now rejects an
+  unknown value the way `--risk` and `--min-severity` do, naming the legal ones.
+
 - **`pyproject.toml` and `Pipfile` kept the comparison operator in the version.**
   The same two packages gave `pycryptodome@3.20.0` through `requirements.txt`
   and `pycryptodome@==3.20.0` through the other two formats, and within one scan
@@ -287,14 +323,35 @@ so everything below ships together in this release.
   `npm pack` or `pip download`, which would resolve it. Registry and VCS
   references such as `github:owner/repo` are unaffected.
 
-- **The same class reached the dependency name, not only the version.** Reducing
-  the name to a safe path segment kept the cache entry in place, which made the
-  name look handled, but the name is also given to the package manager as a
-  spec, and `npm pack ../../../../victim` resolves a directory. A manifest
-  declaring `{"../../../../victim": ""}` packed a tree outside the project,
-  walked it and published its file names and line numbers. A path and a package
-  spec are different guarantees; both are now checked, for every ecosystem, at
-  the point the fetch is built.
+- **The same class reached the dependency name, not only the version, and
+  through the name it reached code execution.** Reducing the name to a safe path
+  segment kept the cache entry in place, which made the name look handled, but
+  the name is also given to the package manager as a spec, and
+  `npm pack ../../../../victim` resolves a directory. A manifest declaring
+  `{"../../../../victim": ""}` packed a tree outside the project, walked it and
+  published its file names and line numbers.
+
+  Screening the name for the spellings of a local path did not close this,
+  because the package manager parses a string the scanner treated as opaque.
+  `npm pack` splits `name@spec` on the first `@` after index 0, so a dependency
+  named `x@/path/to/victim` presented a passing string to the guard and a
+  directory to npm. Reproduced end to end: npm packed the victim directory,
+  **ran its `prepare` and `prepack` scripts on the scanning host**, and the
+  analyzer published the victim's files as that dependency's findings, with
+  nothing on stderr. The relative form needs no knowledge of absolute paths.
+  The same shape reaches `pip download` as a PEP 508 direct reference, which
+  arrives as a Poetry or Pipfile table key (`victimpkg @ file:///path`), and
+  `git+file://` reached `npm pack` through the version, since it neither begins
+  with `file:` nor contains a `..` segment.
+
+  Names are now held to their own registry's grammar (npm's scope-and-name
+  form, PEP 503 for PyPI, module-path form for Go, and Maven coordinates as
+  before), which is a question with a single answer rather than a list of the
+  ways a path can be spelled. `npm pack` additionally runs with
+  `--ignore-scripts`, so the remote VCS references that remain fetchable cannot
+  execute anything either. Every real package name in the test suite, including
+  scoped npm names, dotted PyPI names and versioned Go module paths, still
+  fetches.
 
 - **A scanned `pom.xml` could write any file the scanning process could write.**
   This one is not a read. `fetchMavenArtifact` joined the `artifactId` from the
@@ -368,9 +425,15 @@ so everything below ships together in this release.
 - Regression tests for the coverage verdict driven end to end through a real
   `--deep` scan against a pre-populated source cache, for cache entries that
   hold no extracted source, for an archive that carries no readable source at
-  all, for the bounds of the cache reset, and for manifest-supplied paths in
-  their Unix and Windows spellings. Each was confirmed to fail against the code
-  it guards, and each was mutation-tested.
+  all, for the bounds of the cache reset, for a spec smuggled through a
+  dependency name in each ecosystem, for `--ignore-scripts` reaching the npm
+  process, for a symlink out of an extracted archive, for incomplete coverage in
+  every output format, and for manifest-supplied paths in their Unix and Windows
+  spellings. Each was confirmed to fail at runtime against the code it guards,
+  never merely to fail compilation, and each was mutation-tested. The names of
+  real packages across all four ecosystems are asserted to still fetch, so a
+  guard tightened far enough to break a legitimate scan fails in the suite
+  rather than in a user's CI.
 
 ### Dependencies
 
