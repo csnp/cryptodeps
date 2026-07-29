@@ -7,6 +7,7 @@ package source
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -145,6 +146,24 @@ func isNonEmptyDir(path string) bool {
 	return err == nil && len(entries) > 0
 }
 
+// ambiguousSourceError says a cache entry holds more than one candidate source
+// directory, so which of them is the package cannot be established.
+//
+// It is a distinct type because the answer to it is the opposite of the answer
+// to an entry that holds nothing: an entry that cannot be identified must be
+// kept and reported, not cleared and fetched again. Clearing it destroyed a
+// cache entry that may well have held the findings, and reported the deletion
+// as whatever the refetch failed with afterwards.
+type ambiguousSourceError struct {
+	packageDir string
+	candidates []string
+}
+
+func (e *ambiguousSourceError) Error() string {
+	return fmt.Sprintf("cannot identify the extracted source in %s: %d candidate directories (%s)",
+		e.packageDir, len(e.candidates), strings.Join(e.candidates, ", "))
+}
+
 // extractedSourceRoot resolves the directory inside packageDir that holds the
 // extracted package.
 //
@@ -189,18 +208,95 @@ func extractedSourceRoot(packageDir string, preferred ...string) (string, error)
 	default:
 		// Guessing here would analyze a tree that may not be the package, and
 		// report the result as if it were. Say so instead.
-		return "", fmt.Errorf("cannot identify the extracted source in %s: %d candidate directories (%s)",
-			packageDir, len(found), strings.Join(found, ", "))
+		return "", &ambiguousSourceError{packageDir: packageDir, candidates: found}
 	}
+}
+
+// cacheEntryDepth is how many path elements one package's cache entry sits
+// below the cache root: ecosystem, name, version.
+const cacheEntryDepth = 3
+
+// checkCacheEntry rejects a path that is not exactly one package's cache entry.
+//
+// This is the only destructive operation in the fetcher and its argument is
+// built from manifest-supplied text, so its scope is checked rather than
+// assumed. The check is what makes the scope testable: four separate mutations
+// of the removal, up to and including RemoveAll of the entire cache root,
+// previously left the suite green.
+func (f *Fetcher) checkCacheEntry(packageDir string) error {
+	root, err := filepath.Abs(f.cacheDir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve the cache directory %s: %w", f.cacheDir, err)
+	}
+	entry, err := filepath.Abs(packageDir)
+	if err != nil {
+		return fmt.Errorf("cannot resolve the cache entry %s: %w", packageDir, err)
+	}
+
+	rel, err := filepath.Rel(root, entry)
+	if err != nil {
+		return fmt.Errorf("refusing to remove %s: it is not inside the cache directory %s", entry, root)
+	}
+	parts := strings.Split(rel, string(filepath.Separator))
+	for _, part := range parts {
+		if part == ".." {
+			return fmt.Errorf("refusing to remove %s: it resolves outside the cache directory %s",
+				entry, root)
+		}
+	}
+	if rel == "." || len(parts) != cacheEntryDepth {
+		return fmt.Errorf("refusing to remove %s: a cache entry is %d levels below the cache "+
+			"directory %s (ecosystem, name, version), and this is %d",
+			entry, cacheEntryDepth, root, len(parts))
+	}
+	return nil
 }
 
 // resetCacheEntry removes a cache entry that does not hold usable source, so
 // that the caller can fetch it again instead of analyzing whatever is there.
-func resetCacheEntry(packageDir string) error {
+func (f *Fetcher) resetCacheEntry(packageDir string) error {
+	if err := f.checkCacheEntry(packageDir); err != nil {
+		return err
+	}
 	if err := os.RemoveAll(packageDir); err != nil {
 		return fmt.Errorf("failed to clear incomplete cache entry %s: %w", packageDir, err)
 	}
 	return nil
+}
+
+// cachedSourceRoot resolves a cache entry and decides what to do when it cannot.
+//
+// It returns the source root on a hit. On a miss it clears the unusable entry
+// and returns an empty root, which tells the caller to fetch. It returns an
+// error only when the entry must be left alone, which is the ambiguous case:
+// the entry may hold the package, and deleting a tree because it could not be
+// identified is a worse answer than refusing to guess.
+//
+// The three fetchers previously each discarded this error and fell through to a
+// refetch, so the diagnostics written for it were unreachable and the user was
+// shown whatever the refetch failed with instead.
+func (f *Fetcher) cachedSourceRoot(packageDir string, preferred ...string) (string, error) {
+	root, err := extractedSourceRoot(packageDir, preferred...)
+	if err == nil {
+		return root, nil
+	}
+
+	var ambiguous *ambiguousSourceError
+	if errors.As(err, &ambiguous) {
+		return "", err
+	}
+
+	return "", f.resetCacheEntry(packageDir)
+}
+
+// discardPartialFetch clears what a failed download left behind and returns the
+// error to report for it.
+func (f *Fetcher) discardPartialFetch(packageDir string, cause error, what string) error {
+	if err := f.resetCacheEntry(packageDir); err != nil {
+		return fmt.Errorf("%s: %w (the partial cache entry was also left in place: %v)",
+			what, cause, err)
+	}
+	return fmt.Errorf("%s: %w", what, cause)
 }
 
 // NewFetcher creates a new source fetcher with the given cache directory.
@@ -292,12 +388,10 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 	packageDir := filepath.Join(f.cacheDir, "npm", cacheSegment(dep.Name), cacheSegment(dep.Version))
 
 	// Check if already cached. A cache entry counts as a hit only if it holds
-	// extracted source; see extractedSourceRoot.
-	if root, err := extractedSourceRoot(packageDir, npmExtractedDir); err == nil {
-		return root, nil
-	}
-	if err := resetCacheEntry(packageDir); err != nil {
-		return "", err
+	// extracted source; see extractedSourceRoot. An empty root with no error
+	// means the entry was unusable and has been cleared, so fetch it again.
+	if root, err := f.cachedSourceRoot(packageDir, npmExtractedDir); err != nil || root != "" {
+		return root, err
 	}
 
 	// Ensure cache directory exists
@@ -315,8 +409,7 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 	cmd := exec.Command("npm", "pack", packageSpec)
 	cmd.Dir = packageDir
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(packageDir)
-		return "", fmt.Errorf("npm pack failed: %w", err)
+		return "", f.discardPartialFetch(packageDir, err, "npm pack failed")
 	}
 
 	// Find the tarball and extract it
@@ -352,11 +445,8 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 
 	// Check if already cached. Same shape as the npm fetcher: the directory
 	// existing is not the same question as it holding extracted source.
-	if root, err := extractedSourceRoot(packageDir, zipExtractedDir); err == nil {
-		return root, nil
-	}
-	if err := resetCacheEntry(packageDir); err != nil {
-		return "", err
+	if root, err := f.cachedSourceRoot(packageDir, zipExtractedDir); err != nil || root != "" {
+		return root, err
 	}
 
 	// Ensure cache directory exists
@@ -372,8 +462,7 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 
 	cmd := exec.Command("pip", "download", "--no-deps", "-d", packageDir, packageSpec)
 	if err := cmd.Run(); err != nil {
-		os.RemoveAll(packageDir)
-		return "", fmt.Errorf("pip download failed: %w", err)
+		return "", f.discardPartialFetch(packageDir, err, "pip download failed")
 	}
 
 	// Find and extract the wheel or tarball
@@ -430,11 +519,8 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	// Check if already cached. An extraction that failed after the directory
 	// was created leaves it empty, which the old existence check accepted.
 	extractDir := filepath.Join(packageDir, zipExtractedDir)
-	if root, err := extractedSourceRoot(packageDir, zipExtractedDir); err == nil {
-		return root, nil
-	}
-	if err := resetCacheEntry(packageDir); err != nil {
-		return "", err
+	if root, err := f.cachedSourceRoot(packageDir, zipExtractedDir); err != nil || root != "" {
+		return root, err
 	}
 
 	// Ensure cache directory exists
@@ -465,8 +551,8 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 		jarPath = filepath.Join(packageDir, jarBase+".jar")
 		cmd = exec.Command("curl", "-sL", "-o", jarPath, "-f", mainURL)
 		if err := cmd.Run(); err != nil {
-			os.RemoveAll(packageDir)
-			return "", fmt.Errorf("failed to download Maven artifact: %w (tried sources and main JAR)", err)
+			return "", f.discardPartialFetch(packageDir, err,
+				"failed to download Maven artifact (tried sources and main JAR)")
 		}
 	}
 
