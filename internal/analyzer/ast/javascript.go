@@ -5,7 +5,6 @@
 package ast
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -148,11 +147,10 @@ type jsFuncContext struct {
 
 // AnalyzeFile analyzes a single JavaScript file for cryptographic usage.
 func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
-	file, err := os.Open(filename)
+	scanner, err := openSource(filename)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
 	var usages []types.CryptoUsage
 	imports := make(map[string]bool)
@@ -161,7 +159,6 @@ func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, 
 	braceDepth := 0
 	exportedNames := make(map[string]bool)
 
-	scanner := bufio.NewScanner(file)
 	lineNum := 0
 
 	for scanner.Scan() {

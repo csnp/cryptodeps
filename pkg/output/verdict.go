@@ -35,6 +35,13 @@ const (
 	// caseGenuinelyClean means dependencies were examined and carried no
 	// cryptography.
 	caseGenuinelyClean
+	// casePartialCoverage means some dependencies were examined and others were
+	// not. It is not a no-findings case: it can and does occur beside a
+	// populated result set, which is exactly why it was missing. A document
+	// listing two of three dependencies without saying the third was never read
+	// is a false bill of materials, and the two formats that omitted it are the
+	// two that get uploaded to code scanning and to compliance systems.
+	casePartialCoverage
 )
 
 // classifyNoFindings decides which case a findings-free summary falls into.
@@ -139,12 +146,27 @@ func coverageNotes(projects []*types.ScanResult) []coverageNote {
 			})
 		}
 
+		// Incomplete coverage is a property of the SCAN too, for the same
+		// reason: a project can have findings AND dependencies nothing read.
+		// Asking it only of empty reports meant a CBOM listed two of three
+		// libraries, and a SARIF run reported executionSuccessful with no
+		// notification, for a scan whose stderr had said it could not read the
+		// third. The human formats said so; the machine ones did not.
+		if p.Summary.NotExamined > 0 && p.Summary.NotExamined < p.Summary.TotalDependencies {
+			notes = append(notes, coverageNote{
+				Manifest: p.Manifest,
+				Case:     casePartialCoverage,
+				Summary:  p.Summary,
+			})
+		}
+
 		if hasAnyCrypto(p.Dependencies) {
 			continue
 		}
 		c := classifyNoFindings(p.Summary)
-		// caseFiltered is already handled above, and caseGenuinelyClean needs no
-		// explanation: an empty result set is exactly what it means.
+		// caseFiltered and casePartialCoverage are already handled above, and
+		// caseGenuinelyClean needs no explanation: an empty result set is
+		// exactly what it means.
 		if c == caseGenuinelyClean || c == caseFiltered {
 			continue
 		}
@@ -161,6 +183,11 @@ func (n coverageNote) Text() string {
 			"This is a filtered subset, not every finding.", n.Summary.FilteredOut)
 	case caseNoDependencies:
 		return "No dependencies were declared, so nothing was analyzed."
+	case casePartialCoverage:
+		return fmt.Sprintf("%d of the %d dependencies could not be examined: %s. The findings "+
+			"below describe the %d that were examined, and say nothing about the rest.",
+			n.Summary.NotExamined, n.Summary.TotalDependencies, unexaminedAdvice(n.Summary),
+			examinedCount(n.Summary))
 	case caseNothingExamined:
 		if n.Summary.DeepAttempted {
 			return fmt.Sprintf("None of the %d dependencies could be examined: they are absent from the "+

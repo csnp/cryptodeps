@@ -65,7 +65,9 @@ func (a *GoAnalyzer) AnalyzeDirectory(dir string) (DirectoryScan, error) {
 
 // AnalyzeFile analyzes a single Go file for cryptographic usage.
 func (a *GoAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
-	src, err := os.ReadFile(filename)
+	// Not os.ReadFile: an extracted archive can carry a symlink pointing at any
+	// file the process can read, and a .go name over binary content is not Go.
+	src, err := readSource(filename)
 	if err != nil {
 		return nil, err
 	}

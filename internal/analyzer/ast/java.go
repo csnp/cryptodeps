@@ -5,7 +5,6 @@
 package ast
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -186,11 +185,10 @@ func (a *JavaAnalyzer) AnalyzeDirectory(dir string) (DirectoryScan, error) {
 
 // AnalyzeFile analyzes a single Java/Kotlin file for cryptographic usage.
 func (a *JavaAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
-	file, err := os.Open(filename)
+	scanner, err := openSource(filename)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
 	var usages []types.CryptoUsage
 	imports := make(map[string]bool)
@@ -198,7 +196,6 @@ func (a *JavaAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error)
 	var currentClass string
 	braceDepth := 0
 
-	scanner := bufio.NewScanner(file)
 	lineNum := 0
 
 	for scanner.Scan() {

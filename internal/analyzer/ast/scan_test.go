@@ -56,6 +56,123 @@ func broken( {
 	}
 }
 
+// TestDirectoryScanCountsOnlyTextItCouldRead is the regression test for the
+// second attempt at the examination evidence.
+//
+// The first attempt counted files the analyzer OPENED. Three of the four
+// analyzers are line scanners whose only failure mode was os.Open, so any
+// openable file with a matching extension counted as parsed: a zero-byte
+// Empty.java in a fetched archive produced filesAnalyzed 1 and the report said
+// "no cryptographic usage detected in the 1 of 1 dependencies that were
+// examined", which is the exact sentence this release exists to remove. An
+// extension is a descriptor; accepting it as the thing itself is how the
+// false-clean class survived its own fix.
+func TestDirectoryScanCountsOnlyTextItCouldRead(t *testing.T) {
+	cases := []struct {
+		name     string
+		file     string
+		content  []byte
+		analyzer func(string) (DirectoryScan, error)
+	}{
+		{"empty java", "Empty.java", []byte{}, func(d string) (DirectoryScan, error) {
+			return NewJavaAnalyzer().AnalyzeDirectory(d)
+		}},
+		{"class bytes named java", "Hashing.java",
+			[]byte{0xca, 0xfe, 0xba, 0xbe, 0x00, 0x00, 0x00, 0x34},
+			func(d string) (DirectoryScan, error) { return NewJavaAnalyzer().AnalyzeDirectory(d) }},
+		{"empty js", "index.js", []byte{}, func(d string) (DirectoryScan, error) {
+			return NewJavaScriptAnalyzer().AnalyzeDirectory(d)
+		}},
+		{"binary named js", "index.js", []byte{0x00, 0x01, 0x02, 0xff, 0xfe},
+			func(d string) (DirectoryScan, error) {
+				return NewJavaScriptAnalyzer().AnalyzeDirectory(d)
+			}},
+		{"empty python", "mod.py", []byte{}, func(d string) (DirectoryScan, error) {
+			return NewPythonAnalyzer().AnalyzeDirectory(d)
+		}},
+		{"binary named python", "mod.py", []byte{0x7f, 'E', 'L', 'F', 0x00, 0x01},
+			func(d string) (DirectoryScan, error) { return NewPythonAnalyzer().AnalyzeDirectory(d) }},
+		{"empty go", "main.go", []byte{}, func(d string) (DirectoryScan, error) {
+			return NewGoAnalyzer().AnalyzeDirectory(d)
+		}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tc.file)
+			if err := os.WriteFile(path, tc.content, 0644); err != nil {
+				t.Fatalf("write fixture: %v", err)
+			}
+			// Guard the fixture: the walker has to reach this file at all, or a
+			// zero count means only that nothing was looked at.
+			if info, err := os.Stat(path); err != nil || info.Size() != int64(len(tc.content)) {
+				t.Fatalf("fixture %s is not on disk as written: %v", path, err)
+			}
+
+			scan, err := tc.analyzer(dir)
+			if err != nil {
+				t.Fatalf("AnalyzeDirectory: %v", err)
+			}
+			if scan.FilesParsed != 0 {
+				t.Errorf("FilesParsed = %d for a file holding %d bytes of %s; a caller reading "+
+					"this count reports the package as examined", scan.FilesParsed,
+					len(tc.content), tc.name)
+			}
+			if scan.FilesFailed != 1 {
+				t.Errorf("FilesFailed = %d, so the file was not even attempted and this case "+
+					"proves nothing", scan.FilesFailed)
+			}
+		})
+	}
+}
+
+// TestDirectoryScanDoesNotFollowSymlinks keeps an extracted archive's contents
+// to the archive.
+//
+// filepath.Walk lstats, so a symlink is not a directory and falls through to
+// the file analyzer, which opened whatever it pointed at. Both tar and unzip
+// restore absolute symlink targets, so a package could ship Leak.java pointing
+// at any file the scanning process can read and have this tool read it, count
+// it as evidence of examination, and publish its contents as that dependency's
+// source in JSON, SARIF and CBOM.
+func TestDirectoryScanDoesNotFollowSymlinks(t *testing.T) {
+	outside := t.TempDir()
+	secret := filepath.Join(outside, "CONFIDENTIAL.java")
+	if err := os.WriteFile(secret, []byte(
+		"import java.security.MessageDigest;\n"+
+			"class Secret { void f() throws Exception { MessageDigest.getInstance(\"MD5\"); } }\n"),
+		0644); err != nil {
+		t.Fatalf("write the file outside the archive: %v", err)
+	}
+
+	dir := t.TempDir()
+	if err := os.Symlink(secret, filepath.Join(dir, "Leak.java")); err != nil {
+		t.Skipf("this platform does not support symlinks: %v", err)
+	}
+
+	// Guard the fixture: the target must be readable and must carry the finding
+	// this test is looking for, or its absence proves nothing.
+	direct, err := NewJavaAnalyzer().AnalyzeFile(secret)
+	if err != nil || len(direct) == 0 {
+		t.Fatalf("the file outside the archive carries no finding to leak (%d usages, %v), "+
+			"so this test cannot detect the leak", len(direct), err)
+	}
+
+	scan, err := NewJavaAnalyzer().AnalyzeDirectory(dir)
+	if err != nil {
+		t.Fatalf("AnalyzeDirectory: %v", err)
+	}
+	if scan.FilesParsed != 0 {
+		t.Errorf("FilesParsed = %d for a directory holding only a symlink out of it",
+			scan.FilesParsed)
+	}
+	for _, u := range scan.Usages {
+		t.Errorf("a finding was read through a symlink out of the archive: %s at %s",
+			u.Algorithm, u.Location.File)
+	}
+}
+
 // TestJavaDirectoryScanReadsNothingFromCompiledClasses is the walker-level
 // statement of the false clean this release closes.
 //

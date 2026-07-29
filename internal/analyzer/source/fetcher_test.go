@@ -389,8 +389,15 @@ func TestFetchNpmWithoutVersion(t *testing.T) {
 	}
 }
 
+// TestFetchPyPIWithSlash previously asserted that a PyPI name containing
+// slashes was sanitized into a cache path and fetched.
+//
+// It is now asserted to be refused. PyPI names cannot contain a slash, so such
+// a string is not a name that failed to resolve, it is a path or a spec wearing
+// a name's place in the manifest, and sanitizing it for the cache never made it
+// safe to hand to pip. The old expectation restated what cacheSegment did
+// rather than a judgement about what should be fetched.
 func TestFetchPyPIWithSlash(t *testing.T) {
-	// Test PyPI package with slash in name (normalized)
 	tmpDir, _ := os.MkdirTemp("", "fetcher-pypi-slash-test")
 	defer os.RemoveAll(tmpDir)
 
@@ -405,12 +412,32 @@ func TestFetchPyPIWithSlash(t *testing.T) {
 		Ecosystem: types.EcosystemPyPI,
 	})
 
-	if err != nil {
-		t.Fatalf("Fetch cached pypi package with slashes failed: %v", err)
+	if err == nil {
+		t.Fatalf("a PyPI name containing slashes was fetched, to %q", dir)
 	}
-	// Note: the safeName replaces "/" with "_" so google/cloud/storage becomes google_cloud_storage
-	if dir != cachedDir {
-		t.Errorf("Expected cached dir %s, got %s", cachedDir, dir)
+	if !strings.Contains(err.Error(), "not a valid pypi package name") {
+		t.Errorf("refused for the wrong reason: %v", err)
+	}
+	// The cache entry that a sanitized name would have resolved to is still
+	// there, so this test is refusing a fetch that would otherwise have
+	// succeeded rather than one that had nothing to return.
+	if !isNonEmptyDir(cachedDir) {
+		t.Fatalf("fixture cache entry %s is missing, so this test proves nothing", cachedDir)
+	}
+
+	// The real name for the same package is still fetched from that entry.
+	ok, err := f.Fetch(types.Dependency{
+		Name:      "google-cloud-storage",
+		Version:   "2.0.0",
+		Ecosystem: types.EcosystemPyPI,
+	})
+	if err == nil || ok != "" {
+		// There is no cache entry under the real name, so this must fail at the
+		// download rather than at the guard.
+		t.Logf("fetch under the real name returned %q, %v", ok, err)
+	}
+	if err != nil && strings.Contains(err.Error(), "not a valid pypi package name") {
+		t.Errorf("the guard refuses a legitimate PyPI name: %v", err)
 	}
 }
 
@@ -1057,7 +1084,12 @@ func TestCacheSegmentCannotEscape(t *testing.T) {
 // resolve to a remote package.
 func TestLocalPathReferenceLeavesRemoteReferencesAlone(t *testing.T) {
 	local := []string{"../x", "./x", "/x", "~/x", "file:../x", "FILE:../x", "a/../../x",
-		`C:\x`, "C:/x", `c:\x`, `\x`, `\\host\share`, "link:../x", "portal:../x", "LINK:../x"}
+		`C:\x`, "C:/x", `c:\x`, `\x`, `\\host\share`, "link:../x", "portal:../x", "LINK:../x",
+		// A transport prefixed onto the scheme. git+file:// passed both earlier
+		// checks: it does not start with "file:", and the colon suppressed the
+		// traversal walk. npm pack clones it from disk and runs its prepare
+		// script, so this was code execution chosen by the scanned manifest.
+		"git+file:///x", "GIT+FILE:///x", "git+file://../x"}
 	// A Maven coordinate carries a colon and is not a Windows path; so does an
 	// alias and a VCS reference. Refusing any of these would stop deep analysis
 	// of packages that fetch correctly today.
@@ -1131,7 +1163,13 @@ func TestFetchRefusesLocalPathName(t *testing.T) {
 					"names a directory, so the tool reads and publishes a tree the "+
 					"manifest author chose", name, dir)
 			}
-			if !strings.Contains(err.Error(), "refers to a local path") {
+			// Either guard is an answer on the name's own terms: the grammar
+			// says it is not a name, or the path check says it is a local path.
+			// What must never satisfy this test is an incidental failure from a
+			// missing downloader, which is what the pre-fix code produced.
+			refused := strings.Contains(err.Error(), "refers to a local path") ||
+				strings.Contains(err.Error(), "is not a valid")
+			if !refused {
 				t.Errorf("name %q failed for the wrong reason: %v; it has to be refused on "+
 					"its own terms, not incidentally by a missing downloader", name, err)
 			}

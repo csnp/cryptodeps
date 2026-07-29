@@ -5,7 +5,6 @@
 package ast
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -137,11 +136,10 @@ type pyFuncContext struct {
 
 // AnalyzeFile analyzes a single Python file for cryptographic usage.
 func (a *PythonAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
-	file, err := os.Open(filename)
+	scanner, err := openSource(filename)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
 	var usages []types.CryptoUsage
 	imports := make(map[string]bool)
@@ -151,7 +149,6 @@ func (a *PythonAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, erro
 		indent int
 	}
 
-	scanner := bufio.NewScanner(file)
 	lineNum := 0
 
 	for scanner.Scan() {

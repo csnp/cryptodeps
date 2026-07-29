@@ -64,6 +64,23 @@ func ValidateRiskFilter(s string) error {
 	}
 }
 
+// ValidateFailOn checks a --fail-on value.
+//
+// This is the one enum flag of the three that did not validate, and it is the
+// one that decides an exit code. An unrecognised value fell through to the
+// default policy, so `--fail-on partail` turned a build that the operator had
+// asked to fail on partial risk into a build that passed, with nothing on
+// either stream: exit 3 became exit 0 on the same project. A CI gate that
+// silently loosens on a typo is worse than one that refuses to run.
+func ValidateFailOn(s string) error {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "none", "any", "partial", "vulnerable":
+		return nil
+	default:
+		return fmt.Errorf("invalid --fail-on value %q: expected one of vulnerable, partial, any, none", s)
+	}
+}
+
 // ValidateMinSeverity checks a --min-severity value.
 func ValidateMinSeverity(s string) error {
 	if strings.TrimSpace(s) == "" {

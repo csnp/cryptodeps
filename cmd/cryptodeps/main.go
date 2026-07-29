@@ -210,6 +210,12 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err := analyzer.ValidateMinSeverity(minSeverity); err != nil {
 		return err
 	}
+	// --fail-on decides the exit code, so an unrecognised value here does not
+	// merely mislead: it reverts the gate to the default policy and lets a build
+	// pass that the operator had asked to fail.
+	if err := analyzer.ValidateFailOn(failOn); err != nil {
+		return err
+	}
 
 	// Parse output format
 	format, err := output.ParseFormat(formatFlag)

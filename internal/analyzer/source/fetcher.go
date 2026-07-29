@@ -61,6 +61,61 @@ func validMavenCoordinate(groupID, artifactID string) error {
 	return nil
 }
 
+// packageNamePattern is what each registry says one of its names looks like.
+//
+// A name is not an arbitrary string. Every registry here defines a grammar for
+// its names, and anything outside that grammar is not a name at all: it is a
+// way to reach something other than the package it claims to be. Screening for
+// the spellings of a local path could never close this, because the guard sees
+// one string while the package manager sees a structured spec. `npm pack`
+// splits `name@spec` on the first '@' after index 0, so a dependency named
+// `x@/tmp/victim` presented a guard-passing string to the guard and a directory
+// to npm, which packed it, ran its prepare script, and published its contents.
+// The same shape reaches pip through a PEP 508 direct reference in a Poetry or
+// Pipfile table key: `victimpkg @ file:///tmp/victim`.
+//
+// So the question asked here is the one Maven coordinates already answered: is
+// this a name? An allowlist can be reasoned about; a denylist of the ways a
+// path can be spelled cannot.
+var packageNamePattern = map[types.Ecosystem]*regexp.Regexp{
+	// npm: an optional @scope/ then the name. No '@' inside the name, which is
+	// what separates it from the spec, and no path separators beyond the scope.
+	types.EcosystemNPM: regexp.MustCompile(`^(@[a-zA-Z0-9][a-zA-Z0-9._-]*/)?[a-zA-Z0-9][a-zA-Z0-9._-]*$`),
+	// PyPI, PEP 503: letters, digits, and . _ - between alphanumerics.
+	types.EcosystemPyPI: regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`),
+	// Go module path: dot-separated host, then slash-separated elements.
+	types.EcosystemGo: regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._~-]*(/[A-Za-z0-9._~-]+)*$`),
+}
+
+// validPackageName rejects a dependency name that is not a name in its
+// ecosystem's own terms.
+//
+// Maven is absent from the table on purpose: its names are coordinates, and
+// validMavenCoordinate already holds them to the same standard after the
+// groupId and artifactId have been separated.
+func validPackageName(ecosystem types.Ecosystem, name string) error {
+	pattern, ok := packageNamePattern[ecosystem]
+	if !ok {
+		return nil
+	}
+	if !pattern.MatchString(name) {
+		return fmt.Errorf("%q is not a valid %s package name: it must match %s, and a name "+
+			"that does not is not fetched, because package managers read a name as part of a "+
+			"spec that can also select a directory or a repository on this machine",
+			name, ecosystem, pattern)
+	}
+	// A path element of ".." is legal under the Go pattern and is still a
+	// traversal, so it is refused separately rather than by complicating the
+	// grammar.
+	for _, part := range strings.Split(name, "/") {
+		if part == ".." || part == "." {
+			return fmt.Errorf("%q is not a valid %s package name: %q is a directory reference",
+				name, ecosystem, part)
+		}
+	}
+	return nil
+}
+
 // cacheSegment reduces a manifest-supplied name or version to one safe path
 // segment.
 //
@@ -131,6 +186,18 @@ func localPathReference(v string) bool {
 	for _, scheme := range [...]string{"file:", "link:", "portal:"} {
 		if strings.HasPrefix(lower, scheme) {
 			return true
+		}
+	}
+	// A transport can be prefixed onto the scheme, and git+file:// is a local
+	// path wearing a VCS reference's clothes: it passed the prefix test above
+	// because it starts with "git+", and passed the traversal walk below
+	// because it contains a colon. `npm pack` clones it from disk and runs its
+	// prepare script.
+	if scheme, _, found := strings.Cut(lower, ":"); found {
+		for _, part := range strings.Split(scheme, "+") {
+			if part == "file" {
+				return true
+			}
 		}
 	}
 	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~") || strings.HasPrefix(v, ".") {
@@ -348,8 +415,16 @@ func NewFetcher(cacheDir string) *Fetcher {
 // Fetch downloads the source code for a package and returns the local path.
 func (f *Fetcher) Fetch(dep types.Dependency) (string, error) {
 	// Both fields come from the manifest under scan, and both reach a package
-	// manager as part of a spec. Guarding one and not the other left the same
-	// class open through the name.
+	// manager as part of a spec.
+	//
+	// The name is held to its registry's grammar rather than screened for path
+	// spellings, because the package manager parses the string this code treats
+	// as opaque: `npm pack x@/tmp/victim` is one argument to this function and a
+	// name plus a directory to npm. The version is screened, because its legal
+	// forms genuinely include remote references that have no grammar in common.
+	if err := validPackageName(dep.Ecosystem, dep.Name); err != nil {
+		return "", err
+	}
 	if localPathReference(dep.Version) {
 		return "", fmt.Errorf(pathTraversalMsg, "version", dep.Version)
 	}
@@ -444,7 +519,13 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 	}
 
 	// Change to cache directory and run npm pack
-	cmd := exec.Command("npm", "pack", packageSpec)
+	// --ignore-scripts is the control, not an optimisation. npm runs a package's
+	// prepare and prepack scripts for any spec it resolves from a directory or
+	// a git repository, so fetching source for analysis was a way to execute
+	// code chosen by the manifest under scan. The guards above stop such a spec
+	// being built at all; this stops the remaining ones, including the
+	// deliberately allowed remote git references, from running anything.
+	cmd := exec.Command("npm", "pack", "--ignore-scripts", packageSpec)
 	cmd.Dir = packageDir
 	if err := cmd.Run(); err != nil {
 		return "", f.discardPartialFetch(packageDir, err, "npm pack failed")
