@@ -1056,9 +1056,14 @@ func TestCacheSegmentCannotEscape(t *testing.T) {
 // narrowing what is fetched must not stop the references that legitimately
 // resolve to a remote package.
 func TestLocalPathReferenceLeavesRemoteReferencesAlone(t *testing.T) {
-	local := []string{"../x", "./x", "/x", "~/x", "file:../x", "FILE:../x", "a/../../x"}
+	local := []string{"../x", "./x", "/x", "~/x", "file:../x", "FILE:../x", "a/../../x",
+		`C:\x`, "C:/x", `c:\x`, `\x`, `\\host\share`, "link:../x", "portal:../x", "LINK:../x"}
+	// A Maven coordinate carries a colon and is not a Windows path; so does an
+	// alias and a VCS reference. Refusing any of these would stop deep analysis
+	// of packages that fetch correctly today.
 	remote := []string{"1.2.3", "^1.2.3", ">=1.0,<2.0", "v0.14.0", "latest", "",
-		"github:owner/repo", "git+https://github.com/owner/repo.git", "npm:alias@1.0.0"}
+		"github:owner/repo", "git+https://github.com/owner/repo.git", "npm:alias@1.0.0",
+		"com.google.guava:guava", "a:b", "org.apache.logging.log4j:log4j-core"}
 
 	for _, v := range local {
 		if !localPathReference(v) {
@@ -1103,6 +1108,18 @@ func TestFetchRefusesLocalPathName(t *testing.T) {
 		"~/victim",
 		"file:../victim",
 		"pkg/../../../victim",
+		// Windows spellings of the same thing, on a target this tool ships
+		// binaries for. A drive letter contains a colon, which the guard read
+		// as evidence that the reference was remote.
+		`C:\victim`,
+		"C:/victim",
+		`c:\victim`,
+		`\victim`,
+		`\\host\share\victim`,
+		// The Yarn and pnpm spellings. npm pack rejects them today, so these
+		// hold the guard rather than close a live vector.
+		"link:../victim",
+		"portal:../victim",
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir, err := f.Fetch(types.Dependency{

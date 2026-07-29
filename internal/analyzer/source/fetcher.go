@@ -90,6 +90,13 @@ func cacheSegment(s string) string {
 		sum := sha256.Sum256([]byte(s))
 		out = out[:maxCacheSegment] + "-" + hex.EncodeToString(sum[:4])
 	}
+	// Replacement is many-to-one below that length, so two names can still
+	// share one entry: "@scope/pkg" and "_scope_pkg" both give "_scope_pkg",
+	// and the second package is then analyzed from the first one's source.
+	// Tracked in qramm-cryptodeps-deep-fetch-path-primitives for 1.3.1, because
+	// closing it changes the cache path of every Maven coordinate and every
+	// scoped npm name, and those paths are reported to the user.
+	//
 	// "" collapses the path by one level, and "." and ".." are directory
 	// references rather than names.
 	if strings.Trim(out, ".") == "" {
@@ -116,10 +123,25 @@ func localPathReference(v string) bool {
 	if v == "" {
 		return false
 	}
-	if strings.HasPrefix(strings.ToLower(v), "file:") {
-		return true
+	// file: is npm's own spelling of a directory. link: and portal: are the
+	// Yarn and pnpm spellings of the same thing; npm pack rejects them today,
+	// so this is defence in depth rather than a live vector, and it costs one
+	// list entry to stop depending on another tool's parser staying strict.
+	lower := strings.ToLower(v)
+	for _, scheme := range [...]string{"file:", "link:", "portal:"} {
+		if strings.HasPrefix(lower, scheme) {
+			return true
+		}
 	}
 	if strings.HasPrefix(v, "/") || strings.HasPrefix(v, "~") || strings.HasPrefix(v, ".") {
+		return true
+	}
+	// Windows spellings of an absolute path: a drive letter (C:\victim, C:/victim),
+	// a rooted path (\victim) and a UNC share (\\host\share). Windows is a
+	// shipped target of this tool, and the checks below never see these: a
+	// drive letter contains a colon, which the registry-reference branch treats
+	// as evidence that the value is remote.
+	if windowsLocalPath(v) {
 		return true
 	}
 	// A bare relative path such as src/../../etc, as distinct from a registry
@@ -130,6 +152,22 @@ func localPathReference(v string) bool {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+// windowsLocalPath reports whether v is a Windows path to this machine.
+//
+// Kept separate from the Unix forms because the shapes have nothing in common:
+// a drive letter is two characters and a colon, and a UNC share starts with two
+// separators. Both are absolute paths on a target this tool ships binaries for.
+func windowsLocalPath(v string) bool {
+	if strings.HasPrefix(v, `\`) { // \victim and \\host\share
+		return true
+	}
+	if len(v) >= 3 && v[1] == ':' && (v[2] == '\\' || v[2] == '/') {
+		c := v[0]
+		return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
 	}
 	return false
 }
