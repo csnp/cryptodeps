@@ -106,6 +106,32 @@ so everything below ships together in this release.
   accepted an `extracted/` directory that a failed unzip had left empty; that is
   covered by the same check.
 
+- **A cache entry the fetcher could not identify was deleted rather than
+  reported.** Where an entry held more than one candidate directory, the
+  resolver could not say which was the package and returned an error saying so.
+  All three cache-hit sites discarded that error and cleared the entry, so a
+  cached tree that may well have held the findings was destroyed by a scan that
+  had only failed to identify it, the refetch loop was unbounded, and the
+  diagnostic written for the case was unreachable: the user was shown whatever
+  the refetch failed with, typically `npm pack failed`. Such an entry is now
+  kept and the reason reported.
+
+- **A deep scan of a package with no readable source was counted as an
+  examination.** `--deep` marked a dependency analyzed whenever the fetch and
+  the walk both returned without an error, and a walk over a tree holding no
+  file the analyzer understands returns nothing rather than an error. A Maven
+  artifact whose sources JAR does not exist falls back to the main JAR, which
+  carries compiled classes only, so no `.java` file was ever read and the report
+  still said `No cryptographic usage detected in the 1 of 1 dependencies that
+  were examined`. The walkers now report how many files they parsed, the count
+  travels with the analysis as `analysis.filesAnalyzed`, and the claim of an
+  examination is made from it. A package whose archive holds nothing readable is
+  reported as not examined, with the reason on stderr and in the `error` field
+  of the document, so a consumer can tell it from a package that was skipped.
+  1.2.2 answers the same scan with a plain clean verdict, so this is not a
+  regression; the wording introduced in this release asserted an examination
+  that had not happened.
+
 - **`pyproject.toml` and `Pipfile` kept the comparison operator in the version.**
   The same two packages gave `pycryptodome@3.20.0` through `requirements.txt`
   and `pycryptodome@==3.20.0` through the other two formats, and within one scan
@@ -288,6 +314,25 @@ so everything below ships together in this release.
   read above. All three require the operator to run `--deep` over a manifest
   they do not control, which is what a CI scan of an untrusted repository does.
 
+- **The local-path guard did not cover the Windows spellings.** A colon was read
+  as evidence that a reference was remote, so a drive letter passed: `C:\victim`,
+  `\victim` and `\\host\share` reached the package manager as folder specs on a
+  target this tool ships binaries for. They are now refused with the other local
+  paths, together with the Yarn and pnpm `link:` and `portal:` spellings, which
+  `npm pack` rejects today and which should not depend on another tool's parser
+  staying strict. Maven coordinates and npm aliases, which legitimately carry a
+  colon, are unaffected.
+
+- **The source cache could delete more than the entry it meant to.** The only
+  destructive operation in the fetcher took whatever path it was handed, and its
+  argument is built from manifest-supplied text. Nothing stated its bounds:
+  four separate mutations of it, up to and including removing the entire cache
+  root, left the test suite passing. It now refuses anything that is not exactly
+  one package entry inside the cache directory, and the failed-download paths
+  route through the same guard. No input was found that reached the wider
+  deletion, since the segments are sanitized before they are joined; this bounds
+  the operation rather than closing a known route to it.
+
 ### Changed
 
 - `output.PrintSkipped` takes the scan root as its second argument, so it can
@@ -310,6 +355,11 @@ so everything below ships together in this release.
   requirement parsing, CBOM dependency attribution, version resolution, serial
   number uniqueness, and primitive enum conformance.
 
+- `analysis.filesAnalyzed` on every deep-analyzed record, and `error` on any
+  dependency source analysis could not examine, in JSON and YAML output. A
+  document that claims a package was read now carries the count it was claimed
+  from, and one that skips a package says why.
+
 - `summary.notExamined` and `summary.deepAttempted` in JSON and YAML output, and
   a **Not Examined** row in the markdown summary table. How much of a tree a
   scan actually covered was previously only derivable, and only wrongly, from
@@ -317,8 +367,10 @@ so everything below ships together in this release.
 
 - Regression tests for the coverage verdict driven end to end through a real
   `--deep` scan against a pre-populated source cache, for cache entries that
-  hold no extracted source, and for manifest-supplied paths. Each was confirmed
-  to fail against the code it guards, and each was mutation-tested.
+  hold no extracted source, for an archive that carries no readable source at
+  all, for the bounds of the cache reset, and for manifest-supplied paths in
+  their Unix and Windows spellings. Each was confirmed to fail against the code
+  it guards, and each was mutation-tested.
 
 ### Dependencies
 
@@ -388,16 +440,16 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   this is not. Identical on 1.2.2. The default, `--fail-on vulnerable`, is
   unaffected and behaves as documented.
 
-- **A deep scan of a package with no readable source still counts as an
-  examination.** `--deep` marks a dependency analyzed when the source fetch and
-  the walk both return without error, and a walk over a tree holding no file the
-  analyzer understands returns nothing rather than an error. A Maven artifact
-  whose sources JAR does not exist falls back to the main JAR, which carries
-  compiled classes only, so no `.java` file is ever read and the report still
-  says the dependency was examined. 1.2.2 answers the same scan with a plain
-  clean verdict, so this is not a regression, but the new wording asserts an
-  examination that did not happen. Being fixed by counting the files the walker
-  actually parses rather than the absence of an error.
+- **Two dependency names that differ only in characters the source cache
+  replaces share one cache entry.** The cache path is built by replacing
+  anything outside `[A-Za-z0-9._-]` with `_`, so `@scope/pkg` and `_scope_pkg`
+  both give `_scope_pkg`, and the second package declared in a manifest is
+  analyzed from the first one's source and reported under its own name. It
+  needs a manifest that declares both spellings, and it misattributes findings
+  rather than reaching anything outside the cache. Present in 1.2.2. Closing it
+  changes the cache path of every Maven coordinate and every scoped npm name,
+  and those paths appear in reported findings, so it is held for 1.3.1 rather
+  than changed in a release whose output has already been verified.
 
 - **`--offline` silently disables `--deep`, and the report then suggests
   `--deep`.** Source analysis fetches package archives, so it cannot run with
