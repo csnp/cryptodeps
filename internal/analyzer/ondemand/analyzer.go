@@ -34,16 +34,16 @@ func (a *Analyzer) Analyze(dep types.Dependency) (*types.PackageAnalysis, error)
 	}
 
 	// Analyze based on ecosystem
-	var usages []types.CryptoUsage
+	var scan ast.DirectoryScan
 	switch dep.Ecosystem {
 	case types.EcosystemGo:
-		usages, err = a.analyzeGo(sourceDir)
+		scan, err = a.analyzeGo(sourceDir)
 	case types.EcosystemNPM:
-		usages, err = a.analyzeJavaScript(sourceDir)
+		scan, err = a.analyzeJavaScript(sourceDir)
 	case types.EcosystemPyPI:
-		usages, err = a.analyzePython(sourceDir)
+		scan, err = a.analyzePython(sourceDir)
 	case types.EcosystemMaven:
-		usages, err = a.analyzeJava(sourceDir)
+		scan, err = a.analyzeJava(sourceDir)
 	default:
 		return nil, fmt.Errorf("unsupported ecosystem: %s", dep.Ecosystem)
 	}
@@ -52,40 +52,46 @@ func (a *Analyzer) Analyze(dep types.Dependency) (*types.PackageAnalysis, error)
 		return nil, err
 	}
 
-	// Build the analysis result
+	// Build the analysis result. FilesAnalyzed travels with it because the
+	// caller decides from it whether this package was examined at all, and an
+	// empty Crypto slice cannot tell "read it, found nothing" from "read
+	// nothing".
 	analysis := &types.PackageAnalysis{
 		Package:   dep.Name,
 		Version:   dep.Version,
 		Ecosystem: dep.Ecosystem,
-		Crypto:    usages,
+		Crypto:    scan.Usages,
+		Analysis: types.AnalysisMetadata{
+			FilesAnalyzed: scan.FilesParsed,
+		},
 	}
 
 	// Deduplicate and classify algorithms
-	analysis.Crypto = a.deduplicateUsages(usages)
+	analysis.Crypto = a.deduplicateUsages(scan.Usages)
 
 	return analysis, nil
 }
 
 // analyzeGo analyzes Go source code.
-func (a *Analyzer) analyzeGo(sourceDir string) ([]types.CryptoUsage, error) {
+func (a *Analyzer) analyzeGo(sourceDir string) (ast.DirectoryScan, error) {
 	analyzer := ast.NewGoAnalyzer()
 	return analyzer.AnalyzeDirectory(sourceDir)
 }
 
 // analyzeJavaScript analyzes JavaScript source code.
-func (a *Analyzer) analyzeJavaScript(sourceDir string) ([]types.CryptoUsage, error) {
+func (a *Analyzer) analyzeJavaScript(sourceDir string) (ast.DirectoryScan, error) {
 	analyzer := ast.NewJavaScriptAnalyzer()
 	return analyzer.AnalyzeDirectory(sourceDir)
 }
 
 // analyzePython analyzes Python source code.
-func (a *Analyzer) analyzePython(sourceDir string) ([]types.CryptoUsage, error) {
+func (a *Analyzer) analyzePython(sourceDir string) (ast.DirectoryScan, error) {
 	analyzer := ast.NewPythonAnalyzer()
 	return analyzer.AnalyzeDirectory(sourceDir)
 }
 
 // analyzeJava analyzes Java source code.
-func (a *Analyzer) analyzeJava(sourceDir string) ([]types.CryptoUsage, error) {
+func (a *Analyzer) analyzeJava(sourceDir string) (ast.DirectoryScan, error) {
 	analyzer := ast.NewJavaAnalyzer()
 	return analyzer.AnalyzeDirectory(sourceDir)
 }

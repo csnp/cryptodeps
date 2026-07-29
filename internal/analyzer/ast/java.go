@@ -143,8 +143,8 @@ type javaFuncContext struct {
 }
 
 // AnalyzeDirectory analyzes all Java/Kotlin files in a directory.
-func (a *JavaAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, error) {
-	var allUsages []types.CryptoUsage
+func (a *JavaAnalyzer) AnalyzeDirectory(dir string) (DirectoryScan, error) {
+	var scan DirectoryScan
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -174,16 +174,14 @@ func (a *JavaAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, error)
 			return nil
 		}
 
-		usages, err := a.AnalyzeFile(path)
-		if err != nil {
-			return nil
-		}
-
-		allUsages = append(allUsages, usages...)
+		// Counted, not propagated: see the Go walker. A class-only JAR reaches
+		// here with nothing this analyzer accepts, and FilesParsed staying at
+		// zero is how the caller learns the package was never read.
+		scan.add(a.AnalyzeFile(path))
 		return nil
 	})
 
-	return allUsages, err
+	return scan, err
 }
 
 // AnalyzeFile analyzes a single Java/Kotlin file for cryptographic usage.

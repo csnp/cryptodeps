@@ -207,7 +207,8 @@ func f2() { rsa.GenerateKey(nil, 2048) }
 	os.WriteFile(file2, []byte(content2), 0644)
 
 	analyzer := NewGoAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory failed: %v", err)
 	}
@@ -237,7 +238,8 @@ func f() { rsa.GenerateKey(nil, 2048) }
 	os.WriteFile(regularFile, []byte(regularContent), 0644)
 
 	analyzer := NewGoAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory failed: %v", err)
 	}
@@ -584,7 +586,8 @@ func TestGoAnalyzer_EmptyDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	analyzer := NewGoAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory on empty dir failed: %v", err)
 	}
@@ -604,7 +607,8 @@ func TestGoAnalyzer_NonGoFile(t *testing.T) {
 	}
 
 	analyzer := NewGoAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory failed: %v", err)
 	}

@@ -255,7 +255,8 @@ crypto.createHash('md5');
 	os.WriteFile(regularFile, []byte(regularContent), 0644)
 
 	analyzer := NewJavaScriptAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory failed: %v", err)
 	}
@@ -725,7 +726,8 @@ bcrypt.hash(password, 10);
 	os.WriteFile(file3, []byte(content3), 0644)
 
 	analyzer := NewJavaScriptAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory failed: %v", err)
 	}

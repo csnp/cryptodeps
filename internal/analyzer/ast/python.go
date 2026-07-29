@@ -87,8 +87,8 @@ var pythonCryptoPackages = map[string][]string{
 }
 
 // AnalyzeDirectory analyzes all Python files in a directory.
-func (a *PythonAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, error) {
-	var allUsages []types.CryptoUsage
+func (a *PythonAnalyzer) AnalyzeDirectory(dir string) (DirectoryScan, error) {
+	var scan DirectoryScan
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -119,17 +119,12 @@ func (a *PythonAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, erro
 			return nil
 		}
 
-		usages, err := a.AnalyzeFile(path)
-		if err != nil {
-			// Log but continue on parse errors
-			return nil
-		}
-
-		allUsages = append(allUsages, usages...)
+		// Counted, not propagated: see the Go walker.
+		scan.add(a.AnalyzeFile(path))
 		return nil
 	})
 
-	return allUsages, err
+	return scan, err
 }
 
 // pyFuncContext tracks function context during Python file analysis.

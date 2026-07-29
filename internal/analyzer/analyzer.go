@@ -356,6 +356,24 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResul
 		if err != nil {
 			// Log the error but continue
 			fmt.Fprintf(os.Stderr, "Warning: on-demand analysis failed for %s: %v\n", dep.Name, err)
+			result.Error = fmt.Sprintf("source analysis could not fetch %s: %v", dep.Name, err)
+			return result
+		}
+		// Examination is claimed from what an analyzer parsed, not from a call
+		// that returned no error. The two differ whenever an archive arrives
+		// carrying nothing this tool can read: a Maven artifact with no sources
+		// JAR falls back to the compiled main JAR, the Java walker accepts only
+		// .java, .kt and .kts, and it then returns no usages and no error. That
+		// was reported as "no cryptographic usage detected in the 1 of 1
+		// dependencies that were examined" for a scan that read zero files, so
+		// the absence of an error was standing in for evidence and saying the
+		// opposite of the truth.
+		if !analysis.SourceWasRead() {
+			fmt.Fprintf(os.Stderr,
+				"Warning: source analysis of %s read no files it can parse, so it is "+
+					"reported as not examined rather than as clean\n", dep.Name)
+			result.Error = fmt.Sprintf(
+				"source analysis read no files it can parse in the fetched archive for %s", dep.Name)
 			return result
 		}
 		result.Analysis = analysis

@@ -175,7 +175,8 @@ func hashData(data []byte) []byte {
 	}
 
 	analyzer := NewAnalyzer(t.TempDir())
-	usages, err := analyzer.analyzeGo(tmpDir)
+	scan, err := analyzer.analyzeGo(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeGo failed: %v", err)
 	}
@@ -203,7 +204,8 @@ module.exports = { hashData };
 	}
 
 	analyzer := NewAnalyzer(t.TempDir())
-	usages, err := analyzer.analyzeJavaScript(tmpDir)
+	scan, err := analyzer.analyzeJavaScript(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeJavaScript failed: %v", err)
 	}
@@ -228,7 +230,8 @@ def hash_data(data):
 	}
 
 	analyzer := NewAnalyzer(t.TempDir())
-	usages, err := analyzer.analyzePython(tmpDir)
+	scan, err := analyzer.analyzePython(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("analyzePython failed: %v", err)
 	}
@@ -257,7 +260,8 @@ public class Main {
 	}
 
 	analyzer := NewAnalyzer(t.TempDir())
-	usages, err := analyzer.analyzeJava(tmpDir)
+	scan, err := analyzer.analyzeJava(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeJava failed: %v", err)
 	}
@@ -272,7 +276,8 @@ func TestAnalyzer_EmptyDirectory(t *testing.T) {
 	analyzer := NewAnalyzer(t.TempDir())
 
 	// Test with empty directories - should return empty slice, no error
-	usages, err := analyzer.analyzeGo(tmpDir)
+	scan, err := analyzer.analyzeGo(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeGo on empty dir failed: %v", err)
 	}
@@ -280,7 +285,8 @@ func TestAnalyzer_EmptyDirectory(t *testing.T) {
 		t.Errorf("Expected 0 usages for empty dir, got %d", len(usages))
 	}
 
-	usages, err = analyzer.analyzeJavaScript(tmpDir)
+	scan, err = analyzer.analyzeJavaScript(tmpDir)
+	usages = scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeJavaScript on empty dir failed: %v", err)
 	}
@@ -288,7 +294,8 @@ func TestAnalyzer_EmptyDirectory(t *testing.T) {
 		t.Errorf("Expected 0 usages for empty dir, got %d", len(usages))
 	}
 
-	usages, err = analyzer.analyzePython(tmpDir)
+	scan, err = analyzer.analyzePython(tmpDir)
+	usages = scan.Usages
 	if err != nil {
 		t.Fatalf("analyzePython on empty dir failed: %v", err)
 	}
@@ -296,7 +303,8 @@ func TestAnalyzer_EmptyDirectory(t *testing.T) {
 		t.Errorf("Expected 0 usages for empty dir, got %d", len(usages))
 	}
 
-	usages, err = analyzer.analyzeJava(tmpDir)
+	scan, err = analyzer.analyzeJava(tmpDir)
+	usages = scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeJava on empty dir failed: %v", err)
 	}
@@ -349,7 +357,8 @@ func GenerateKey() (*rsa.PrivateKey, error) {
 
 	// We can't easily mock go mod download, so test the internal methods directly
 	analyzer := NewAnalyzer(cacheDir)
-	usages, err := analyzer.analyzeGo(goModDir)
+	scan, err := analyzer.analyzeGo(goModDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("analyzeGo failed: %v", err)
 	}

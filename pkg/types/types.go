@@ -118,6 +118,27 @@ type AnalysisMetadata struct {
 	ToolVersion string    `json:"toolVersion" yaml:"toolVersion"`
 	Contributor string    `json:"contributor,omitempty" yaml:"contributor,omitempty"`
 	SourceHash  string    `json:"sourceHash,omitempty" yaml:"sourceHash,omitempty"`
+	// FilesAnalyzed is how many source files an analyzer actually parsed. It is
+	// the evidence behind every claim this tool makes about having examined a
+	// package by reading it, and it is reported so that the claim can be
+	// audited rather than taken on trust. Zero for a database record, which was
+	// not produced by reading this package here.
+	FilesAnalyzed int `json:"filesAnalyzed,omitempty" yaml:"filesAnalyzed,omitempty"`
+}
+
+// SourceWasRead reports whether source analysis parsed at least one file.
+//
+// This is the question "was this package examined by reading it", and it has to
+// be asked of the files that were read rather than of an error that was not
+// returned. A fetch can succeed and yield nothing an analyzer can parse: a
+// Maven artifact whose sources JAR does not exist falls back to the main JAR,
+// which holds compiled classes only, so the walker sees no .java file and
+// returns no usages and no error. Reading that as a completed examination
+// produced "no cryptographic usage detected in the 1 of 1 dependencies that
+// were examined" for a scan that had read nothing at all, which is the
+// false-clean class this release exists to close.
+func (p *PackageAnalysis) SourceWasRead() bool {
+	return p != nil && p.Analysis.FilesAnalyzed > 0
 }
 
 // QuantumSummary summarizes the quantum risk of a package.
@@ -141,11 +162,19 @@ type PackageAnalysis struct {
 
 // DependencyResult represents the analysis result for a dependency.
 type DependencyResult struct {
-	Dependency   Dependency       `json:"dependency" yaml:"dependency"`
-	Analysis     *PackageAnalysis `json:"analysis,omitempty" yaml:"analysis,omitempty"`
-	InDatabase   bool             `json:"inDatabase" yaml:"inDatabase"`
-	DeepAnalyzed bool             `json:"deepAnalyzed,omitempty" yaml:"deepAnalyzed,omitempty"`
-	Error        string           `json:"error,omitempty" yaml:"error,omitempty"`
+	Dependency Dependency       `json:"dependency" yaml:"dependency"`
+	Analysis   *PackageAnalysis `json:"analysis,omitempty" yaml:"analysis,omitempty"`
+	InDatabase bool             `json:"inDatabase" yaml:"inDatabase"`
+	// DeepAnalyzed records that source analysis read this package. It must be
+	// set from what an analyzer parsed, never from an on-demand call that
+	// merely returned no error: see PackageAnalysis.SourceWasRead.
+	DeepAnalyzed bool `json:"deepAnalyzed,omitempty" yaml:"deepAnalyzed,omitempty"`
+	// Error says why a dependency was not examined, for the consumers that read
+	// this document rather than the warnings printed during the scan. A machine
+	// reading JSON or SARIF could previously see only that a package was absent
+	// from the results, with no way to tell an unreachable download from an
+	// archive that carried nothing to read.
+	Error string `json:"error,omitempty" yaml:"error,omitempty"`
 }
 
 // Examined reports whether this dependency was inspected by any means.

@@ -282,7 +282,8 @@ hashlib.md5(b"data")
 	os.WriteFile(regularFile, []byte(regularContent), 0644)
 
 	analyzer := NewPythonAnalyzer()
-	usages, err := analyzer.AnalyzeDirectory(tmpDir)
+	scan, err := analyzer.AnalyzeDirectory(tmpDir)
+	usages := scan.Usages
 	if err != nil {
 		t.Fatalf("AnalyzeDirectory failed: %v", err)
 	}
