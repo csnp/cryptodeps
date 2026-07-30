@@ -5,7 +5,7 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.3.0] - 2026-07-29
+## [1.3.0] - 2026-07-30
 
 Fixes both open community issues, and the release-blocking defects a fresh-user
 release test then found while reproducing them. An earlier 1.3.0 candidate
@@ -555,6 +555,10 @@ so everything below ships together in this release.
   message that explains the failure was being pushed off the top of the
   terminal. Usage is still shown for genuine flag mistakes, where it helps.
 
+- The root help no longer advertises "Full dependency tree analysis", and the
+  README no longer claims transitive coverage. Neither was true: only declared
+  dependencies are read. See known limitations.
+
 ### Added
 
 - Regression tests for manifest discovery, the three Python formats, PEP 508
@@ -615,6 +619,20 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   every format. Preferring an unexamined dependency to an executed one is the
   trade this release makes deliberately; a source-build mode behind an explicit
   opt-in is the shape of the fix if the coverage turns out to matter.
+
+- **Only the dependencies a manifest declares are analyzed, and the
+  documentation said otherwise.** Lock files are not read: `package-lock.json`,
+  `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `go.sum` and `Pipfile.lock` are
+  all rejected as unsupported, so a package pulled in only by another package is
+  never seen. `summary.totalDependencies` equals `summary.directDependencies` on
+  every tree tested, and adding a `package-lock.json` declaring a transitive
+  dependency changes neither number. The behaviour is unchanged from 1.2.2; what
+  changed in this release is that the claim was corrected. The README described
+  "Dependency tree analysis: Scans all transitive dependencies, not just direct
+  ones" and the root help listed "Full dependency tree analysis", both of which
+  overstated coverage in the same direction this release exists to correct. Both
+  now state what is actually read. Enumerating a lock file is the fix, and it is
+  not in this release.
 
 - **A version can name any URL, and the scanner will fetch it.** npm's own
   semantics allow a dependency version to be a tarball URL or an alias
@@ -748,6 +766,42 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   changes the cache path of every Maven coordinate and every scoped npm name,
   and those paths appear in reported findings, so it is held for 1.3.1 rather
   than changed in a release whose output has already been verified.
+
+- **The bundled GitHub Action scans against the built-in database and reports
+  its version as `dev`.** `action.yml` passes `--offline` at both of its scan
+  steps and a fresh runner has no `~/.cryptodeps`, so the Action sees the 72
+  packages built into the binary rather than the 849 in the downloadable
+  database. The coverage note fires, so the scan is not silently narrower, but
+  nothing states that the Action's database is a twelfth of the one a local
+  install downloads. Separately, the Action installs with
+  `go install ...@latest`, which injects no ldflags, so the binary it runs
+  reports version `dev` and the SARIF it uploads carries that as its driver
+  version. That is the version-provenance defect this release fixes,
+  reintroduced by the install method rather than by the binary.
+
+- **The CBOM component list is not a complete bill of materials.** It carries
+  the libraries a scan has findings for, so a dependency that was examined and
+  found clean is absent from the components alongside one that could not be
+  examined at all. Incomplete coverage is now reported as a property of the
+  scan, so the gap is stated rather than silent, but a reader who takes the
+  component list as the set of dependencies will undercount. Making the list
+  complete is an output change held for a later release.
+
+- **Some CBOM primitive values are schema-legal but not the closest available
+  term.** `ML-KEM` is mapped to `key-agree` where the CycloneDX enum offers
+  `kem`, AEAD ciphers to `other` where it offers `ae`, HMAC to `signature` where
+  it offers `mac`, and bcrypt, scrypt and Argon2 to `hash` where it offers
+  `kdf`. The document validates, and mapping the flagship post-quantum KEM
+  imprecisely in a document whose purpose is post-quantum readiness is the one
+  that matters.
+
+- **The per-analysis provenance block carries zero values.** Every deep-analyzed
+  record emits `"date": "0001-01-01T00:00:00Z"`, `"method": ""`, `"tool": ""`
+  and `"toolVersion": ""` inside `analysis.analysis`. The tool version fixed in
+  this release is the top-level `tool` object, the SARIF driver and the CBOM
+  metadata, which are correct; this separate per-record block is unchanged and
+  is a placeholder rendered where a reader looks for provenance. Identical in
+  1.2.2. Either populate it at the point of analysis or omit it.
 
 - **`--offline` silently disables `--deep`, and the report then suggests
   `--deep`.** Source analysis fetches package archives, so it cannot run with

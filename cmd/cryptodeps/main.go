@@ -73,7 +73,7 @@ var rootCmd = &cobra.Command{
 and assess their quantum computing vulnerability.
 
 It provides:
-  - Full dependency tree analysis
+  - Analysis of the dependencies your manifests declare
   - Crypto algorithm detection with call graphs
   - Quantum risk classification (VULNERABLE, PARTIAL, SAFE)
   - Multiple output formats (table, JSON, CBOM, SARIF)

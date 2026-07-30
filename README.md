@@ -21,7 +21,7 @@ The challenge? **You can't migrate what you can't find.**
 
 Your code might be quantum-safe, but what about your **dependencies**? The average software project has 300-1000+ transitive dependencies. Each one potentially uses cryptographic algorithms that quantum computers will break. Traditional security scanners miss this: they focus on CVEs, not cryptographic readiness.
 
-CryptoDeps solves this by analyzing your entire dependency tree and using **reachability analysis** to show exactly which crypto your code actually uses versus what's merely present in libraries.
+CryptoDeps reads the dependencies your manifests declare, identifies the cryptography each one provides, and uses **reachability analysis** to show which of it your code actually calls rather than merely has available. Transitive dependencies are not enumerated yet: lock files are not read, so a package pulled in only by another package is outside what a scan reports.
 
 ---
 
@@ -31,7 +31,7 @@ CryptoDeps is purpose-built for quantum readiness assessment:
 
 | Capability | CryptoDeps | grep/ripgrep | Commercial Tools |
 |------------|------------|--------------|------------------|
-| Dependency tree analysis | Yes | No | Some |
+| Declared dependency analysis | Yes | No | Some |
 | Reachability analysis | Yes (Go) | No | Rarely |
 | Quantum risk classification | Yes | No | Some |
 | Context-aware confidence | Yes | No | Varies |
@@ -46,7 +46,7 @@ CryptoDeps is purpose-built for quantum readiness assessment:
 <details>
 <summary><strong>What These Capabilities Mean</strong></summary>
 
-- **Dependency tree analysis**: Scans all transitive dependencies, not just direct ones
+- **Declared dependency analysis**: Scans the dependencies your manifests declare. Lock files are not read, so transitive dependencies are not enumerated today
 - **Reachability analysis**: Traces call graphs to find crypto your code actually invokes
 - **Quantum risk classification**: Categorizes by threat level (VULNERABLE, PARTIAL, SAFE)
 - **Context-aware confidence**: Distinguishes confirmed usage from mere availability
