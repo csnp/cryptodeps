@@ -173,6 +173,68 @@ so everything below ships together in this release.
   `sourceFilesUnreadable`, is named on stderr per package, and reaches all five
   formats through the one classifier they share.
 
+- **A manifest-declared version traversed out of the source cache behind any
+  scheme.** The screen that refuses a local path skipped its traversal check
+  whenever the value contained a colon, on the reasoning that a colon meant a
+  remote reference such as `github:owner/repo`. An invented scheme defeats that:
+  a version of `a1:../../../../../../../victim` carries a colon, so the check
+  never ran, `npm pack` resolved a directory outside the cache, and the analyzer
+  read it and published its absolute paths as that dependency's source.
+
+  Reproduced against the candidate binary: `npm pack` resolves such a spec as a
+  directory, consuming two `../` per level, and at eight the target sat two
+  levels above the cache root. The scan exited 1 having copied the victim's
+  source into the cache and published its `SECRET.js` as MD5 and RSA findings
+  attributed to the declared dependency, with zero bytes on stderr. Present in
+  1.2.2, where it additionally ran the target's `prepare` script, so the fourth
+  spelling of this class was until now closed only in its execution half. The
+  traversal check now runs on every value: no legitimate version carries a `..`
+  path element, and whether a value is remote is decided by the scheme rather
+  than by the presence of a punctuation mark.
+
+- **A failed archive extraction was reported as an examined package on the next
+  run.** The three download sites discard what a failed fetch left behind; the
+  four extraction sites returned a bare error instead. Both `tar` and `unzip`
+  extract partially before failing, so the cache entry was left holding a
+  populated directory, which the cache-hit check accepts. The first scan reported
+  the package as not examined and the second reported it as examined, with
+  findings, from a partially extracted archive, with nothing on any stream saying
+  so. `unzip` exits non-zero on warnings alone, so a benign real wheel could take
+  this path too. All four sites now discard the entry.
+
+- **A file with one line longer than 64 KiB contributed nothing, silently.**
+  `bufio.Scanner`'s default token limit stops the scan and reports an error, the
+  three line-scanning analyzers return it, and the walk discards every usage they
+  had already found. Bundled and minified output is normally one very long line,
+  so a `dist/*.js` of 70 KB on one line calling `crypto.createHash('md5')`
+  produced no finding, no warning and a clean verdict, on this candidate and on
+  1.2.2. The scanner is now given the same bound the file already has, and the
+  per-file cap moves from 8 MiB to 32 MiB: `aws-sdk-go` v1.55.5 ships
+  `service/ec2/api.go` at 7,771,273 bytes, within 8 percent of the old cap, and
+  that file has grown every release.
+
+- **A Poetry or Pipfile dependency declared by location was fetched from PyPI
+  under its bare name.** An inline table with no `version` key returned no
+  version at all, discarding the `path`, `git`, `url` or `file` it was actually
+  declared by, and the fetcher then downloaded whatever PyPI serves under that
+  name. So `internal-lib = {path = "../internal-lib"}` was replaced by a public
+  package of the same name, whose source was analyzed and reported as this
+  project's. That is dependency confusion performed by the scanner: registering
+  the name of an organisation's local package is enough to be handed the
+  attribution, and because `pip` builds sdists, execution with it. New in this
+  release, which is where these TOML parsers were added. The locator is now kept
+  so the fetcher's own guards see what was declared.
+
+- **`--fail-on` was validated one way and read another.** The validation added in
+  this release trims and lowercases before deciding; the code that turns the value
+  into an exit code only lowercased. So `" partial "` passed validation, matched
+  no policy, and fell through to the default vulnerable-only gate: a project whose
+  findings are partial risk exited 3 for `partial` and 0 for `" partial "`, with
+  nothing on either stream. Whitespace around a value is the ordinary result of a
+  YAML block scalar or a workflow expression, which is exactly where this flag is
+  used, and the new validation is what made the padded value look accepted. Both
+  readers now canonicalise through one function.
+
 - **A symlink in an extracted archive was followed out of the source cache.**
   The directory walk lstats, so a symlink is not a directory and fell through to
   the file analyzer, which opened whatever it pointed at. Both `tar` and `unzip`
@@ -382,9 +444,15 @@ so everything below ships together in this release.
   before), which is a question with a single answer rather than a list of the
   ways a path can be spelled. `npm pack` additionally runs with
   `--ignore-scripts`, so the remote VCS references that remain fetchable cannot
-  execute anything either. Every real package name in the test suite, including
-  scoped npm names, dotted PyPI names and versioned Go module paths, still
-  fetches.
+  execute anything either. The suite asserts that real npm, PyPI and Go names
+  pass the grammars, including scoped npm names and versioned Go module paths.
+  Two limits on that claim, both stated because an earlier draft of this entry
+  overstated it: the assertion is that a grammar accepts a name, which is not the
+  same as a completed fetch, and a dotted PyPI name reaches the grammar intact
+  only through `pyproject.toml`. Declared in `requirements.txt`,
+  `zope.interface` is split at the first dot by the requirements parser long
+  before the grammar sees it, which is a separate pre-existing defect recorded
+  under known limitations below.
 
 - **A scanned `pom.xml` could write any file the scanning process could write.**
   This one is not a read. `fetchMavenArtifact` joined the `artifactId` from the
@@ -469,10 +537,19 @@ so everything below ships together in this release.
   process, for a symlink out of an extracted archive, for incomplete coverage in
   every output format, and for manifest-supplied paths in their Unix and Windows
   spellings. Each was confirmed to fail at runtime against the code it guards,
-  never merely to fail compilation, and each was mutation-tested. The names of
-  real packages across all four ecosystems are asserted to still fetch, so a
-  guard tightened far enough to break a legitimate scan fails in the suite
-  rather than in a user's CI.
+  never merely to fail compilation.
+
+  Mutation matrices were run over these guards, and they are reported with their
+  survivors rather than as a blanket claim, because an earlier draft of this entry
+  said each guard had been mutation-tested while several mutations survived. Four
+  rounds were run and each round's survivors were closed by a further test before
+  the next. The ones that mattered: a threshold no fixture could pin from below, a
+  bound whose removal no fixture could detect, three of the four
+  archive-extraction sites with no test at all, and a disclosure asserted in only
+  one of the five output formats. Real npm, PyPI and Go names are asserted to pass
+  the grammars, so a guard tightened far enough to refuse a legitimate name fails
+  in the suite rather than in a user's CI; that assertion covers the grammar
+  rather than a completed fetch.
 
 ### Dependencies
 
@@ -482,6 +559,36 @@ so everything below ships together in this release.
 
 Present in 1.2.2 as well unless noted. Each was reproduced by hand against both
 the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
+
+- **`pip download` builds an sdist, so source analysis of a PyPI dependency can
+  execute code chosen by the manifest under scan.** `npm pack` is run with
+  `--ignore-scripts` in this release, which closes the npm half of that class.
+  There is no equivalent for pip: resolving a PyPI name and version that has no
+  matching wheel makes pip install build dependencies and run the project's build
+  backend, which for a `setup.py` sdist is arbitrary code on the scanning host.
+  Verified directly (`pip3 download --no-deps psycopg2==2.9.9` reports
+  "Installing build dependencies" and "Preparing metadata"). Pre-existing and not
+  a regression, but it is disclosed here rather than left implied by the
+  `--ignore-scripts` note, because the two halves of the same class are not both
+  closed. The workaround is the same as for the rest of this class: do not pass
+  `--deep` to a scan of a tree you do not control. Restricting the fetch to
+  built wheels would close it at a coverage cost, which is a decision rather than
+  an oversight.
+
+- **A version can name any URL, and the scanner will fetch it.** npm's own
+  semantics allow a dependency version to be a tarball URL or an alias
+  (`npm:other@1.0.0`), and neither is screened beyond the local-path checks. So a
+  manifest under scan can direct the fetch at a host of its choosing, including
+  one on the scanning machine's own network, and the response bytes are then
+  handed to `tar`. An alias additionally makes the report key a different
+  package's findings to the declared name. Pre-existing. Closing it needs a host
+  policy rather than a path check.
+
+- **`--deep` on a Go project writes to the tree under scan.** `go mod download`
+  is run without a working directory of its own, so it inherits the invocation
+  directory and can write `go.sum` into the project being scanned. A read-only
+  scanner that dirties the working tree breaks a `git diff --exit-code` check in
+  CI. Pre-existing.
 
 - **NEW in 1.3.0: a source file whose first 1024 bytes are mostly non-ASCII is
   not read.** The text check judges a file on its head, and accepts a head that
