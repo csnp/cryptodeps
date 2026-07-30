@@ -126,7 +126,14 @@ dockers:
 release:
   github:
     owner: csnp
-    name: qramm-cryptodeps
+    # The repository was renamed qramm-cryptodeps -> cryptodeps. This field is
+    # the upload target, and GitHub answers the old name with a 307 redirect
+    # that GoReleaser's asset uploader does not follow ("location <nil>"), so
+    # every archive upload failed while the build, the archives and the Docker
+    # push all succeeded. The Go module path stays github.com/csnp/qramm-cryptodeps
+    # deliberately: changing it would break every importer, and module resolution
+    # does follow the redirect.
+    name: cryptodeps
   draft: false
   prerelease: auto
   mode: replace
