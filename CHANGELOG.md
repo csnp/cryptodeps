@@ -780,8 +780,9 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   So there are two distinct defects behind one symptom: a real hybrid component
   classified as if it were standalone classical usage, and primitives inferred
   into records that do not contain them. The second comes from name inference,
-  which supplies 832 of the 901 records in the database these scans ran against.
-  Correct classification of a
+  which supplies 780 of the 849 records in the database this release publishes,
+  and 832 of the 901 in the newer one a machine may already have cached; the two
+  are distinguished below. Correct classification of a
   declared hybrid component, and a verification pass over the inferred records,
   are the fixes, and neither is in this release.
 
