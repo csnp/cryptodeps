@@ -255,6 +255,22 @@ func TestFilterValidationRejectsUnknownValues(t *testing.T) {
 			bad:     []string{"banana", "vulnerable", "sev1"},
 			wantMsg: "--min-severity",
 		},
+		{
+			// --fail-on was the one enum flag of the three that did not
+			// validate, and it is the one that decides the exit code. A typo
+			// fell through to the default policy, so a project that exits 3
+			// under --fail-on partial exited 0 under --fail-on partail, with
+			// nothing on either stream. The others mislead a reader; this one
+			// silently loosens a CI gate.
+			name: "fail-on",
+			fn:   ValidateFailOn,
+			// "" is deliberately absent: this flag has a default, so a blank
+			// value expresses nothing and used to fall through to that default
+			// while looking accepted.
+			good:    []string{"none", "any", "partial", "vulnerable", "VULNERABLE", " partial "},
+			bad:     []string{"partail", "banana", "safe", "unknown", "all", "critical", "1"},
+			wantMsg: "--fail-on",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, v := range tc.good {

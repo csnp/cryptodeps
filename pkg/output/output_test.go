@@ -68,6 +68,7 @@ func testScanResult() *types.ScanResult {
 			QuantumVulnerable:  1,
 			QuantumPartial:     0,
 			NotInDatabase:      1,
+			NotExamined:        1,
 		},
 	}
 }

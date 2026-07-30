@@ -6,6 +6,7 @@ package analyzer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/csnp/qramm-cryptodeps/internal/database"
@@ -369,5 +370,136 @@ require golang.org/x/crypto v0.17.0
 
 	if result.Manifest != gomodPath {
 		t.Errorf("Manifest = %q, want %q", result.Manifest, gomodPath)
+	}
+}
+
+// TestSummaryCoverageMatchesDependencies pins the summary to the dependency
+// list it describes.
+//
+// The coverage fields are what every format's verdict is computed from, and
+// they are accumulated in a different loop from the one that decides whether a
+// dependency was examined. If the two ever disagree, the reports are wrong in a
+// way no formatter test can see, because the formatters would be faithfully
+// rendering a summary that does not describe the scan.
+func TestSummaryCoverageMatchesDependencies(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// One dependency the embedded database carries, one it does not.
+	gomod := `module test
+
+require (
+	golang.org/x/crypto v0.31.0
+	github.com/unknown/package v1.0.0
+)
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(gomod), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	result, err := New(database.NewEmbedded(), Options{}).Analyze(tmpDir)
+	if err != nil {
+		t.Fatalf("Analyze: %v", err)
+	}
+
+	// Guard the fixture: it has to contain both kinds of dependency, or the
+	// invariant below holds for a reason that has nothing to do with the code.
+	var examined, unexamined int
+	for _, dep := range result.Dependencies {
+		if dep.Examined() {
+			examined++
+		} else {
+			unexamined++
+		}
+	}
+	if examined == 0 || unexamined == 0 {
+		t.Fatalf("fixture does not mix examined and unexamined dependencies: %d/%d",
+			examined, unexamined)
+	}
+
+	if result.Summary.NotExamined != unexamined {
+		t.Errorf("Summary.NotExamined = %d, want %d; the summary does not describe the "+
+			"dependency list it was built from", result.Summary.NotExamined, unexamined)
+	}
+	if result.Summary.TotalDependencies-result.Summary.NotExamined != examined {
+		t.Errorf("summary reports %d examined, want %d",
+			result.Summary.TotalDependencies-result.Summary.NotExamined, examined)
+	}
+	if result.Summary.DeepAttempted {
+		t.Error("DeepAttempted is set on a scan that did not request source analysis")
+	}
+}
+
+// TestDeepAttemptedReflectsWhatCouldRun separates the flag the user passed from
+// the analysis that was actually possible.
+//
+// --deep with --offline sets the option and gives the analyzer no way to fetch
+// anything, so a report keyed on the option alone would tell the user that
+// source analysis had been tried.
+func TestDeepAttemptedReflectsWhatCouldRun(t *testing.T) {
+	tmpDir := t.TempDir()
+	gomod := "module test\n\nrequire github.com/unknown/package v1.0.0\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(gomod), 0644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		opts Options
+		want bool
+	}{
+		{"neither flag", Options{}, false},
+		{"offline", Options{Offline: true}, false},
+		{"deep and offline", Options{Deep: true, Offline: true}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := New(database.NewEmbedded(), tc.opts).Analyze(tmpDir)
+			if err != nil {
+				t.Fatalf("Analyze: %v", err)
+			}
+			if result.Summary.DeepAttempted != tc.want {
+				t.Errorf("DeepAttempted = %v, want %v", result.Summary.DeepAttempted, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnexaminedHintIsNotPrintedAfterDeep guards the hint that had no guard.
+//
+// The hint above it in generateHints was already conditioned on source analysis
+// not having run; this one was not, so a --deep scan that read every package
+// ended with "try --deep to analyze source code".
+func TestUnexaminedHintIsNotPrintedAfterDeep(t *testing.T) {
+	// Source analysis ran and could not read any of them. This is the fixture
+	// that reaches the branch: NotExamined equals TotalDependencies, which is
+	// the condition the hint is generated under. A fixture where the packages
+	// were successfully read never reaches it, so it would pass whether the
+	// guard were present or not.
+	deepRan := &types.ScanResult{
+		Summary: types.ScanSummary{
+			TotalDependencies: 3, NotInDatabase: 3, NotExamined: 3, DeepAttempted: true,
+		},
+	}
+	if deepRan.Summary.NotExamined != deepRan.Summary.TotalDependencies {
+		t.Fatalf("fixture does not reach the hint's condition: %+v", deepRan.Summary)
+	}
+	a := New(database.NewEmbedded(), Options{Deep: true})
+	for _, hint := range a.generateHints(deepRan) {
+		if strings.Contains(hint, "--deep") {
+			t.Errorf("hint sends a user who ran --deep back to --deep: %q", hint)
+		}
+	}
+
+	// And the same hint must still appear when it is the right advice.
+	deepNotRun := &types.ScanResult{
+		Summary: types.ScanSummary{TotalDependencies: 3, NotInDatabase: 3, NotExamined: 3},
+	}
+	var found bool
+	for _, hint := range New(database.NewEmbedded(), Options{}).generateHints(deepNotRun) {
+		if strings.Contains(hint, "--deep") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the --deep hint no longer appears for a scan that never ran source analysis")
 	}
 }

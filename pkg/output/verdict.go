@@ -28,28 +28,71 @@ const (
 	caseFiltered noFindingsCase = iota
 	// caseNoDependencies means the manifest declared nothing to analyze.
 	caseNoDependencies
-	// caseNothingExamined means every dependency was absent from the database,
-	// so the scan drew no conclusion. Reporting this as clean is a false
-	// negative on the tool's core question.
+	// caseNothingExamined means no dependency was reached by any means of
+	// examination, so the scan drew no conclusion. Reporting this as clean is a
+	// false negative on the tool's core question.
 	caseNothingExamined
 	// caseGenuinelyClean means dependencies were examined and carried no
 	// cryptography.
 	caseGenuinelyClean
+	// casePartialCoverage means some dependencies were examined and others were
+	// not. It is not a no-findings case: it can and does occur beside a
+	// populated result set, which is exactly why it was missing. A document
+	// listing two of three dependencies without saying the third was never read
+	// is a false bill of materials, and the two formats that omitted it are the
+	// two that get uploaded to code scanning and to compliance systems.
+	casePartialCoverage
+	// casePartialSource means dependencies were examined, and some of their
+	// source files could not be read. It is the partial state of the
+	// examination question: such a dependency is examined, so it is absent from
+	// NotExamined and from casePartialCoverage, and a scan that read three of a
+	// package's four files described itself as having read the package. A file
+	// the analyzer refuses is where a finding would have been.
+	casePartialSource
 )
 
 // classifyNoFindings decides which case a findings-free summary falls into.
 // Callers must only reach it when no finding survived to be reported.
+//
+// The examination question is asked of NotExamined, not of NotInDatabase. The
+// two were the same number while a database lookup was the only way to examine
+// a package; --deep made them differ, and asking the database question meant a
+// scan that read every dependency's source reported that it had examined
+// nothing. A predicate that merely correlates with the question is a proxy, and
+// this one stopped correlating the moment a second answer path existed.
 func classifyNoFindings(s types.ScanSummary) noFindingsCase {
 	switch {
 	case s.FilteredOut > 0:
 		return caseFiltered
 	case s.TotalDependencies == 0:
 		return caseNoDependencies
-	case s.NotInDatabase >= s.TotalDependencies:
+	case s.NotExamined >= s.TotalDependencies:
 		return caseNothingExamined
 	default:
 		return caseGenuinelyClean
 	}
+}
+
+// examinedCount is how many dependencies the scan actually inspected.
+func examinedCount(s types.ScanSummary) int {
+	n := s.TotalDependencies - s.NotExamined
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
+// unexaminedAdvice is the next step for dependencies nothing reached, worded
+// for what the user has already done.
+//
+// A tool that answers "run --deep" to someone who ran --deep has given them a
+// dead end. The two states need different sentences because they need different
+// actions.
+func unexaminedAdvice(s types.ScanSummary) string {
+	if s.DeepAttempted {
+		return "source analysis could not read them; see the warnings printed during the scan"
+	}
+	return "not in the crypto database (use --deep to analyze them)"
 }
 
 // hasAnyCrypto reports whether any dependency carried a surviving finding.
@@ -110,12 +153,42 @@ func coverageNotes(projects []*types.ScanResult) []coverageNote {
 			})
 		}
 
+		// Incomplete coverage is a property of the SCAN too, for the same
+		// reason: a project can have findings AND dependencies nothing read.
+		// Asking it only of empty reports meant a CBOM listed two of three
+		// libraries, and a SARIF run reported executionSuccessful with no
+		// notification, for a scan whose stderr had said it could not read the
+		// third. The human formats said so; the machine ones did not.
+		if p.Summary.NotExamined > 0 && p.Summary.NotExamined < p.Summary.TotalDependencies {
+			notes = append(notes, coverageNote{
+				Manifest: p.Manifest,
+				Case:     casePartialCoverage,
+				Summary:  p.Summary,
+			})
+		}
+
+		// Asked of the scan for the same reason as the two above, and asked
+		// independently of them: a dependency that was examined incompletely is
+		// counted as examined, so neither NotExamined nor the no-findings
+		// classification can reach this state. A package that hid its
+		// cryptography in a file the analyzer refused was reported as examined
+		// and clean, in all five formats, with the count that proved otherwise
+		// discarded inside the walk.
+		if p.Summary.SourceFilesUnreadable > 0 {
+			notes = append(notes, coverageNote{
+				Manifest: p.Manifest,
+				Case:     casePartialSource,
+				Summary:  p.Summary,
+			})
+		}
+
 		if hasAnyCrypto(p.Dependencies) {
 			continue
 		}
 		c := classifyNoFindings(p.Summary)
-		// caseFiltered is already handled above, and caseGenuinelyClean needs no
-		// explanation: an empty result set is exactly what it means.
+		// caseFiltered and casePartialCoverage are already handled above, and
+		// caseGenuinelyClean needs no explanation: an empty result set is
+		// exactly what it means.
 		if c == caseGenuinelyClean || c == caseFiltered {
 			continue
 		}
@@ -132,10 +205,27 @@ func (n coverageNote) Text() string {
 			"This is a filtered subset, not every finding.", n.Summary.FilteredOut)
 	case caseNoDependencies:
 		return "No dependencies were declared, so nothing was analyzed."
+	case casePartialCoverage:
+		return fmt.Sprintf("%d of the %d dependencies could not be examined: %s. The findings "+
+			"below describe the %d that were examined, and say nothing about the rest.",
+			n.Summary.NotExamined, n.Summary.TotalDependencies, unexaminedAdvice(n.Summary),
+			examinedCount(n.Summary))
+	case casePartialSource:
+		return fmt.Sprintf("%d source file(s) in the dependencies that were examined could not be read, "+
+			"so the cryptography of those dependencies may be under-reported. Each is named on stderr "+
+			"during the scan with the reason, and in JSON under the dependency's "+
+			"analysis.unreadableFiles alongside filesAnalyzed and filesUnreadable.",
+			n.Summary.SourceFilesUnreadable)
 	case caseNothingExamined:
-		return fmt.Sprintf("None of the %d dependencies are present in the crypto database, so no "+
-			"conclusion about cryptographic usage was drawn. An empty result set here means "+
-			"nothing was examined, not that nothing was found.", n.Summary.TotalDependencies)
+		if n.Summary.DeepAttempted {
+			return fmt.Sprintf("None of the %d dependencies could be examined: they are absent from the "+
+				"crypto database, and source analysis could not read any of them. An empty result set "+
+				"here means nothing was examined, not that nothing was found.", n.Summary.TotalDependencies)
+		}
+		return fmt.Sprintf("None of the %d dependencies are present in the crypto database and source "+
+			"analysis was not run, so no conclusion about cryptographic usage was drawn. An empty "+
+			"result set here means nothing was examined, not that nothing was found.",
+			n.Summary.TotalDependencies)
 	default:
 		return ""
 	}

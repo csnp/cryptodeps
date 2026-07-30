@@ -118,6 +118,43 @@ type AnalysisMetadata struct {
 	ToolVersion string    `json:"toolVersion" yaml:"toolVersion"`
 	Contributor string    `json:"contributor,omitempty" yaml:"contributor,omitempty"`
 	SourceHash  string    `json:"sourceHash,omitempty" yaml:"sourceHash,omitempty"`
+	// FilesAnalyzed is how many source files an analyzer actually parsed. It is
+	// the evidence behind every claim this tool makes about having examined a
+	// package by reading it, and it is reported so that the claim can be
+	// audited rather than taken on trust. Zero for a database record, which was
+	// not produced by reading this package here.
+	FilesAnalyzed int `json:"filesAnalyzed,omitempty" yaml:"filesAnalyzed,omitempty"`
+	// FilesUnreadable is how many files carried one of this analyzer's own
+	// extensions and could not be parsed.
+	//
+	// It is reported for the same reason FilesAnalyzed is. A package that was
+	// partly read is not the same as one that was read, and the difference was
+	// invisible: the count existed inside the walk and stopped there, so a
+	// dependency whose only cryptography sat in a file the analyzer refused was
+	// reported as examined and clean, with nothing on any stream saying a file
+	// had been skipped. Examination is a claim, and a claim needs its exceptions
+	// stated as well as its evidence.
+	FilesUnreadable int `json:"filesUnreadable,omitempty" yaml:"filesUnreadable,omitempty"`
+	// UnreadableFiles says which files those were and why, bounded so that a
+	// hostile archive cannot turn one warning into thousands. A count with no
+	// names is a dead end: the reader is told the reading was incomplete and
+	// given no way to find out where.
+	UnreadableFiles []string `json:"unreadableFiles,omitempty" yaml:"unreadableFiles,omitempty"`
+}
+
+// SourceWasRead reports whether source analysis parsed at least one file.
+//
+// This is the question "was this package examined by reading it", and it has to
+// be asked of the files that were read rather than of an error that was not
+// returned. A fetch can succeed and yield nothing an analyzer can parse: a
+// Maven artifact whose sources JAR does not exist falls back to the main JAR,
+// which holds compiled classes only, so the walker sees no .java file and
+// returns no usages and no error. Reading that as a completed examination
+// produced "no cryptographic usage detected in the 1 of 1 dependencies that
+// were examined" for a scan that had read nothing at all, which is the
+// false-clean class this release exists to close.
+func (p *PackageAnalysis) SourceWasRead() bool {
+	return p != nil && p.Analysis.FilesAnalyzed > 0
 }
 
 // QuantumSummary summarizes the quantum risk of a package.
@@ -141,11 +178,33 @@ type PackageAnalysis struct {
 
 // DependencyResult represents the analysis result for a dependency.
 type DependencyResult struct {
-	Dependency   Dependency       `json:"dependency" yaml:"dependency"`
-	Analysis     *PackageAnalysis `json:"analysis,omitempty" yaml:"analysis,omitempty"`
-	InDatabase   bool             `json:"inDatabase" yaml:"inDatabase"`
-	DeepAnalyzed bool             `json:"deepAnalyzed,omitempty" yaml:"deepAnalyzed,omitempty"`
-	Error        string           `json:"error,omitempty" yaml:"error,omitempty"`
+	Dependency Dependency       `json:"dependency" yaml:"dependency"`
+	Analysis   *PackageAnalysis `json:"analysis,omitempty" yaml:"analysis,omitempty"`
+	InDatabase bool             `json:"inDatabase" yaml:"inDatabase"`
+	// DeepAnalyzed records that source analysis read this package. It must be
+	// set from what an analyzer parsed, never from an on-demand call that
+	// merely returned no error: see PackageAnalysis.SourceWasRead.
+	DeepAnalyzed bool `json:"deepAnalyzed,omitempty" yaml:"deepAnalyzed,omitempty"`
+	// Error says why a dependency was not examined, for the consumers that read
+	// this document rather than the warnings printed during the scan. A machine
+	// reading JSON or SARIF could previously see only that a package was absent
+	// from the results, with no way to tell an unreachable download from an
+	// archive that carried nothing to read.
+	Error string `json:"error,omitempty" yaml:"error,omitempty"`
+}
+
+// Examined reports whether this dependency was inspected by any means.
+//
+// There are two, and reports that asked only about the first were wrong about
+// the second. A database lookup answers "do we already know what this package
+// contains"; source analysis answers the same question by reading the package.
+// A scan that ran source analysis over every dependency and found nothing was
+// still described as having examined nothing, because the only question being
+// asked was the database one. The distinction belongs here rather than in each
+// caller's own condition, so that a third means of examination added later has
+// one place to declare itself.
+func (d DependencyResult) Examined() bool {
+	return d.InDatabase || d.DeepAnalyzed
 }
 
 // ScanResult represents the complete result of scanning a project.
@@ -167,11 +226,51 @@ type ScanSummary struct {
 	QuantumVulnerable  int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
 	QuantumPartial     int `json:"quantumPartial" yaml:"quantumPartial"`
 	NotInDatabase      int `json:"notInDatabase" yaml:"notInDatabase"`
+	// NotExamined counts dependencies that no means of examination reached:
+	// absent from the crypto database, and not read by source analysis either.
+	//
+	// NotInDatabase is not a substitute for it. Using the database count to
+	// answer "was anything examined" was correct only while the database was
+	// the only way to examine a package, and --deep is a second way. A scan
+	// that deep-analyzed every dependency reported that none had been examined,
+	// and told the user to run the flag they had just run.
+	NotExamined int `json:"notExamined" yaml:"notExamined"`
+	// DeepAttempted records whether source analysis ran for the packages the
+	// database did not cover. Without it a report cannot tell "not examined
+	// because you did not ask for source analysis", where the next step is
+	// --deep, from "not examined because source analysis could not fetch the
+	// package", where suggesting --deep is a dead end.
+	DeepAttempted bool `json:"deepAttempted,omitempty" yaml:"deepAttempted,omitempty"`
 	// FilteredOut counts findings that were detected and then withheld by
 	// --risk or --min-severity. Without it, a filter that matches nothing is
 	// indistinguishable from a project with no cryptography, and the report
 	// would state the second while the first is true.
 	FilteredOut int `json:"filteredOut,omitempty" yaml:"filteredOut,omitempty"`
+	// WithheldVulnerable, WithheldPartial and WithheldWithCrypto record what the
+	// reporting filters removed, broken down the way the --fail-on gate asks its
+	// question. They are deliberately NOT serialized: they exist so that the exit
+	// code can describe the scan while the report describes the view.
+	//
+	// Making --risk and --min-severity actually filter, in this release, had the
+	// side effect of letting them decide the exit code, because the gate reads the
+	// summary and the summary counted only survivors. So `--fail-on vulnerable`
+	// exited 1 on a project and 0 on the same project with `--risk safe` added,
+	// while stdout said "This is not a clean result". 1.2.2 exited 1 for both,
+	// because the filters did nothing at all, so this was a regression in the one
+	// flag that decides CI outcomes, in the release that hardened that flag three
+	// times against silent loosening. A view flag must not answer a gate.
+	WithheldVulnerable int `json:"-" yaml:"-"`
+	WithheldPartial    int `json:"-" yaml:"-"`
+	WithheldWithCrypto int `json:"-" yaml:"-"`
+	// SourceFilesUnreadable counts source files that source analysis could not
+	// parse across the dependencies it did examine.
+	//
+	// NotExamined cannot carry this: a dependency with one readable file and one
+	// unreadable one WAS examined, so it is absent from that count, and the
+	// report then described a partial reading as a complete one. This is the
+	// partial state of the same question, and the coverage note has to be asked
+	// of it rather than only of the empty one.
+	SourceFilesUnreadable int `json:"sourceFilesUnreadable,omitempty" yaml:"sourceFilesUnreadable,omitempty"`
 	// Reachability stats (only populated when reachability analysis is enabled)
 	ReachabilityAnalyzed bool `json:"reachabilityAnalyzed,omitempty" yaml:"reachabilityAnalyzed,omitempty"`
 	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"` // Direct calls from user code
@@ -238,10 +337,23 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		multi.TotalSummary.QuantumVulnerable += r.Summary.QuantumVulnerable
 		multi.TotalSummary.QuantumPartial += r.Summary.QuantumPartial
 		multi.TotalSummary.NotInDatabase += r.Summary.NotInDatabase
+		// The aggregate answers the same coverage question as each project's
+		// own summary and must not answer it from a different field.
+		multi.TotalSummary.NotExamined += r.Summary.NotExamined
+		if r.Summary.DeepAttempted {
+			multi.TotalSummary.DeepAttempted = true
+		}
 		// Without this the aggregate reported zero withheld findings while the
 		// per-project summaries reported dozens, so the totals a reader
 		// actually looks at described a filtered scan as a complete one.
 		multi.TotalSummary.FilteredOut += r.Summary.FilteredOut
+		// The withheld breakdown has to aggregate for the same reason the count
+		// does: otherwise a workspace scan's gate reads zero withheld findings
+		// while its projects withheld many, and the filter defeats --fail-on at
+		// the aggregate level even once it is held at the project level.
+		multi.TotalSummary.WithheldVulnerable += r.Summary.WithheldVulnerable
+		multi.TotalSummary.WithheldPartial += r.Summary.WithheldPartial
+		multi.TotalSummary.WithheldWithCrypto += r.Summary.WithheldWithCrypto
 		multi.TotalSummary.ConfirmedCrypto += r.Summary.ConfirmedCrypto
 		multi.TotalSummary.ReachableCrypto += r.Summary.ReachableCrypto
 		multi.TotalSummary.AvailableCrypto += r.Summary.AvailableCrypto

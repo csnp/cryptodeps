@@ -78,7 +78,8 @@ func nothingExaminedScan() *types.MultiProjectResult {
 			{Dependency: types.Dependency{Name: "rsa", Version: "4.9"}},
 			{Dependency: types.Dependency{Name: "certifi"}},
 		},
-		Summary: types.ScanSummary{TotalDependencies: 2, DirectDependencies: 2, NotInDatabase: 2},
+		Summary: types.ScanSummary{TotalDependencies: 2, DirectDependencies: 2, NotInDatabase: 2,
+			NotExamined: 2},
 	}})
 }
 
@@ -258,9 +259,10 @@ func TestCoverageNotesDoNotContradictResults(t *testing.T) {
 			}},
 		}},
 		// Deliberately the shape --deep produces: findings exist even though
-		// every dependency is absent from the database.
+		// every dependency is absent from the database, because source
+		// analysis read them.
 		Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, WithCrypto: 1,
-			QuantumVulnerable: 1, NotInDatabase: 1},
+			QuantumVulnerable: 1, NotInDatabase: 1, NotExamined: 0, DeepAttempted: true},
 	}
 
 	if notes := coverageNotes([]*types.ScanResult{withFindings}); len(notes) != 0 {
@@ -296,7 +298,8 @@ func TestCoverageIsJudgedPerProject(t *testing.T) {
 			{Dependency: types.Dependency{Name: "left-pad"}},
 			{Dependency: types.Dependency{Name: "is-odd"}},
 		},
-		Summary: types.ScanSummary{TotalDependencies: 2, DirectDependencies: 2, NotInDatabase: 2},
+		Summary: types.ScanSummary{TotalDependencies: 2, DirectDependencies: 2, NotInDatabase: 2,
+			NotExamined: 2},
 	}
 	analyzed := &types.ScanResult{
 		Manifest: "/repo/known/go.mod",
@@ -313,7 +316,7 @@ func TestCoverageIsJudgedPerProject(t *testing.T) {
 
 	// Guard the fixture: the aggregate must NOT satisfy notInDatabase == total,
 	// or the old whole-run test would have caught this and there is no bug.
-	if multi.TotalSummary.NotInDatabase >= multi.TotalSummary.TotalDependencies {
+	if multi.TotalSummary.NotExamined >= multi.TotalSummary.TotalDependencies {
 		t.Fatalf("fixture does not mix examined and unexamined projects: %+v", multi.TotalSummary)
 	}
 
@@ -342,7 +345,7 @@ func TestCoverageIsJudgedPerProject(t *testing.T) {
 // wrongly, that scan reports "not analyzed" and never mentions the two withheld
 // findings.
 func TestClassifyNoFindingsChecksFilterFirst(t *testing.T) {
-	both := types.ScanSummary{TotalDependencies: 2, NotInDatabase: 2, FilteredOut: 2}
+	both := types.ScanSummary{TotalDependencies: 2, NotInDatabase: 2, NotExamined: 2, FilteredOut: 2}
 	if got := classifyNoFindings(both); got != caseFiltered {
 		t.Errorf("classifyNoFindings(%+v) = %v, want caseFiltered; withheld findings must "+
 			"outrank every other explanation for an empty report", both, got)
@@ -356,8 +359,14 @@ func TestClassifyNoFindingsChecksFilterFirst(t *testing.T) {
 		want    noFindingsCase
 	}{
 		{"no dependencies", types.ScanSummary{}, caseNoDependencies},
-		{"all unknown", types.ScanSummary{TotalDependencies: 3, NotInDatabase: 3}, caseNothingExamined},
-		{"examined and clean", types.ScanSummary{TotalDependencies: 3, NotInDatabase: 1}, caseGenuinelyClean},
+		{"all unknown", types.ScanSummary{TotalDependencies: 3, NotInDatabase: 3, NotExamined: 3}, caseNothingExamined},
+		{"examined and clean", types.ScanSummary{TotalDependencies: 3, NotInDatabase: 1, NotExamined: 1}, caseGenuinelyClean},
+		// Every dependency read by source analysis and none of them in the
+		// database. The database count says nothing was examined; the scan
+		// examined all three.
+		{"deep-analyzed, none in the database",
+			types.ScanSummary{TotalDependencies: 3, NotInDatabase: 3, NotExamined: 0, DeepAttempted: true},
+			caseGenuinelyClean},
 	} {
 		if got := classifyNoFindings(tc.summary); got != tc.want {
 			t.Errorf("%s: classifyNoFindings(%+v) = %v, want %v", tc.name, tc.summary, got, tc.want)
@@ -603,7 +612,8 @@ func TestCoverageNotesAreEmittedPerProjectNotJustFirst(t *testing.T) {
 			Dependencies: []types.DependencyResult{
 				{Dependency: types.Dependency{Name: "left-pad"}},
 			},
-			Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, NotInDatabase: 1},
+			Summary: types.ScanSummary{TotalDependencies: 1, DirectDependencies: 1, NotInDatabase: 1,
+				NotExamined: 1},
 		}
 	}
 	multi := types.AggregateResults("/repo", []*types.ScanResult{

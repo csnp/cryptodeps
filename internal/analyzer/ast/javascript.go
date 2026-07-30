@@ -5,7 +5,6 @@
 package ast
 
 import (
-	"bufio"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -95,8 +94,8 @@ var jsAlgorithmMap = map[string]string{
 }
 
 // AnalyzeDirectory analyzes all JavaScript files in a directory.
-func (a *JavaScriptAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, error) {
-	var allUsages []types.CryptoUsage
+func (a *JavaScriptAnalyzer) AnalyzeDirectory(dir string) (DirectoryScan, error) {
+	var scan DirectoryScan
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -130,17 +129,12 @@ func (a *JavaScriptAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, 
 			return nil
 		}
 
-		usages, err := a.AnalyzeFile(path)
-		if err != nil {
-			// Log but continue on parse errors
-			return nil
-		}
-
-		allUsages = append(allUsages, usages...)
+		// Counted, not propagated: see the Go walker.
+		scan.add(a.AnalyzeFile(path))
 		return nil
 	})
 
-	return allUsages, err
+	return scan, err
 }
 
 // jsFuncContext tracks function context during JavaScript file analysis.
@@ -153,11 +147,10 @@ type jsFuncContext struct {
 
 // AnalyzeFile analyzes a single JavaScript file for cryptographic usage.
 func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
-	file, err := os.Open(filename)
+	scanner, err := openSource(filename)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
 
 	var usages []types.CryptoUsage
 	imports := make(map[string]bool)
@@ -166,7 +159,6 @@ func (a *JavaScriptAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, 
 	braceDepth := 0
 	exportedNames := make(map[string]bool)
 
-	scanner := bufio.NewScanner(file)
 	lineNum := 0
 
 	for scanner.Scan() {

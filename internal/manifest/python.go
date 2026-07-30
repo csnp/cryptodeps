@@ -173,12 +173,30 @@ func (p *PythonParser) parsePipfile(path string) ([]types.Dependency, error) {
 func poetryVersion(constraint any) string {
 	switch v := constraint.(type) {
 	case string:
-		return v
+		return stripVersionOperator(v)
 	case map[string]any:
 		if version, ok := v["version"].(string); ok {
-			return version
+			return stripVersionOperator(version)
 		}
-		// Git and path dependencies carry no version.
+		// A dependency declared by location rather than by version keeps its
+		// locator, because dropping it does not merely lose information: it
+		// leaves a name with no version, and the fetcher then downloads whatever
+		// PyPI serves under that name. A `path = "../internal-lib"` dependency
+		// was replaced by a public package of the same name, whose source was
+		// then analyzed and reported as this project's. That is dependency
+		// confusion performed by the scanner, and an attacker only has to
+		// register the name of a company's local package to be handed the
+		// attribution, and with pip building sdists, execution.
+		//
+		// Returned raw so the guards in the fetcher see what was really
+		// declared: a path is refused as a local reference, and a URL or a
+		// repository fails to resolve under its own name rather than silently
+		// becoming a different package.
+		for _, key := range [...]string{"path", "file", "url", "git"} {
+			if locator, ok := v[key].(string); ok && strings.TrimSpace(locator) != "" {
+				return locator
+			}
+		}
 		return ""
 	default:
 		return ""
@@ -215,7 +233,27 @@ func splitRequirement(spec string) (name, version string) {
 			rest = strings.TrimSpace(rest[idx+1:])
 		}
 	}
-	return name, strings.TrimSpace(rest)
+	return name, stripVersionOperator(rest)
+}
+
+// stripVersionOperator removes the comparison operator from a version
+// constraint, leaving the version it names.
+//
+// The requirements.txt reader has always done this, because its regex captures
+// the operator separately and keeps only what follows. The pyproject.toml and
+// Pipfile readers kept the whole constraint, so the same two packages declared
+// in the two formats produced pycryptodome@3.20.0 from one and
+// pycryptodome@==3.20.0 from the other. The CBOM emitter normalises the purl
+// and the JSON and SARIF documents do not, so a single scan disagreed with
+// itself and a consumer could not join the two by version. It also reached the
+// fetcher, which builds a pip spec as name==version and would have asked for
+// pycryptodome===3.20.0.
+//
+// Multi-constraint strings such as ">=1.0,<2.0" keep everything after the
+// leading operator, which is what requirements.txt already produced for them.
+func stripVersionOperator(constraint string) string {
+	trimmed := strings.TrimLeft(strings.TrimSpace(constraint), "<>=!~^")
+	return strings.TrimSpace(trimmed)
 }
 
 // normalizePyPIName applies PEP 503 normalization so that the same package

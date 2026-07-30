@@ -64,6 +64,46 @@ func ValidateRiskFilter(s string) error {
 	}
 }
 
+// ValidateFailOn checks a --fail-on value.
+//
+// This is the one enum flag of the three that did not validate, and it is the
+// one that decides an exit code. An unrecognised value fell through to the
+// default policy, so `--fail-on partail` turned a build that the operator had
+// asked to fail on partial risk into a build that passed, with nothing on
+// either stream: exit 3 became exit 0 on the same project. A CI gate that
+// silently loosens on a typo is worse than one that refuses to run.
+func ValidateFailOn(s string) error {
+	// An empty value is refused for the same reason a padded one is honoured:
+	// whatever this accepts, the exit code must act on. "" matched no policy and
+	// fell through to the vulnerable-only default, so a project with partial-risk
+	// findings exited 3 for "partial" and 0 for "", silently, and an unset
+	// workflow input is precisely how a CI gate arrives here empty. Unlike --risk
+	// and --min-severity, where empty means "do not filter" and is a real state,
+	// this flag already has a default and cannot express one by being blank.
+	switch CanonicalFailOn(s) {
+	case "none", "any", "partial", "vulnerable":
+		return nil
+	default:
+		return fmt.Errorf("invalid --fail-on value %q: expected one of vulnerable, partial, any, none", s)
+	}
+}
+
+// CanonicalFailOn is the one reading of a --fail-on value.
+//
+// It exists because there were two. The validator trimmed and lowercased before
+// deciding, and the code that turns the value into an exit code only lowercased,
+// so " partial " was accepted as valid and then matched no policy: the gate
+// reverted to vulnerable-only and a project with partial-risk findings exited 0
+// where "partial" exited 3, on either stream in silence. Whitespace around a
+// value is the ordinary result of a YAML block scalar or an expression in a
+// workflow file, which is exactly where this flag is used.
+//
+// Every reader of the flag must go through this, so that accepting a value and
+// acting on it cannot disagree.
+func CanonicalFailOn(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
+}
+
 // ValidateMinSeverity checks a --min-severity value.
 func ValidateMinSeverity(s string) error {
 	if strings.TrimSpace(s) == "" {
@@ -199,7 +239,22 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 					kept = append(kept, c)
 				} else {
 					result.Summary.FilteredOut++
+					// Remember what was withheld, by the risk the gate asks about,
+					// so that hiding a finding from the report cannot also hide it
+					// from --fail-on. These counters are not serialized.
+					switch c.QuantumRisk {
+					case types.RiskVulnerable:
+						result.Summary.WithheldVulnerable++
+					case types.RiskPartial:
+						result.Summary.WithheldPartial++
+					}
 				}
+			}
+			if len(kept) == 0 && len(depResult.Analysis.Crypto) > 0 {
+				// The dependency HAS cryptography; the filter removed all of it.
+				// Without this, --fail-on any reports a project with crypto as
+				// having none, because WithCrypto is counted from survivors.
+				result.Summary.WithheldWithCrypto++
 			}
 			// Copy before mutating: Analysis points into the shared database,
 			// so writing through it would corrupt the entry for every other
@@ -231,7 +286,24 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 		if !depResult.InDatabase {
 			result.Summary.NotInDatabase++
 		}
+		// Counted here, where the means of examination are known, rather than
+		// re-derived from NotInDatabase by each report that needs it.
+		if !depResult.Examined() {
+			result.Summary.NotExamined++
+		}
+		// The same, for the dependencies that were examined incompletely. These
+		// are absent from NotExamined by definition, which is why a partial
+		// reading was reported as a complete one.
+		if depResult.Analysis != nil {
+			result.Summary.SourceFilesUnreadable += depResult.Analysis.Analysis.FilesUnreadable
+		}
 	}
+
+	// Whether source analysis ran at all, which is a property of the scan and
+	// not of any one dependency. a.ondemand is the thing that governs it:
+	// --deep with --offline sets the option without giving the analyzer any way
+	// to fetch, so the option alone would overstate what was attempted.
+	result.Summary.DeepAttempted = a.ondemand != nil
 
 	// Perform reachability analysis if enabled and ecosystem supports it
 	if a.options.Reachability && m.Ecosystem == types.EcosystemGo {
@@ -304,9 +376,14 @@ func (a *Analyzer) generateHints(result *types.ScanResult) []string {
 		}
 	}
 
-	// Hint: no crypto found but packages exist
-	if result.Summary.WithCrypto == 0 && result.Summary.TotalDependencies > 0 {
-		if result.Summary.NotInDatabase == result.Summary.TotalDependencies {
+	// Hint: no crypto found but packages exist.
+	//
+	// Guarded on source analysis not having run, which the hint above it was
+	// already guarded on and this one was not. Without the guard a --deep scan
+	// that read every package and found no cryptography ended with advice to
+	// run --deep.
+	if result.Summary.WithCrypto == 0 && result.Summary.TotalDependencies > 0 && !result.Summary.DeepAttempted {
+		if result.Summary.NotExamined == result.Summary.TotalDependencies {
 			hints = append(hints, "No crypto findings. All packages are unknown - try --deep to analyze source code.")
 		}
 	}
@@ -340,7 +417,46 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResul
 		if err != nil {
 			// Log the error but continue
 			fmt.Fprintf(os.Stderr, "Warning: on-demand analysis failed for %s: %v\n", dep.Name, err)
+			result.Error = fmt.Sprintf("source analysis could not fetch %s: %v", dep.Name, err)
 			return result
+		}
+		// Examination is claimed from what an analyzer parsed, not from a call
+		// that returned no error. The two differ whenever an archive arrives
+		// carrying nothing this tool can read: a Maven artifact with no sources
+		// JAR falls back to the compiled main JAR, the Java walker accepts only
+		// .java, .kt and .kts, and it then returns no usages and no error. That
+		// was reported as "no cryptographic usage detected in the 1 of 1
+		// dependencies that were examined" for a scan that read zero files, so
+		// the absence of an error was standing in for evidence and saying the
+		// opposite of the truth.
+		if !analysis.SourceWasRead() {
+			fmt.Fprintf(os.Stderr,
+				"Warning: source analysis of %s read no files it can parse, so it is "+
+					"reported as not examined rather than as clean\n", dep.Name)
+			result.Error = fmt.Sprintf(
+				"source analysis read no files it can parse in the fetched archive for %s", dep.Name)
+			return result
+		}
+		// Partly read is not read. A package can hold a file this analyzer
+		// parsed and another it refused, and the refusal left no trace outside
+		// the walk that recorded it: the count stopped at the AST layer, so a
+		// dependency whose only cryptography sat in the refused file was
+		// reported as examined and clean on every stream and in every format.
+		// The exception belongs beside the claim, not inside the walk.
+		if analysis.Analysis.FilesUnreadable > 0 {
+			fmt.Fprintf(os.Stderr,
+				"Warning: source analysis of %s read %d file(s) and could not read %d more, so its "+
+					"cryptography may be under-reported\n",
+				dep.Name, analysis.Analysis.FilesAnalyzed, analysis.Analysis.FilesUnreadable)
+			// Named, not just counted. A reader told that one file went unread and
+			// not which one has been handed a dead end, and the reason differs in
+			// what they should do about it.
+			for _, reason := range analysis.Analysis.UnreadableFiles {
+				fmt.Fprintf(os.Stderr, "  not read: %s\n", reason)
+			}
+			if n := analysis.Analysis.FilesUnreadable - len(analysis.Analysis.UnreadableFiles); n > 0 {
+				fmt.Fprintf(os.Stderr, "  and %d more not named here\n", n)
+			}
 		}
 		result.Analysis = analysis
 		result.DeepAnalyzed = true

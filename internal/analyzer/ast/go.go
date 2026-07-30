@@ -30,8 +30,8 @@ func NewGoAnalyzer() *GoAnalyzer {
 }
 
 // AnalyzeDirectory analyzes all Go files in a directory.
-func (a *GoAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, error) {
-	var allUsages []types.CryptoUsage
+func (a *GoAnalyzer) AnalyzeDirectory(dir string) (DirectoryScan, error) {
+	var scan DirectoryScan
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -53,22 +53,21 @@ func (a *GoAnalyzer) AnalyzeDirectory(dir string) ([]types.CryptoUsage, error) {
 			return nil
 		}
 
-		usages, err := a.AnalyzeFile(path)
-		if err != nil {
-			// Log but continue on parse errors
-			return nil
-		}
-
-		allUsages = append(allUsages, usages...)
+		// A parse error is counted rather than propagated: one unreadable file
+		// should not abandon a package, and the count is what stops an
+		// unreadable package from being reported as an examined one.
+		scan.add(a.AnalyzeFile(path))
 		return nil
 	})
 
-	return allUsages, err
+	return scan, err
 }
 
 // AnalyzeFile analyzes a single Go file for cryptographic usage.
 func (a *GoAnalyzer) AnalyzeFile(filename string) ([]types.CryptoUsage, error) {
-	src, err := os.ReadFile(filename)
+	// Not os.ReadFile: an extracted archive can carry a symlink pointing at any
+	// file the process can read, and a .go name over binary content is not Go.
+	src, err := readSource(filename)
 	if err != nil {
 		return nil, err
 	}
