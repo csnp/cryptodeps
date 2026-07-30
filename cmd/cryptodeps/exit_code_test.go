@@ -75,3 +75,30 @@ func TestFailOnRejectsWhatItCannotHonour(t *testing.T) {
 		}
 	}
 }
+
+// TestFailOnRefusesAnEmptyValue closes the last spelling of the silent gate
+// loosening.
+//
+// The padded value was fixed by canonicalising; the empty string still fell
+// through, because "" was listed as a legal value and matched no policy. A
+// project with partial-risk findings exited 3 for "partial" and 0 for "", with
+// nothing on either stream, and an unset workflow input is exactly how a CI gate
+// arrives here empty. This flag has a default, so a blank value expresses
+// nothing: unlike --risk and --min-severity, where empty means "do not filter".
+func TestFailOnRefusesAnEmptyValue(t *testing.T) {
+	result := partialRiskScan()
+
+	// Guard the fixture: the two policies must disagree on it, or the assertion
+	// below is answered by a project no threshold would fail.
+	if determineExitCode(result, "partial") == determineExitCode(result, "vulnerable") {
+		t.Fatalf("the fixture does not distinguish the partial policy from the default")
+	}
+
+	for _, empty := range []string{"", " ", "\t", "\n"} {
+		if err := analyzer.ValidateFailOn(empty); err == nil {
+			t.Errorf("ValidateFailOn(%q) accepted a value that determineExitCode reads as the "+
+				"default policy, so a gate asking for partial risk passes a partial-risk "+
+				"project", empty)
+		}
+	}
+}

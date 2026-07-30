@@ -252,7 +252,9 @@ so everything below ships together in this release.
   1.2.2. The scanner is now given the same bound the file already has, and the
   per-file cap moves from 8 MiB to 32 MiB: `aws-sdk-go` v1.55.5 ships
   `service/ec2/api.go` at 7,771,273 bytes, within 8 percent of the old cap, and
-  that file has grown every release. What the larger cap costs was measured: a
+  that file has grown every release. This does not reach a file named
+  `*.min.js`, which the JavaScript walker skips by name before the analyzer sees
+  it; see known limitations. What the larger cap costs was measured: a
   30 MiB single-line file dense with cryptographic calls peaks at about 309 MB of
   resident memory and takes 2.4 seconds. Files are read one at a time, so that is
   the bound for a scan rather than a per-archive total.
@@ -496,8 +498,9 @@ so everything below ships together in this release.
   same as a completed fetch, and a dotted PyPI name reaches the grammar intact
   only through `pyproject.toml`. Declared in `requirements.txt`,
   `zope.interface` is split at the first dot by the requirements parser long
-  before the grammar sees it, which is a separate pre-existing defect recorded
-  under known limitations below.
+  before the grammar sees it, which is a separate pre-existing defect, recorded
+  under known limitations below. An earlier draft of this sentence said it was
+  recorded there when it was not.
 
 - **A scanned `pom.xml` could write any file the scanning process could write.**
   This one is not a read. `fetchMavenArtifact` joined the `artifactId` from the
@@ -559,17 +562,17 @@ so everything below ships together in this release.
   number uniqueness, and primitive enum conformance.
 
 - `analysis.filesAnalyzed` on every deep-analyzed record, and `error` on any
-  dependency source analysis could not examine, in JSON and YAML output. A
+  dependency source analysis could not examine, in JSON output. A
   document that claims a package was read now carries the count it was claimed
   from, and one that skips a package says why.
 
 - `analysis.filesUnreadable` per dependency and `summary.sourceFilesUnreadable`
-  per project, in JSON and YAML output, with a warning on stderr naming each
+  per project, in JSON output, with a warning on stderr naming each
   package and a coverage note in the table, markdown, SARIF and CBOM. The
   evidence for an examination now carries its exceptions as well as its count,
   so a partial reading cannot be read as a complete one.
 
-- `summary.notExamined` and `summary.deepAttempted` in JSON and YAML output, and
+- `summary.notExamined` and `summary.deepAttempted` in JSON output, and
   a **Not Examined** row in the markdown summary table. How much of a tree a
   scan actually covered was previously only derivable, and only wrongly, from
   the count of packages missing from the database.
@@ -627,6 +630,43 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   directory and can write `go.sum` into the project being scanned. A read-only
   scanner that dirties the working tree breaks a `git diff --exit-code` check in
   CI. Pre-existing.
+
+- **A database record can answer for a different version than the one declared,
+  and nothing says so.** `github.com/cloudflare/circl v1.3.9` is reported with
+  `ML-KEM` and `ML-DSA` as SAFE from a record built for v1.6.4. A full-text scan
+  of the real v1.3.9 module finds no ML-KEM or ML-DSA at all: it ships round-3
+  Kyber and Dilithium (`kem/kyber/kyber768`, `sign/dilithium/mode2`), which are
+  not interoperable with the FIPS standards. `org.bouncycastle:bcprov-jdk18on
+  1.78.1` is the same case: no `pqc.crypto.mlkem` package exists in it, only
+  `pqc.crypto.crystals.kyber`. This is the worst direction for this tool to be
+  wrong in, because a project appears post-quantum ready while shipping
+  pre-standard primitives, and it reaches the README's own example, whose
+  `go.mod` declares `circl v1.3.7`. Present identically in 1.2.2, and in the
+  embedded database as well as the downloadable one, so `--offline` does not
+  avoid it. Only `--format json` reveals the version a record was built for.
+
+- **A file skipped by name is not analyzed and not counted.** The JavaScript
+  walker skips `*.min.js` and `test/`, `tests/` and `__tests__/` directories
+  before the analyzer sees them, so unlike a file that is refused, they appear in
+  neither `filesAnalyzed` nor `filesUnreadable`, and nothing on any stream or in
+  any format mentions them. A `bundle.min.js` of 162,025 bytes calling
+  `crypto.createHash('md5')` produces no finding and no trace, while a file of
+  byte-identical content named `dist/app.js` is analyzed and its MD5 reported.
+  The difference is the filename alone. Present in 1.2.2, which additionally has
+  no counts at all, so this is not a regression; it is disclosed here because it
+  is the same silent-skip shape this release exists to close, and because
+  renaming a file is a cheaper evasion than choosing an encoding. Counting a
+  skip-by-policy alongside a refusal is the fix.
+
+- **`requirements.txt` splits a dotted PyPI name at the first dot.**
+  `zope.interface==6.1` parses as name `zope` and version `.interface==6.1`, and
+  the version guard then refuses that as a local path, which is a misleading
+  message for a parse defect upstream of it. Both `zope` and `ruamel` are real
+  PyPI packages, so the wrong name reaches every output format. 323 of the top
+  15,000 PyPI packages have a dotted canonical spelling. The same packages parse
+  correctly through `pyproject.toml` and `Pipfile`, which normalise the name
+  first, so only the `requirements.txt` path is affected. Present identically in
+  1.2.2.
 
 - **NEW in 1.3.0: a source file whose first 1024 bytes are mostly non-ASCII is
   not read.** The text check judges a file on its head, and accepts a head that

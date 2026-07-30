@@ -73,8 +73,15 @@ func ValidateRiskFilter(s string) error {
 // either stream: exit 3 became exit 0 on the same project. A CI gate that
 // silently loosens on a typo is worse than one that refuses to run.
 func ValidateFailOn(s string) error {
+	// An empty value is refused for the same reason a padded one is honoured:
+	// whatever this accepts, the exit code must act on. "" matched no policy and
+	// fell through to the vulnerable-only default, so a project with partial-risk
+	// findings exited 3 for "partial" and 0 for "", silently, and an unset
+	// workflow input is precisely how a CI gate arrives here empty. Unlike --risk
+	// and --min-severity, where empty means "do not filter" and is a real state,
+	// this flag already has a default and cannot express one by being blank.
 	switch CanonicalFailOn(s) {
-	case "", "none", "any", "partial", "vulnerable":
+	case "none", "any", "partial", "vulnerable":
 		return nil
 	default:
 		return fmt.Errorf("invalid --fail-on value %q: expected one of vulnerable, partial, any, none", s)

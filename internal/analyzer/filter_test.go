@@ -262,9 +262,12 @@ func TestFilterValidationRejectsUnknownValues(t *testing.T) {
 			// under --fail-on partial exited 0 under --fail-on partail, with
 			// nothing on either stream. The others mislead a reader; this one
 			// silently loosens a CI gate.
-			name:    "fail-on",
-			fn:      ValidateFailOn,
-			good:    []string{"", "none", "any", "partial", "vulnerable", "VULNERABLE", " partial "},
+			name: "fail-on",
+			fn:   ValidateFailOn,
+			// "" is deliberately absent: this flag has a default, so a blank
+			// value expresses nothing and used to fall through to that default
+			// while looking accepted.
+			good:    []string{"none", "any", "partial", "vulnerable", "VULNERABLE", " partial "},
 			bad:     []string{"partail", "banana", "safe", "unknown", "all", "critical", "1"},
 			wantMsg: "--fail-on",
 		},
