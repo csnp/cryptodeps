@@ -173,6 +173,47 @@ so everything below ships together in this release.
   `sourceFilesUnreadable`, is named on stderr per package, and reaches all five
   formats through the one classifier they share.
 
+- **Source analysis of a PyPI dependency could execute code the scanned manifest
+  chose.** `npm pack` runs with `--ignore-scripts` in this release, which closes
+  that half of the class; pip had no equivalent. Resolving a PyPI name and version
+  with no matching wheel makes pip install the project's build dependencies and
+  run its build backend, which for a `setup.py` sdist is arbitrary code on the
+  scanning host, from a package named by a manifest the operator did not write.
+  Verified directly: `pip3 download --no-deps psycopg2==2.9.9` reports
+  "Installing build dependencies" and "Preparing metadata". Fetching source in
+  order to read it must not be a way to run it, so the fetch is now restricted to
+  built wheels with `--only-binary=:all:`. Pre-existing rather than a regression;
+  it is fixed here because the release would otherwise state that this class was
+  closed while half of it was open. The cost is recorded under known limitations.
+
+- **The npm name grammar refused 1,054 real, installable packages.** Introduced by
+  this release. Holding a name to its registry's grammar was the right layer, and
+  the pattern encoded the rules npm applies to a name from a NEW publisher: a
+  scope and a name each beginning with a letter or a digit. npm grandfathered
+  every name that predates those rules. Swept against the complete registry
+  (4,240,864 names), the pattern refused 1,054 that are published and installable
+  now, nine of them above 100,000 downloads a month, including `@lingo.dev/_spec`
+  at 212,000, `@-xun/fs`, `@_sh/strapi-plugin-ckeditor` and `@~39/empty`. A
+  refused dependency is silently never analyzed, so the scan reports a coverage it
+  never had, which is this release's own false-clean defect arrived at from the
+  other direction. The grammar now excludes what lets a name be read as something
+  other than a name, which is the question a fetch guard exists to answer: an at
+  sign separates a name from a spec, a slash or a backslash makes it a path, a
+  colon makes it a scheme, and whitespace separates arguments. A leading dot is
+  refused separately, so that loosening the grammar cannot quietly admit it. The
+  same sweep over the other three ecosystems refuses nothing real: 0 of 860,284
+  PyPI names, 0 of 16,279 Go module paths, 0 of 1,800 Maven coordinates.
+
+- **A Maven property in a dependency's groupId or artifactId was never
+  resolved.** Properties were expanded in the version alone, so
+  `${project.groupId}`, which is how a multi-module build names a sibling module,
+  survived into the coordinate and was then refused as a name that could steer a
+  fetch. Across 2,099 real poms from Maven Central, 81 coordinates in 16 published
+  artifacts use it. On one real pom the tool analyzed 6 of its dependencies where
+  the same pom with the property expanded analyzed 11. Properties are now resolved
+  in all three fields, and the project's own `groupId` and `artifactId` are
+  available as properties alongside its version.
+
 - **A manifest-declared version traversed out of the source cache behind any
   scheme.** The screen that refuses a local path skipped its traversal check
   whenever the value contained a colon, on the reasoning that a colon meant a
@@ -443,8 +484,9 @@ so everything below ships together in this release.
   form, PEP 503 for PyPI, module-path form for Go, and Maven coordinates as
   before), which is a question with a single answer rather than a list of the
   ways a path can be spelled. `npm pack` additionally runs with
-  `--ignore-scripts`, so the remote VCS references that remain fetchable cannot
-  execute anything either. The suite asserts that real npm, PyPI and Go names
+  `--ignore-scripts` and `pip download` with `--only-binary=:all:`, so neither the
+  remote VCS references that remain fetchable nor a source distribution can
+  execute anything during a fetch. The suite asserts that real npm, PyPI and Go names
   pass the grammars, including scoped npm names and versioned Go module paths.
   Two limits on that claim, both stated because an earlier draft of this entry
   overstated it: the assertion is that a grammar accepts a name, which is not the
@@ -560,20 +602,13 @@ so everything below ships together in this release.
 Present in 1.2.2 as well unless noted. Each was reproduced by hand against both
 the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
 
-- **`pip download` builds an sdist, so source analysis of a PyPI dependency can
-  execute code chosen by the manifest under scan.** `npm pack` is run with
-  `--ignore-scripts` in this release, which closes the npm half of that class.
-  There is no equivalent for pip: resolving a PyPI name and version that has no
-  matching wheel makes pip install build dependencies and run the project's build
-  backend, which for a `setup.py` sdist is arbitrary code on the scanning host.
-  Verified directly (`pip3 download --no-deps psycopg2==2.9.9` reports
-  "Installing build dependencies" and "Preparing metadata"). Pre-existing and not
-  a regression, but it is disclosed here rather than left implied by the
-  `--ignore-scripts` note, because the two halves of the same class are not both
-  closed. The workaround is the same as for the rest of this class: do not pass
-  `--deep` to a scan of a tree you do not control. Restricting the fetch to
-  built wheels would close it at a coverage cost, which is a decision rather than
-  an oversight.
+- **NEW in 1.3.0: a PyPI package that publishes no wheel is no longer analyzed.**
+  This is the cost of the fix above: `pip download` now runs with
+  `--only-binary=:all:`, so a package distributed only as an sdist is reported as
+  not examined rather than built. The reason is named on stderr and carried in
+  every format. Preferring an unexamined dependency to an executed one is the
+  trade this release makes deliberately; a source-build mode behind an explicit
+  opt-in is the shape of the fix if the coverage turns out to matter.
 
 - **A version can name any URL, and the scanner will fetch it.** npm's own
   semantics allow a dependency version to be a tarball URL or an alias
