@@ -124,6 +124,17 @@ type AnalysisMetadata struct {
 	// audited rather than taken on trust. Zero for a database record, which was
 	// not produced by reading this package here.
 	FilesAnalyzed int `json:"filesAnalyzed,omitempty" yaml:"filesAnalyzed,omitempty"`
+	// FilesUnreadable is how many files carried one of this analyzer's own
+	// extensions and could not be parsed.
+	//
+	// It is reported for the same reason FilesAnalyzed is. A package that was
+	// partly read is not the same as one that was read, and the difference was
+	// invisible: the count existed inside the walk and stopped there, so a
+	// dependency whose only cryptography sat in a file the analyzer refused was
+	// reported as examined and clean, with nothing on any stream saying a file
+	// had been skipped. Examination is a claim, and a claim needs its exceptions
+	// stated as well as its evidence.
+	FilesUnreadable int `json:"filesUnreadable,omitempty" yaml:"filesUnreadable,omitempty"`
 }
 
 // SourceWasRead reports whether source analysis parsed at least one file.
@@ -230,6 +241,15 @@ type ScanSummary struct {
 	// indistinguishable from a project with no cryptography, and the report
 	// would state the second while the first is true.
 	FilteredOut int `json:"filteredOut,omitempty" yaml:"filteredOut,omitempty"`
+	// SourceFilesUnreadable counts source files that source analysis could not
+	// parse across the dependencies it did examine.
+	//
+	// NotExamined cannot carry this: a dependency with one readable file and one
+	// unreadable one WAS examined, so it is absent from that count, and the
+	// report then described a partial reading as a complete one. This is the
+	// partial state of the same question, and the coverage note has to be asked
+	// of it rather than only of the empty one.
+	SourceFilesUnreadable int `json:"sourceFilesUnreadable,omitempty" yaml:"sourceFilesUnreadable,omitempty"`
 	// Reachability stats (only populated when reachability analysis is enabled)
 	ReachabilityAnalyzed bool `json:"reachabilityAnalyzed,omitempty" yaml:"reachabilityAnalyzed,omitempty"`
 	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"` // Direct calls from user code

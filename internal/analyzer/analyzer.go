@@ -253,6 +253,12 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 		if !depResult.Examined() {
 			result.Summary.NotExamined++
 		}
+		// The same, for the dependencies that were examined incompletely. These
+		// are absent from NotExamined by definition, which is why a partial
+		// reading was reported as a complete one.
+		if depResult.Analysis != nil {
+			result.Summary.SourceFilesUnreadable += depResult.Analysis.Analysis.FilesUnreadable
+		}
 	}
 
 	// Whether source analysis ran at all, which is a property of the scan and
@@ -392,6 +398,18 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResul
 			result.Error = fmt.Sprintf(
 				"source analysis read no files it can parse in the fetched archive for %s", dep.Name)
 			return result
+		}
+		// Partly read is not read. A package can hold a file this analyzer
+		// parsed and another it refused, and the refusal left no trace outside
+		// the walk that recorded it: the count stopped at the AST layer, so a
+		// dependency whose only cryptography sat in the refused file was
+		// reported as examined and clean on every stream and in every format.
+		// The exception belongs beside the claim, not inside the walk.
+		if analysis.Analysis.FilesUnreadable > 0 {
+			fmt.Fprintf(os.Stderr,
+				"Warning: source analysis of %s read %d file(s) and could not read %d more, so its "+
+					"cryptography may be under-reported\n",
+				dep.Name, analysis.Analysis.FilesAnalyzed, analysis.Analysis.FilesUnreadable)
 		}
 		result.Analysis = analysis
 		result.DeepAnalyzed = true

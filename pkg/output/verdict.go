@@ -42,6 +42,13 @@ const (
 	// is a false bill of materials, and the two formats that omitted it are the
 	// two that get uploaded to code scanning and to compliance systems.
 	casePartialCoverage
+	// casePartialSource means dependencies were examined, and some of their
+	// source files could not be read. It is the partial state of the
+	// examination question: such a dependency is examined, so it is absent from
+	// NotExamined and from casePartialCoverage, and a scan that read three of a
+	// package's four files described itself as having read the package. A file
+	// the analyzer refuses is where a finding would have been.
+	casePartialSource
 )
 
 // classifyNoFindings decides which case a findings-free summary falls into.
@@ -160,6 +167,21 @@ func coverageNotes(projects []*types.ScanResult) []coverageNote {
 			})
 		}
 
+		// Asked of the scan for the same reason as the two above, and asked
+		// independently of them: a dependency that was examined incompletely is
+		// counted as examined, so neither NotExamined nor the no-findings
+		// classification can reach this state. A package that hid its
+		// cryptography in a file the analyzer refused was reported as examined
+		// and clean, in all five formats, with the count that proved otherwise
+		// discarded inside the walk.
+		if p.Summary.SourceFilesUnreadable > 0 {
+			notes = append(notes, coverageNote{
+				Manifest: p.Manifest,
+				Case:     casePartialSource,
+				Summary:  p.Summary,
+			})
+		}
+
 		if hasAnyCrypto(p.Dependencies) {
 			continue
 		}
@@ -188,6 +210,11 @@ func (n coverageNote) Text() string {
 			"below describe the %d that were examined, and say nothing about the rest.",
 			n.Summary.NotExamined, n.Summary.TotalDependencies, unexaminedAdvice(n.Summary),
 			examinedCount(n.Summary))
+	case casePartialSource:
+		return fmt.Sprintf("%d source file(s) in the dependencies that were examined could not be read, "+
+			"so the cryptography of those dependencies may be under-reported. The scan names them in the "+
+			"warnings it printed, and each dependency carries filesAnalyzed and filesUnreadable in JSON.",
+			n.Summary.SourceFilesUnreadable)
 	case caseNothingExamined:
 		if n.Summary.DeepAttempted {
 			return fmt.Sprintf("None of the %d dependencies could be examined: they are absent from the "+

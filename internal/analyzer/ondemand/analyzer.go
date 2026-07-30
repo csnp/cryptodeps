@@ -62,7 +62,8 @@ func (a *Analyzer) Analyze(dep types.Dependency) (*types.PackageAnalysis, error)
 		Ecosystem: dep.Ecosystem,
 		Crypto:    scan.Usages,
 		Analysis: types.AnalysisMetadata{
-			FilesAnalyzed: scan.FilesParsed,
+			FilesAnalyzed:   scan.FilesParsed,
+			FilesUnreadable: scan.FilesFailed,
 		},
 	}
 

@@ -178,8 +178,13 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	// than NotInDatabase: a package the database does not carry and source
 	// analysis read is covered, and telling the reader to run --deep for it
 	// repeats a step they have already taken.
-	if result.Summary.NotExamined > 0 {
+	// A package read in part is counted as examined, so it is absent from
+	// NotExamined and needs its own note. The heading belongs to either state
+	// rather than to the first one that happened to be written.
+	if result.Summary.NotExamined > 0 || result.Summary.SourceFilesUnreadable > 0 {
 		fmt.Fprintf(w, "## Notes\n\n")
+	}
+	if result.Summary.NotExamined > 0 {
 		pct := float64(result.Summary.NotExamined) / float64(result.Summary.TotalDependencies) * 100
 		fmt.Fprintf(w, "> **%d packages (%.0f%%) were not examined.**\n", result.Summary.NotExamined, pct)
 		if result.Summary.DeepAttempted {
@@ -187,6 +192,11 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 		} else {
 			fmt.Fprintf(w, "> Run with `--deep` flag to analyze these packages via source code inspection.\n\n")
 		}
+	}
+	if result.Summary.SourceFilesUnreadable > 0 {
+		fmt.Fprintf(w, "> **%d source files could not be read** in packages that were examined, so "+
+			"their cryptography may be under-reported.\n", result.Summary.SourceFilesUnreadable)
+		fmt.Fprintf(w, "> The scan names them in the warnings it printed.\n\n")
 	}
 
 	// Footer
@@ -225,6 +235,12 @@ func writeMarkdownNoFindingsVerdict(w io.Writer, s types.ScanSummary) {
 			examinedCount(s), s.TotalDependencies)
 		if s.NotExamined > 0 {
 			fmt.Fprintf(w, "\n%d could not be examined: %s.\n", s.NotExamined, unexaminedAdvice(s))
+		}
+		// A dependency read in part is counted as read, so it is absent from
+		// NotExamined and this verdict claimed a complete reading of it.
+		if s.SourceFilesUnreadable > 0 {
+			fmt.Fprintf(w, "\n%d source file(s) in those dependencies could not be read, so this is not a "+
+				"complete reading of them. See the warnings printed during the scan.\n", s.SourceFilesUnreadable)
 		}
 	}
 }

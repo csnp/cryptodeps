@@ -162,6 +162,14 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 		}
 	}
 
+	// A package that was read incompletely is counted as read, so it is absent
+	// from notAnalyzed above and needs saying separately.
+	if result.Summary.SourceFilesUnreadable > 0 {
+		fmt.Fprintf(w, "[!] %d source files could not be read in packages that were examined,\n",
+			result.Summary.SourceFilesUnreadable)
+		fmt.Fprintln(w, "    so their cryptography may be under-reported (see warnings above)")
+	}
+
 	f.printHints(w, result)
 
 	if deepAnalyzed > 0 || notAnalyzed > 0 || len(result.Hints) > 0 {
@@ -210,6 +218,15 @@ func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanR
 			examinedCount(result.Summary), total)
 		if unexamined > 0 {
 			fmt.Fprintf(w, "[!] %d could not be examined: %s.\n", unexamined, unexaminedAdvice(result.Summary))
+		}
+		// This is the sentence a partial reading most damages, because it is the
+		// one that says nothing was found. A dependency holding its only
+		// cryptography in a file the analyzer refused reached exactly here, and
+		// said it had been examined and was clean.
+		if result.Summary.SourceFilesUnreadable > 0 {
+			fmt.Fprintf(w, "[!] %d source files in those dependencies could not be read, so this is not a\n",
+				result.Summary.SourceFilesUnreadable)
+			fmt.Fprintln(w, "    complete reading of them. See the warnings printed during the scan.")
 		}
 		f.printHints(w, result)
 	}

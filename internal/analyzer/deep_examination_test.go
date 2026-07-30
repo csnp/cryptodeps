@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/csnp/qramm-cryptodeps/internal/database"
 	"github.com/csnp/qramm-cryptodeps/pkg/output"
@@ -171,6 +172,122 @@ func TestDeepScanOfClassOnlyArchiveIsNotReportedAsExamined(t *testing.T) {
 	}
 	if strings.Contains(out, "use --deep") {
 		t.Errorf("the user ran --deep and the next step offered is --deep:\n%s", out)
+	}
+}
+
+// TestDeepScanReadsSourceInASingleByteEncoding is the end-to-end statement of
+// the encoding regression the text check introduced.
+//
+// The check that made examination mean a parse refused any file whose head was
+// not valid UTF-8. Legitimate source in a single-byte encoding is not valid
+// UTF-8, so a .java file holding one Latin-1 accent was refused, and the MD5
+// call beside the accent was never found. The released 1.2.2 reported it. The
+// whole pipeline is exercised here, not just the walker, because the verdict is
+// what a user reads.
+func TestDeepScanReadsSourceInASingleByteEncoding(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("TMPDIR", tmpDir)
+	t.Setenv("PATH", t.TempDir())
+
+	// 0xe9 is 'e' with an acute accent in Latin-1.
+	source := "// author: Jos\xe9 Garc\xeda\n" +
+		`package com.google.common.util.concurrent;
+import java.security.MessageDigest;
+public class Hashing {
+    public byte[] digest(byte[] data) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        return md.digest(data);
+    }
+}
+`
+	// Guard the fixture: valid UTF-8 would never reach the branch under test.
+	if utf8.ValidString(source) {
+		t.Fatalf("fixture is valid UTF-8, so it does not exercise the encoding path")
+	}
+
+	project := mavenDeepFixture(t, tmpDir, map[string]string{
+		"com/google/common/util/concurrent/Hashing.java": source,
+		"META-INF/MANIFEST.MF":                           "Manifest-Version: 1.0\n",
+	})
+
+	result, dep, out := runDeepScan(t, project)
+
+	if !dep.DeepAnalyzed {
+		t.Fatalf("a package whose archive carries readable Latin-1 source is reported as not "+
+			"examined: %+v (%s)", dep, dep.Error)
+	}
+	if got := dep.Analysis.Analysis.FilesAnalyzed; got != 1 {
+		t.Errorf("filesAnalyzed = %d for an archive holding one readable .java file in a "+
+			"single-byte encoding", got)
+	}
+	if got := dep.Analysis.Analysis.FilesUnreadable; got != 0 {
+		t.Errorf("filesUnreadable = %d for an archive whose only file is readable source", got)
+	}
+	if result.Summary.NotExamined != 0 {
+		t.Errorf("Summary.NotExamined = %d after the only dependency was read",
+			result.Summary.NotExamined)
+	}
+	if !strings.Contains(out, "MD5") {
+		t.Errorf("the MD5 call in a Latin-1 encoded source file is missing from the report, so "+
+			"a dependency can hide its cryptography by choosing an encoding:\n%s", out)
+	}
+}
+
+// TestDeepScanSaysWhichFilesItCouldNotRead is the regression test for the
+// partial state of the examination question.
+//
+// FilesFailed was counted inside the walk and went no further, so a package
+// holding one file the analyzer read and one it refused was reported as examined
+// and clean on every stream and in every format. That is the same false clean
+// this release exists to remove, one layer in: the earlier fix asked the
+// disclosure question of a package that was not examined at all, and never of
+// one that was examined incompletely. A refused file is where a finding would
+// have been.
+func TestDeepScanSaysWhichFilesItCouldNotRead(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("TMPDIR", tmpDir)
+	t.Setenv("PATH", t.TempDir())
+
+	project := mavenDeepFixture(t, tmpDir, map[string]string{
+		// Readable, and carrying no cryptography, so the scan produces no
+		// findings and reaches the clean verdict.
+		"com/example/Plain.java": `package com.example;
+public class Plain { public int add(int a, int b) { return a + b; } }
+`,
+		// A binary blob under a .java name, past the head boundary and with no
+		// NUL byte: refused, and the refusal is what has to be disclosed.
+		"com/example/Blob.java": strings.Repeat("\xff", 2000),
+		"META-INF/MANIFEST.MF":  "Manifest-Version: 1.0\n",
+	})
+
+	result, dep, out := runDeepScan(t, project)
+
+	// Guard the fixture: if both files parsed, or neither did, this test is not
+	// looking at a partial reading and proves nothing about disclosing one.
+	if got := dep.Analysis.Analysis.FilesAnalyzed; got != 1 {
+		t.Fatalf("filesAnalyzed = %d, so the fixture is not a package read in part and this "+
+			"test cannot detect an undisclosed partial reading", got)
+	}
+	if got := dep.Analysis.Analysis.FilesUnreadable; got != 1 {
+		t.Fatalf("filesUnreadable = %d, so the blob was not refused and there is nothing to "+
+			"disclose", got)
+	}
+	if !dep.DeepAnalyzed {
+		t.Errorf("a package with one readable file is reported as not examined at all: %s", dep.Error)
+	}
+	if result.Summary.SourceFilesUnreadable != 1 {
+		t.Errorf("Summary.SourceFilesUnreadable = %d, so the count never left the walk and no "+
+			"format can report it", result.Summary.SourceFilesUnreadable)
+	}
+	// NotExamined cannot carry this state, which is exactly why it was missed.
+	if result.Summary.NotExamined != 0 {
+		t.Errorf("Summary.NotExamined = %d for a dependency that was examined in part",
+			result.Summary.NotExamined)
+	}
+
+	if !strings.Contains(out, "could not be read") {
+		t.Errorf("the verdict claims a clean examination without saying a file in it was "+
+			"never read:\n%s", out)
 	}
 }
 
