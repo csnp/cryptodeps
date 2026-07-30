@@ -1506,3 +1506,61 @@ func TestFetchDoesNotBuildSourceDistributions(t *testing.T) {
 			"wheel has its build backend executed on the scanning host", args)
 	}
 }
+
+// TestNpmSpecCannotBeReadAsAFlag pins the argument-injection half of the
+// name-is-not-a-name class.
+//
+// The name grammar admits what npm's registry actually carries, and some real
+// names begin with a hyphen. npm reads a spec beginning with a hyphen as a flag,
+// so a dependency named "--help" made npm print its help text instead of
+// fetching, and one named "--ignore-scripts" would be swallowed silently. A "--"
+// separator ends flag parsing. Asserted on the argv, because the property is what
+// the tool asks npm to do.
+func TestNpmSpecCannotBeReadAsAFlag(t *testing.T) {
+	bin := t.TempDir()
+	argv := filepath.Join(t.TempDir(), "argv")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argv + "\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "npm"), []byte(script), 0755); err != nil {
+		t.Fatalf("write stub npm: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	f := NewFetcher(t.TempDir())
+	// A real published name that begins with a hyphen.
+	if _, err := f.Fetch(types.Dependency{
+		Name:      "-",
+		Version:   "0.0.1-security.1",
+		Ecosystem: types.EcosystemNPM,
+	}); err == nil {
+		t.Fatal("the stub npm failed, so the fetch should have failed with it")
+	}
+
+	recorded, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatalf("the stub npm was never run, so this test cannot say what it was asked "+
+			"to do: %v", err)
+	}
+	args := strings.Split(strings.TrimRight(string(recorded), "\n"), "\n")
+	// Guard the fixture: these must be the arguments of the fetch under test.
+	if len(args) < 2 || args[0] != "pack" {
+		t.Fatalf("the recorded argv is not an npm pack: %q", args)
+	}
+
+	sep := -1
+	for i, a := range args {
+		if a == "--" {
+			sep = i
+		}
+	}
+	if sep < 0 {
+		t.Fatalf("npm is invoked with no -- separator (%q), so a dependency whose name "+
+			"begins with a hyphen is read as a flag rather than as a package", args)
+	}
+	if sep != len(args)-2 {
+		t.Errorf("the -- separator is at %d of %d, so the spec is not the only thing after "+
+			"it: %q", sep, len(args), args)
+	}
+	if args[len(args)-1] != "-@0.0.1-security.1" {
+		t.Errorf("the spec after -- is %q, not the declared package", args[len(args)-1])
+	}
+}

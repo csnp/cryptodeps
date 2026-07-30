@@ -568,7 +568,15 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 	// code chosen by the manifest under scan. The guards above stop such a spec
 	// being built at all; this stops the remaining ones, including the
 	// deliberately allowed remote git references, from running anything.
-	cmd := exec.Command("npm", "pack", "--ignore-scripts", packageSpec)
+	// The "--" is not decoration. The name grammar admits the names npm's own
+	// registry carries, and some of those begin with a hyphen: "-" is a real
+	// package with 153,000 downloads a month, and "@-xun/debug" has 153,076. A
+	// spec beginning with a hyphen is read by npm as a FLAG, so a dependency
+	// named "--help" made npm print its help text instead of fetching anything,
+	// and untrusted input parsed as a flag is the argument-injection half of the
+	// same class as untrusted input parsed as a path. The separator ends flag
+	// parsing, and ordinary and scoped specs are unaffected by it.
+	cmd := exec.Command("npm", "pack", "--ignore-scripts", "--", packageSpec)
 	cmd.Dir = packageDir
 	if err := cmd.Run(); err != nil {
 		return "", f.discardPartialFetch(packageDir, err, "npm pack failed")
