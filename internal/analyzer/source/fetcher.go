@@ -78,9 +78,23 @@ func validMavenCoordinate(groupID, artifactID string) error {
 // this a name? An allowlist can be reasoned about; a denylist of the ways a
 // path can be spelled cannot.
 var packageNamePattern = map[types.Ecosystem]*regexp.Regexp{
-	// npm: an optional @scope/ then the name. No '@' inside the name, which is
-	// what separates it from the spec, and no path separators beyond the scope.
-	types.EcosystemNPM: regexp.MustCompile(`^(@[a-zA-Z0-9][a-zA-Z0-9._-]*/)?[a-zA-Z0-9][a-zA-Z0-9._-]*$`),
+	// npm: an optional @scope/ then the name. What is excluded is what lets a
+	// name be read as something other than a name: '@' separates a name from a
+	// spec, '/' and '\' make it a path, ':' makes it a scheme, and whitespace
+	// separates arguments.
+	//
+	// Deliberately NOT npm's rules for a name it would accept today. Those
+	// require a scope and a name to begin with a letter or a digit, and the
+	// first version of this pattern said so, which refused 1,054 names that are
+	// published and installable right now. npm grandfathered them: nine exceed
+	// 100,000 downloads a month, including @lingo.dev/_spec at 212,000, @-xun/fs,
+	// @_sh/strapi-plugin-ckeditor and @~39/empty. A scanner that silently stops
+	// analyzing a real dependency reports a clean result it never established,
+	// which is the same false clean this release exists to remove, arrived at
+	// from the other direction. The question a fetch guard has to answer is what
+	// the package manager can misread, not what the registry would accept from a
+	// new publisher.
+	types.EcosystemNPM: regexp.MustCompile(`^(@[^@/\\:\s]+/)?[^@/\\:\s]+$`),
 	// PyPI, PEP 503: letters, digits, and . _ - between alphanumerics.
 	types.EcosystemPyPI: regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._-]*[A-Za-z0-9])?$`),
 	// Go module path: dot-separated host, then slash-separated elements.
@@ -124,6 +138,15 @@ func validPackageName(ecosystem types.Ecosystem, name string) error {
 			return fmt.Errorf("%q is not a valid %s package name: %q is a directory reference",
 				name, ecosystem, part)
 		}
+	}
+	// A leading dot makes a name relative to the working directory, which for
+	// these fetchers is inside the cache. Stated here rather than in the grammar
+	// so that loosening the grammar to admit the names registries actually carry
+	// cannot quietly admit this too. No npm name begins with a dot: the registry
+	// returns an empty range between "." and "/".
+	if strings.HasPrefix(name, ".") {
+		return fmt.Errorf("%q is not a valid %s package name: a leading dot makes it a path "+
+			"relative to the directory the fetch runs in", name, ecosystem)
 	}
 	return nil
 }
@@ -599,9 +622,23 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 		packageSpec = dep.Name + "==" + dep.Version
 	}
 
-	cmd := exec.Command("pip", "download", "--no-deps", "-d", packageDir, packageSpec)
+	// --only-binary=:all: is the pip half of the control that --ignore-scripts is
+	// for npm, and it is here for the same reason.
+	//
+	// Resolving a source distribution makes pip install the project's build
+	// dependencies and run its build backend, which for a setup.py sdist is
+	// arbitrary code from a package named by the manifest under scan. Fetching
+	// source in order to analyze it must not be a way to execute it: the operator
+	// asked this tool to read a dependency, not to build it. Restricting the
+	// fetch to built wheels closes that, at the cost of the packages that publish
+	// no wheel, which are now reported as not examined with the reason named
+	// rather than analyzed by running them.
+	cmd := exec.Command("pip", "download", "--no-deps", "--only-binary", ":all:",
+		"-d", packageDir, packageSpec)
 	if err := cmd.Run(); err != nil {
-		return "", f.discardPartialFetch(packageDir, err, "pip download failed")
+		return "", f.discardPartialFetch(packageDir, err,
+			"pip download failed (source distributions are not built, so a package that "+
+				"publishes no wheel is reported as not examined)")
 	}
 
 	// Find and extract the wheel or tarball

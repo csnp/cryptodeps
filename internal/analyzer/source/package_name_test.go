@@ -160,3 +160,74 @@ func TestNpmPackRunsNoPackageScripts(t *testing.T) {
 			"prepare and prepack scripts run on the scanning host", args)
 	}
 }
+
+// TestGrammarAcceptsGrandfatheredRegistryNames is the regression test for a
+// guard that refused real, installable dependencies.
+//
+// The first npm pattern encoded the rules npm applies to a name it would accept
+// from a new publisher: a scope and a name each beginning with a letter or a
+// digit. npm grandfathered the names that predate those rules, so the pattern
+// refused 1,054 published names, and a refused dependency is silently never
+// analyzed. Nine exceed 100,000 downloads a month. Every name below was
+// confirmed to exist by fetching its registry document, and each was confirmed
+// to be packable except "-", which npm's own CLI reads as a flag.
+//
+// A guard on a security tool that refuses real input produces a clean result it
+// never established, which is the same false clean this release exists to
+// remove, reached from the other side.
+func TestGrammarAcceptsGrandfatheredRegistryNames(t *testing.T) {
+	// name -> why it broke the first pattern
+	real := map[string]string{
+		"@lingo.dev/_spec":            "name after the scope begins with an underscore",
+		"@lingo.dev/_compiler":        "name after the scope begins with an underscore",
+		"@-xun/debug":                 "scope begins with a hyphen",
+		"@-xun/fs":                    "scope begins with a hyphen",
+		"@_sh/strapi-plugin-ckeditor": "scope begins with an underscore",
+		"@~39/empty":                  "scope begins with a tilde",
+		"-":                           "the whole name is a hyphen",
+		"foo~":                        "a tilde inside the name",
+		"object.assign":               "dots, which the first pattern did allow",
+		"@babel/core":                 "an ordinary scoped name",
+		"q":                           "a single character",
+		"JSONStream":                  "uppercase",
+	}
+	for name, why := range real {
+		if err := validPackageName(types.EcosystemNPM, name); err != nil {
+			t.Errorf("%q is a published npm package (%s) and the grammar refuses it, so this "+
+				"dependency is never analyzed and the scan reports a coverage it does not "+
+				"have: %v", name, why, err)
+		}
+	}
+}
+
+// TestGrammarStillRefusesWhatNpmWouldMisread is the other half of the same
+// question, and the reason the pattern cannot simply be dropped.
+//
+// Loosening a guard to admit real names must not admit the spec that started
+// this: `npm pack` splits name@spec on the first '@' after index 0, so a name
+// carrying an '@' hands the guard one string and npm a directory.
+func TestGrammarStillRefusesWhatNpmWouldMisread(t *testing.T) {
+	hostile := map[string]string{
+		"x@/tmp/victim":            "a spec smuggled through the name",
+		"x@file:../victim":         "the same with npm's own local-path spelling",
+		"x@npm:other":              "an alias smuggled through the name",
+		"../../../../victim":       "a bare traversal",
+		"/etc/passwd":              "an absolute path",
+		"./victim":                 "a relative path",
+		".":                        "the current directory",
+		"..":                       "the parent directory",
+		".hidden":                  "a leading dot makes it relative to the fetch directory",
+		"victim\\\\share":          "a Windows path separator",
+		"http://example.invalid/x": "a URL, which carries a scheme",
+		"git+file:///tmp/victim":   "a local repository wearing a VCS reference",
+		"pkg with spaces":          "whitespace separates arguments",
+		"@scope/x@/tmp/victim":     "a spec smuggled through a scoped name",
+	}
+	for name, why := range hostile {
+		if err := validPackageName(types.EcosystemNPM, name); err == nil {
+			t.Errorf("%q is accepted as an npm package name (%s); the package manager reads a "+
+				"name as part of a spec that can select a directory on this machine",
+				name, why)
+		}
+	}
+}

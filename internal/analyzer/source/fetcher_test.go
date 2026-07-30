@@ -1450,3 +1450,59 @@ func TestFailedExtractionLeavesNoUsableCacheEntry(t *testing.T) {
 		})
 	}
 }
+
+// TestFetchDoesNotBuildSourceDistributions pins the pip half of the
+// execute-nothing control.
+//
+// --ignore-scripts stops npm running a package's prepare script. pip had no
+// equivalent: resolving a PyPI name with no matching wheel makes pip install the
+// project's build dependencies and run its build backend, which for a setup.py
+// sdist is arbitrary code from a package the scanned manifest chose. Fetching
+// source in order to read it must not be a way to run it.
+//
+// Asserted on the argv, because the property is what the tool asks pip to do.
+func TestFetchDoesNotBuildSourceDistributions(t *testing.T) {
+	bin := t.TempDir()
+	argv := filepath.Join(t.TempDir(), "argv")
+	// A stub pip that records its arguments and then fails, so no network is
+	// touched and the fetch ends immediately.
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argv + "\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "pip"), []byte(script), 0755); err != nil {
+		t.Fatalf("write stub pip: %v", err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	f := NewFetcher(t.TempDir())
+	if _, err := f.Fetch(types.Dependency{
+		Name:      "psycopg2",
+		Version:   "2.9.9",
+		Ecosystem: types.EcosystemPyPI,
+	}); err == nil {
+		t.Fatal("the stub pip failed, so the fetch should have failed with it")
+	}
+
+	recorded, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatalf("the stub pip was never run, so this test cannot say what it was asked "+
+			"to do: %v", err)
+	}
+	args := strings.Fields(string(recorded))
+	// Guard the fixture: these are the arguments of the fetch under test.
+	if len(args) == 0 || args[0] != "download" {
+		t.Fatalf("the recorded argv is not a pip download: %q", args)
+	}
+
+	var onlyBinary bool
+	for i, a := range args {
+		if a == "--only-binary" && i+1 < len(args) && args[i+1] == ":all:" {
+			onlyBinary = true
+		}
+		if strings.HasPrefix(a, "--only-binary=") && strings.HasSuffix(a, ":all:") {
+			onlyBinary = true
+		}
+	}
+	if !onlyBinary {
+		t.Errorf("pip is invoked without --only-binary=:all: (%q), so a dependency with no "+
+			"wheel has its build backend executed on the scanning host", args)
+	}
+}
