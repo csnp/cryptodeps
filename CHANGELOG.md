@@ -697,16 +697,50 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   disclosed as a coverage note in all five formats, so the gap is stated rather
   than silent. Reading whole files, or detecting the encoding, is the larger fix.
 
-- **A package that provides hybrid post-quantum cryptography is reported as
-  quantum-vulnerable.** `@noble/post-quantum` carries X25519, ECDSA and Ed25519
-  because they are one half of hybrid constructions such as X-Wing, whose other
-  half is ML-KEM. The database marks all three `VULNERABLE` at `HIGH` and the
-  remediation advises migrating to ML-KEM and ML-DSA, which is what the package
-  already implements. Its RSA and AES entries are wrong outright: neither is a
-  primitive the package offers. A project whose only crypto dependency is a PQC
-  library is therefore told it has four HIGH findings. The classification of a
-  classical primitive that appears only as a declared hybrid component is being
-  fixed generally rather than for one package.
+- **A package that provides post-quantum cryptography is reported as
+  quantum-vulnerable, from algorithms it does not contain.** A project whose only
+  dependency is `@noble/post-quantum` is reported with four HIGH findings and
+  advised to migrate to ML-KEM and ML-DSA, which is what the package implements.
+
+  An earlier draft of this entry explained the classical findings as the hybrid
+  halves of constructions such as X-Wing. That explanation was checked against
+  the published artifact for this release and is wrong. In
+  `@noble/post-quantum@0.2.0`, the version the database records: `ML-KEM`,
+  `ML-DSA`, `SLH-DSA` and `X25519` are genuinely present, and `RSA`, `ECDSA`,
+  `Ed25519`, `AES` and `ChaCha20-Poly1305` do not occur anywhere in its code.
+  The package exports `ml-kem`, `ml-dsa`, `slh-dsa` and `utils` and nothing else.
+  Only `X25519` is a real hybrid component. The other four are fabricated by the
+  database's name inference, which supplies 780 of its 849 records.
+
+  The inference appears to substring-match without word boundaries, the same
+  defect the deep analyzers have: the only occurrence of the letters `rsa`
+  anywhere in the package is inside the identifier `bitReversal`, and `ed25519`,
+  `RSA` and `ChaCha` occur only in the README's prose comparing the package to
+  others. `@noble/hashes@1.4.0`, a hashing library, is likewise credited with
+  `RSA`, `ECDSA`, `Ed25519` and `X25519`, none of which occur in its 96 source
+  files, and `@noble/ciphers@1.0.0` with the same four, none of which occur in
+  its 70. Word-boundary matching and a verification pass over the inferred
+  records are the fix, and neither is in this release.
+
+- **Following the tool's own remediation advice does not change the verdict.**
+  A five-dependency project that replaces `node-forge` and `elliptic` with the
+  `@noble` libraries the report names in its own `Libraries:` field, removing
+  DES, 3DES, MD5, SHA-1, secp256k1 and ECDH, produces a byte-identical summary
+  and the same exit 1: `5 deps | 4 with crypto | 10 vulnerable | 3 partial`
+  before and after. The cause is the inferred attribution above, which gives
+  four single-purpose `@noble` libraries the same classical core, so the
+  migration target carries the same findings as the thing being migrated away
+  from. Identical on 1.2.2. Until the inferred records are corrected, treat the
+  remediation list as a pointer to the right family of libraries rather than as
+  a step that a rescan will confirm.
+
+- **`--offline` does not prevent network access for a GitHub-shaped argument.**
+  The flag is documented as "Only use local database, no downloads", and it does
+  gate the database download, but the GitHub fetch path is not behind it:
+  `analyze owner/repo --offline` clones the repository and scans it. A mistyped
+  local path with exactly one slash is read as `owner/repo`, so a typo becomes an
+  outbound request to api.github.com. Identical on 1.2.2. Anyone relying on
+  `--offline` to mean no egress should not pass a repository argument.
 
 - **Maven coverage in the downloadable database is unstable.** The weekly
   refresh has published between 15 and 356 Maven packages over the last seven
