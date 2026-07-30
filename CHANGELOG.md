@@ -307,7 +307,20 @@ so everything below ships together in this release.
   decides an exit code: a project exiting 3 under `--fail-on partial` exited 0
   under `--fail-on partail`, with nothing on either stream, because an
   unrecognised value fell through to the default policy. It now rejects an
-  unknown value the way `--risk` and `--min-severity` do, naming the legal ones.
+  unknown value, naming the legal ones.
+
+  It rejects an **empty** value too, which `--risk` and `--min-severity`
+  deliberately still accept, so this is not the parity an earlier draft of this
+  entry claimed. For those two, blank means "do not filter", which is a real
+  state they can express. `--fail-on` already has a default of `vulnerable` and
+  cannot express one by being blank, so a blank value there was indistinguishable
+  from an unset flag while silently selecting the vulnerable-only policy: a
+  partial-risk project exited 3 for `partial` and 0 for `""`. An unset workflow
+  input is exactly how a CI gate arrives here empty. **This is a behaviour change
+  for anyone forwarding a possibly-unset input:** `--fail-on ""` and
+  `--fail-on " "` now exit 2 without scanning, where they previously ran a full
+  scan under the vulnerable policy. It fails closed. The bundled Action is
+  unaffected, since it defaults the input to `vulnerable`.
 
 - **`pyproject.toml` and `Pipfile` kept the comparison operator in the version.**
   The same two packages gave `pycryptodome@3.20.0` through `requirements.txt`
@@ -319,10 +332,34 @@ so everything below ships together in this release.
 
 - **`--risk` and `--min-severity` did nothing.** Both were stored and never
   read, so every value, including a misspelt one, produced byte-identical
-  output. They now filter, and the summary and exit code are computed from what
-  survives so that every number describes the same set of findings. Unknown
+  output. They now filter, and the summary is computed from what survives so
+  that every number in the report describes the same set of findings. Unknown
   values are rejected instead of ignored. When a filter removes every finding,
   the report says so rather than reporting a clean scan.
+
+- **A reporting filter could then open the CI gate, which was a regression
+  introduced by making those filters work.** Found in this release's own final
+  review. The exit code was computed from the same filtered summary as the
+  report, so `analyze . --fail-on vulnerable` exited 1 and
+  `analyze . --fail-on vulnerable --risk safe` exited 0 on the same project,
+  with nine vulnerable findings withheld. The same run printed "This is not a
+  clean result. Re-run without the filter to see them." to stdout: the tool told
+  the operator it had hidden findings and told CI the project was clean.
+  `--min-severity` reaches it the same way, which matters more in practice,
+  because `--min-severity high --fail-on vulnerable` is a plausible CI line that
+  silently stops failing on anything below HIGH. Released 1.2.2 exits 1 for all
+  of these, because the filters did nothing at all there, so this was a
+  regression in the one flag that decides CI outcomes, in the release that
+  hardened that flag three separate times against silent loosening.
+
+  A view flag does not answer a gate. The scan now records what the filters
+  withheld, broken down by the risk levels `--fail-on` asks about, and the gate
+  reads found-not-shown alongside shown. `--fail-on none` still means none, an
+  unfiltered clean project still exits 0, and no output format changes: the
+  withheld breakdown is deliberately not serialized. The two copies of the
+  exit-code switch, one for a single project and one for a workspace, are now
+  one function with two callers, since carrying the same logic twice is how they
+  could disagree in the first place.
 
 - **Every SARIF result pointed at a literal path `"multiple"`.** Multi-project
   runs flattened all projects into one synthetic result, discarding the real
@@ -620,18 +657,34 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   trade this release makes deliberately; a source-build mode behind an explicit
   opt-in is the shape of the fix if the coverage turns out to matter.
 
-- **Only the dependencies a manifest declares are analyzed, and the
-  documentation said otherwise.** Lock files are not read: `package-lock.json`,
-  `yarn.lock`, `pnpm-lock.yaml`, `poetry.lock`, `go.sum` and `Pipfile.lock` are
-  all rejected as unsupported, so a package pulled in only by another package is
-  never seen. `summary.totalDependencies` equals `summary.directDependencies` on
-  every tree tested, and adding a `package-lock.json` declaring a transitive
-  dependency changes neither number. The behaviour is unchanged from 1.2.2; what
-  changed in this release is that the claim was corrected. The README described
-  "Dependency tree analysis: Scans all transitive dependencies, not just direct
-  ones" and the root help listed "Full dependency tree analysis", both of which
-  overstated coverage in the same direction this release exists to correct. Both
-  now state what is actually read. Enumerating a lock file is the fix, and it is
+- **How much of a dependency tree a scan covers depends on the ecosystem, and
+  the documentation stated it wrongly in both directions.** Measured per
+  ecosystem against this binary:
+
+  - **Go: indirect requirements ARE read.** A `go.mod` declaring one direct
+    require and a `// indirect` block of two reports
+    `totalDependencies: 3, directDependencies: 1`, and the indirect
+    `golang.org/x/crypto` contributes five findings of its own. For Go 1.17 and
+    later the indirect block is the transitive closure, so a tidied `go.mod`
+    gives full coverage.
+  - **npm, Python and Maven: declared dependencies only.** Adding a
+    `package-lock.json` that declares a transitive dependency leaves both
+    counters at 1, and the same holds for `poetry.lock`.
+
+  Lock files are **not** reported as unsupported, which is a distinction this
+  release cares about: `package-lock.json` and `poetry.lock` leave the
+  document's `skipped` field `null`, so they are invisible rather than refused.
+  A `Cargo.toml`, which genuinely has no parser, IS reported with
+  `"reason": "no parser for this manifest type"`. So a lock file is a
+  skip-by-omission of exactly the kind disclosed two entries below.
+
+  The README previously claimed "Scans all transitive dependencies, not just
+  direct ones" and the root help listed "Full dependency tree analysis", which
+  overstated coverage. A first correction in this release then understated it,
+  by generalising an npm measurement to all four ecosystems and telling Go users
+  their indirect dependencies were out of scope when they are read and reported.
+  Both are now stated per ecosystem, which is the only form of this claim that
+  is true. Parsing lock files for npm, Python and Maven is the fix, and it is
   not in this release.
 
 - **A version can name any URL, and the scanner will fetch it.** npm's own
@@ -702,25 +755,35 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   dependency is `@noble/post-quantum` is reported with four HIGH findings and
   advised to migrate to ML-KEM and ML-DSA, which is what the package implements.
 
-  An earlier draft of this entry explained the classical findings as the hybrid
-  halves of constructions such as X-Wing. That explanation was checked against
-  the published artifact for this release and is wrong. In
-  `@noble/post-quantum@0.2.0`, the version the database records: `ML-KEM`,
-  `ML-DSA`, `SLH-DSA` and `X25519` are genuinely present, and `RSA`, `ECDSA`,
-  `Ed25519`, `AES` and `ChaCha20-Poly1305` do not occur anywhere in its code.
-  The package exports `ml-kem`, `ml-dsa`, `slh-dsa` and `utils` and nothing else.
-  Only `X25519` is a real hybrid component. The other four are fabricated by the
-  database's name inference, which supplies 780 of its 849 records.
+  The records must be read against the version they were BUILT for, not the
+  version a manifest declares, which is the limitation stated immediately above
+  and which is easy to fall into while investigating this one. A manifest
+  declaring `@noble/post-quantum@0.2.0` is answered by a record built for
+  `0.6.1`, and `@noble/hashes@1.4.0`, `@noble/ciphers@1.0.0` and
+  `@noble/curves@1.4.0` are all answered by records built for `2.2.0`. Checked
+  against those published artifacts:
 
-  The inference appears to substring-match without word boundaries, the same
-  defect the deep analyzers have: the only occurrence of the letters `rsa`
-  anywhere in the package is inside the identifier `bitReversal`, and `ed25519`,
-  `RSA` and `ChaCha` occur only in the README's prose comparing the package to
-  others. `@noble/hashes@1.4.0`, a hashing library, is likewise credited with
-  `RSA`, `ECDSA`, `Ed25519` and `X25519`, none of which occur in its 96 source
-  files, and `@noble/ciphers@1.0.0` with the same four, none of which occur in
-  its 70. Word-boundary matching and a verification pass over the inferred
-  records are the fix, and neither is in this release.
+  - **`@noble/post-quantum@0.6.1`: mostly correct, and one fabrication.**
+    `ECDSA`, `Ed25519` and `X25519` are all genuinely present, in `hybrid.js`,
+    whose own comment describes a preset combining ML-KEM-768 with X25519, and
+    `AES` and `ChaCha` are present in `falcon.js`. So these findings really are
+    the classical halves of hybrid constructions, and reporting them as
+    standalone quantum-vulnerable usage is a classification defect rather than a
+    fabricated one. `RSA` is fabricated: it occurs nowhere in the package.
+  - **`@noble/hashes@2.2.0`, a hashing library: four fabrications.** It is
+    credited with `RSA`, `ECDSA`, `Ed25519` and `X25519`, none of which occur
+    anywhere in its source. `@noble/ciphers@2.2.0` is credited with the same
+    four, likewise absent. `@noble/curves@2.2.0` is credited with `RSA`, `AES`
+    and `ChaCha20-Poly1305`, all absent, while its `ECDSA`, `X25519` and
+    `Ed25519` are real.
+
+  So there are two distinct defects behind one symptom: a real hybrid component
+  classified as if it were standalone classical usage, and primitives inferred
+  into records that do not contain them. The second comes from name inference,
+  which supplies 832 of the 901 records in the database these scans ran against.
+  Correct classification of a
+  declared hybrid component, and a verification pass over the inferred records,
+  are the fixes, and neither is in this release.
 
 - **Following the tool's own remediation advice does not change the verdict.**
   A five-dependency project that replaces `node-forge` and `elliptic` with the
@@ -768,8 +831,19 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
   so a user who never runs `update` is still scanning against downloaded data.
   That is why the same project can be reported differently on two machines. Pass
   `--offline` to use only the database built into the binary, which is smaller
-  (72 packages against 849) and carries none of the entries listed in the
-  hybrid-PQC limitation above.
+  (72 packages against 849 in the asset this release publishes) and is curated
+  rather than inferred: it does not carry `@noble/post-quantum` at all, and its
+  `@noble/hashes` record lists only real hash algorithms (BLAKE2b, BLAKE2s,
+  BLAKE3, SHA-256, SHA-384, SHA-512, SHA3-256) with none of the fabrications the
+  inferred record carries.
+
+  **Two different databases report the same version label.** The asset published
+  with this release holds 849 records, 780 of them inferred, and calls itself
+  version 1.1.0; a database downloaded on 2026-07-27 holds 901 records, 832 of
+  them inferred, and also calls itself version 1.1.0. The label does not identify
+  the knowledge base, and no scan output records which one answered, so two runs
+  that disagree cannot be told apart from their reports. Both numbers appear in
+  this changelog and each is stated with the database it describes.
 
 - **`--deep` requires `pip` on `PATH` for Python packages**, not `pip3`, so it
   fails on a default Homebrew macOS with `exec: "pip": executable file not

@@ -246,6 +246,22 @@ type ScanSummary struct {
 	// indistinguishable from a project with no cryptography, and the report
 	// would state the second while the first is true.
 	FilteredOut int `json:"filteredOut,omitempty" yaml:"filteredOut,omitempty"`
+	// WithheldVulnerable, WithheldPartial and WithheldWithCrypto record what the
+	// reporting filters removed, broken down the way the --fail-on gate asks its
+	// question. They are deliberately NOT serialized: they exist so that the exit
+	// code can describe the scan while the report describes the view.
+	//
+	// Making --risk and --min-severity actually filter, in this release, had the
+	// side effect of letting them decide the exit code, because the gate reads the
+	// summary and the summary counted only survivors. So `--fail-on vulnerable`
+	// exited 1 on a project and 0 on the same project with `--risk safe` added,
+	// while stdout said "This is not a clean result". 1.2.2 exited 1 for both,
+	// because the filters did nothing at all, so this was a regression in the one
+	// flag that decides CI outcomes, in the release that hardened that flag three
+	// times against silent loosening. A view flag must not answer a gate.
+	WithheldVulnerable int `json:"-" yaml:"-"`
+	WithheldPartial    int `json:"-" yaml:"-"`
+	WithheldWithCrypto int `json:"-" yaml:"-"`
 	// SourceFilesUnreadable counts source files that source analysis could not
 	// parse across the dependencies it did examine.
 	//
@@ -331,6 +347,13 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		// per-project summaries reported dozens, so the totals a reader
 		// actually looks at described a filtered scan as a complete one.
 		multi.TotalSummary.FilteredOut += r.Summary.FilteredOut
+		// The withheld breakdown has to aggregate for the same reason the count
+		// does: otherwise a workspace scan's gate reads zero withheld findings
+		// while its projects withheld many, and the filter defeats --fail-on at
+		// the aggregate level even once it is held at the project level.
+		multi.TotalSummary.WithheldVulnerable += r.Summary.WithheldVulnerable
+		multi.TotalSummary.WithheldPartial += r.Summary.WithheldPartial
+		multi.TotalSummary.WithheldWithCrypto += r.Summary.WithheldWithCrypto
 		multi.TotalSummary.ConfirmedCrypto += r.Summary.ConfirmedCrypto
 		multi.TotalSummary.ReachableCrypto += r.Summary.ReachableCrypto
 		multi.TotalSummary.AvailableCrypto += r.Summary.AvailableCrypto

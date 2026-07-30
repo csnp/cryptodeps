@@ -287,14 +287,29 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// determineExitCode calculates the appropriate exit code based on scan results
-// and the --fail-on threshold. This enables CI/CD pipelines to fail builds
-// when quantum-vulnerable crypto is detected.
-func determineExitCode(result *types.ScanResult, threshold string) int {
+// exitCodeForSummary is the single reading of a scan for gate purposes.
+//
+// The single-project and workspace paths previously carried two copies of this
+// switch, differing only in which summary they read, which is how they could
+// drift apart without either being obviously wrong. One function, two callers.
+//
+// The gate asks about what the scan FOUND, which is the survivors plus whatever
+// the reporting filters withheld. --risk and --min-severity choose what the
+// report shows; they must not decide whether the build fails. Before this, a
+// project exiting 1 under `--fail-on vulnerable` exited 0 when `--risk safe` was
+// added, while the same run printed "This is not a clean result" to stdout: the
+// tool told the operator it had hidden findings and told CI the project was
+// clean. Released 1.2.2 exited 1 for both, because the filters did nothing at
+// all, so making them work introduced this.
+func exitCodeForSummary(s types.ScanSummary, threshold string) int {
 	// Canonicalised through the same function the validator uses, so a caller
 	// that reaches this without going through main cannot reintroduce the split
 	// reading that let " partial " loosen the gate.
 	threshold = analyzer.CanonicalFailOn(threshold)
+
+	withCrypto := s.WithCrypto + s.WithheldWithCrypto
+	vulnerable := s.QuantumVulnerable + s.WithheldVulnerable
+	partial := s.QuantumPartial + s.WithheldPartial
 
 	switch threshold {
 	case "none":
@@ -303,11 +318,11 @@ func determineExitCode(result *types.ScanResult, threshold string) int {
 
 	case "any":
 		// Fail if any crypto usage is detected
-		if result.Summary.WithCrypto > 0 {
-			if result.Summary.QuantumVulnerable > 0 {
+		if withCrypto > 0 {
+			if vulnerable > 0 {
 				return ExitVulnerable
 			}
-			if result.Summary.QuantumPartial > 0 {
+			if partial > 0 {
 				return ExitPartial
 			}
 			// Has crypto but all safe - still exit non-zero for "any" mode
@@ -317,10 +332,10 @@ func determineExitCode(result *types.ScanResult, threshold string) int {
 
 	case "partial":
 		// Fail on partial or vulnerable
-		if result.Summary.QuantumVulnerable > 0 {
+		if vulnerable > 0 {
 			return ExitVulnerable
 		}
-		if result.Summary.QuantumPartial > 0 {
+		if partial > 0 {
 			return ExitPartial
 		}
 		return ExitSuccess
@@ -329,53 +344,23 @@ func determineExitCode(result *types.ScanResult, threshold string) int {
 		fallthrough
 	default:
 		// Fail only on vulnerable (default)
-		if result.Summary.QuantumVulnerable > 0 {
+		if vulnerable > 0 {
 			return ExitVulnerable
 		}
 		return ExitSuccess
 	}
 }
 
+// determineExitCode calculates the appropriate exit code based on scan results
+// and the --fail-on threshold. This enables CI/CD pipelines to fail builds
+// when quantum-vulnerable crypto is detected.
+func determineExitCode(result *types.ScanResult, threshold string) int {
+	return exitCodeForSummary(result.Summary, threshold)
+}
+
 // determineExitCodeMulti calculates exit code for multi-project results.
 func determineExitCodeMulti(result *types.MultiProjectResult, threshold string) int {
-	// Canonicalised through the same function the validator uses, so a caller
-	// that reaches this without going through main cannot reintroduce the split
-	// reading that let " partial " loosen the gate.
-	threshold = analyzer.CanonicalFailOn(threshold)
-
-	switch threshold {
-	case "none":
-		return ExitSuccess
-
-	case "any":
-		if result.TotalSummary.WithCrypto > 0 {
-			if result.TotalSummary.QuantumVulnerable > 0 {
-				return ExitVulnerable
-			}
-			if result.TotalSummary.QuantumPartial > 0 {
-				return ExitPartial
-			}
-			return ExitPartial
-		}
-		return ExitSuccess
-
-	case "partial":
-		if result.TotalSummary.QuantumVulnerable > 0 {
-			return ExitVulnerable
-		}
-		if result.TotalSummary.QuantumPartial > 0 {
-			return ExitPartial
-		}
-		return ExitSuccess
-
-	case "vulnerable":
-		fallthrough
-	default:
-		if result.TotalSummary.QuantumVulnerable > 0 {
-			return ExitVulnerable
-		}
-		return ExitSuccess
-	}
+	return exitCodeForSummary(result.TotalSummary, threshold)
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {

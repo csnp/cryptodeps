@@ -239,7 +239,22 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 					kept = append(kept, c)
 				} else {
 					result.Summary.FilteredOut++
+					// Remember what was withheld, by the risk the gate asks about,
+					// so that hiding a finding from the report cannot also hide it
+					// from --fail-on. These counters are not serialized.
+					switch c.QuantumRisk {
+					case types.RiskVulnerable:
+						result.Summary.WithheldVulnerable++
+					case types.RiskPartial:
+						result.Summary.WithheldPartial++
+					}
 				}
+			}
+			if len(kept) == 0 && len(depResult.Analysis.Crypto) > 0 {
+				// The dependency HAS cryptography; the filter removed all of it.
+				// Without this, --fail-on any reports a project with crypto as
+				// having none, because WithCrypto is counted from survivors.
+				result.Summary.WithheldWithCrypto++
 			}
 			// Copy before mutating: Analysis points into the shared database,
 			// so writing through it would corrupt the entry for every other

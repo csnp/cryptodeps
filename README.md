@@ -21,7 +21,9 @@ The challenge? **You can't migrate what you can't find.**
 
 Your code might be quantum-safe, but what about your **dependencies**? The average software project has 300-1000+ transitive dependencies. Each one potentially uses cryptographic algorithms that quantum computers will break. Traditional security scanners miss this: they focus on CVEs, not cryptographic readiness.
 
-CryptoDeps reads the dependencies your manifests declare, identifies the cryptography each one provides, and uses **reachability analysis** to show which of it your code actually calls rather than merely has available. Transitive dependencies are not enumerated yet: lock files are not read, so a package pulled in only by another package is outside what a scan reports.
+CryptoDeps reads the dependencies your manifests declare, identifies the cryptography each one provides, and uses **reachability analysis** to show which of it your code actually calls rather than merely has available.
+
+How much of the tree that covers depends on the ecosystem, so it is worth stating plainly. In Go, `go.mod` lists indirect requirements, and CryptoDeps reads and analyzes them, so a tidied `go.mod` gives you the full closure. In npm, Python and Maven it reads only what the manifest itself declares: lock files are not parsed, so a package pulled in only by another package is outside what those scans report.
 
 ---
 
@@ -46,7 +48,7 @@ CryptoDeps is purpose-built for quantum readiness assessment:
 <details>
 <summary><strong>What These Capabilities Mean</strong></summary>
 
-- **Declared dependency analysis**: Scans the dependencies your manifests declare. Lock files are not read, so transitive dependencies are not enumerated today
+- **Declared dependency analysis**: Scans what your manifests declare. Go `// indirect` requirements are included, so a tidied `go.mod` covers the closure; npm, Python and Maven are direct-only because lock files are not parsed
 - **Reachability analysis**: Traces call graphs to find crypto your code actually invokes
 - **Quantum risk classification**: Categorizes by threat level (VULNERABLE, PARTIAL, SAFE)
 - **Context-aware confidence**: Distinguishes confirmed usage from mere availability
