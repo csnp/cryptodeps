@@ -252,7 +252,10 @@ so everything below ships together in this release.
   1.2.2. The scanner is now given the same bound the file already has, and the
   per-file cap moves from 8 MiB to 32 MiB: `aws-sdk-go` v1.55.5 ships
   `service/ec2/api.go` at 7,771,273 bytes, within 8 percent of the old cap, and
-  that file has grown every release.
+  that file has grown every release. What the larger cap costs was measured: a
+  30 MiB single-line file dense with cryptographic calls peaks at about 309 MB of
+  resident memory and takes 2.4 seconds. Files are read one at a time, so that is
+  the bound for a scan rather than a per-archive total.
 
 - **A Poetry or Pipfile dependency declared by location was fetched from PyPI
   under its bare name.** An inline table with no `version` key returned no
