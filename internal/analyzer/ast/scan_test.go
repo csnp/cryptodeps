@@ -5,8 +5,10 @@ package ast
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"unicode/utf8"
 )
@@ -220,6 +222,250 @@ class Hashing { void f() throws Exception { MessageDigest.getInstance("MD5"); } 
 					"can hide its cryptography from this scanner by choosing an encoding")
 			}
 		})
+	}
+}
+
+// TestDirectoryScanReadsAFileWithOneVeryLongLine is the regression test for a
+// false negative on one of the tool's most common inputs.
+//
+// bufio's default token limit is 64 KiB. A line longer than that stops Scan and
+// makes Err report it, the three line-scanning analyzers return that error, and
+// the walk then discards every usage they had already found. So a bundled or
+// minified dist file, which is normally one very long line, contributed nothing:
+// a 70 KB single-line file calling crypto.createHash('md5') produced no finding,
+// no warning, and a clean verdict, on this candidate and on 1.2.2.
+func TestDirectoryScanReadsAFileWithOneVeryLongLine(t *testing.T) {
+	// One line, comfortably past the 64 KiB default, with the call at the end so
+	// that a scanner which gave up early cannot reach it. The require and the
+	// call use the spelling this analyzer tracks: a fixture whose crypto is not
+	// detectable at ALL would fail this test for a reason that has nothing to do
+	// with the line length, which is how the first draft of it misled me.
+	line := "const crypto = require('crypto'); /*" + strings.Repeat("a", 70000) + "*/ " +
+		"crypto.createHash('md5').update('x').digest('hex');\n"
+
+	dir := t.TempDir()
+	// Not named .min.js: minified files are skipped by name, and this test is
+	// about the line length rather than the naming convention.
+	path := filepath.Join(dir, "bundle.js")
+	if err := os.WriteFile(path, []byte(line), 0644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	// Guard the fixture: below the limit this test proves nothing.
+	if len(line) <= 64*1024 {
+		t.Fatalf("fixture line is %d bytes, at or below bufio's 64 KiB default, so it does "+
+			"not reach the branch under test", len(line))
+	}
+	// Guard it the other way too: the same crypto call on a SHORT line has to be
+	// detected, or a zero result below says only that the fixture is undetectable.
+	short := t.TempDir()
+	if err := os.WriteFile(filepath.Join(short, "small.js"),
+		[]byte("const crypto = require('crypto');\ncrypto.createHash('md5');\n"), 0644); err != nil {
+		t.Fatalf("write control fixture: %v", err)
+	}
+	if control, err := NewJavaScriptAnalyzer().AnalyzeDirectory(short); err != nil ||
+		len(control.Usages) == 0 {
+		t.Fatalf("the control fixture's MD5 is not detected on a short line (%d usages, %v), "+
+			"so this test cannot attribute a miss to the line length",
+			len(control.Usages), err)
+	}
+
+	scan, err := NewJavaScriptAnalyzer().AnalyzeDirectory(dir)
+	if err != nil {
+		t.Fatalf("AnalyzeDirectory: %v", err)
+	}
+	if scan.FilesParsed != 1 {
+		t.Errorf("FilesParsed = %d for a single-line bundle this analyzer can read",
+			scan.FilesParsed)
+	}
+	if len(scan.Usages) == 0 {
+		t.Errorf("the MD5 call on a %d byte line is missing, so a bundled dist file "+
+			"contributes nothing and the package is still reported as examined", len(line))
+	}
+}
+
+// TestIsTextBracketsTheThreshold pins minTextFraction from BOTH sides.
+//
+// A fixture of pure 0xff has a printable fraction of zero, so it is refused by
+// any threshold above zero and cannot detect one that has been loosened. That
+// left the whole range between 0 and 0.75 unpinned: a mutation to 0.01 kept the
+// suite green. Bracketing needs an input in the middle, and the natural one is
+// what the threshold was measured against.
+func TestIsTextBracketsTheThreshold(t *testing.T) {
+	// Around 0.39 printable, which is what random bytes with the NUL removed
+	// measure, and is the shape of compressed or encrypted content.
+	var mixed []byte
+	for i := 0; len(mixed) < 2000; i++ {
+		if i%5 == 0 {
+			mixed = append(mixed, byte('a'+i%26))
+		} else {
+			mixed = append(mixed, byte(0x80+i%0x7f))
+		}
+	}
+	// Around 0.98 printable, which is what real source in a single-byte encoding
+	// measures: ASCII code with the occasional accented byte in a comment.
+	var sourceLike []byte
+	for i := 0; len(sourceLike) < 2000; i++ {
+		if i%50 == 0 {
+			sourceLike = append(sourceLike, 0xe9)
+		} else {
+			sourceLike = append(sourceLike, byte('a'+i%26))
+		}
+	}
+
+	for _, tc := range []struct {
+		name    string
+		content []byte
+		want    bool
+	}{
+		{"mostly high bytes is not text", mixed, false},
+		{"mostly ASCII with a few high bytes is text", sourceLike, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Guard both fixtures: each must be invalid UTF-8 and NUL-free, or it
+			// is answered by a different branch than the one under test.
+			if utf8.Valid(tc.content) {
+				t.Fatalf("fixture is valid UTF-8, so the fraction is never consulted")
+			}
+			if bytes.IndexByte(tc.content, 0) >= 0 {
+				t.Fatalf("fixture carries a NUL byte, so it is refused as binary")
+			}
+			// And assert where each sits relative to the threshold, so that a
+			// change to minTextFraction fails here with its reason visible rather
+			// than somewhere downstream.
+			got := printableASCIIFraction(tc.content[:headBytes])
+			if tc.want && got < minTextFraction {
+				t.Fatalf("fixture meant to be text measures %.3f, below the %.2f threshold",
+					got, minTextFraction)
+			}
+			if !tc.want && got >= minTextFraction {
+				t.Fatalf("fixture meant to be binary measures %.3f, at or above the %.2f threshold",
+					got, minTextFraction)
+			}
+
+			if isText(tc.content) != tc.want {
+				t.Errorf("isText = %v, want %v for a head measuring %.3f printable ASCII",
+					!tc.want, tc.want, got)
+			}
+		})
+	}
+}
+
+// TestIsTextDoesNotTrimAHeadIntoValidity pins the bound on the rune-straddle
+// allowance, which the fraction fallback would otherwise hide.
+//
+// The allowance trims up to the three continuation bytes a truncated rune can
+// occupy. Unbounded, it walks a binary head down to whatever prefix happens to
+// be valid: a file opening with a few ASCII bytes and continuing with 0xff is
+// then accepted as text, which is the defect the bound was added to close. Pure
+// 0xff cannot detect it, because trimming that reaches an empty head and the
+// empty-head guard refuses it for an unrelated reason.
+func TestIsTextDoesNotTrimAHeadIntoValidity(t *testing.T) {
+	content := append([]byte("abc"), bytes.Repeat([]byte{0xff}, 2000)...)
+
+	if bytes.IndexByte(content, 0) >= 0 {
+		t.Fatalf("fixture carries a NUL byte, so it is refused as binary")
+	}
+	if len(content) <= headBytes {
+		t.Fatalf("fixture is %d bytes, not past the head boundary, so no trimming happens",
+			len(content))
+	}
+	// The guard that makes this fixture the right one: an unbounded trim WOULD
+	// find a valid prefix here, so the test can tell a bounded loop from an
+	// unbounded one.
+	if !utf8.Valid(content[:3]) {
+		t.Fatalf("fixture's ASCII prefix is not valid UTF-8, so an unbounded trim would not " +
+			"reach validity and this test cannot detect the bound being removed")
+	}
+
+	if isText(content) {
+		t.Errorf("a head of three ASCII bytes followed by 0xff was accepted as text; the " +
+			"straddle allowance trimmed it into validity")
+	}
+}
+
+// TestMaxSourceFileClearsRealSource pins the cap against the largest real source
+// file measured, so that lowering it fails here rather than in a silent skip.
+//
+// aws-sdk-go v1.55.5 ships service/ec2/api.go at 7,771,273 bytes and has grown
+// every release. A cap a real file is about to cross drops that file from the
+// analysis, and until this test existed the value was unpinned in both
+// directions: mutations to 1 MiB and to no cap at all both kept the suite green.
+func TestMaxSourceFileClearsRealSource(t *testing.T) {
+	const largestMeasured = 7_771_273 // aws-sdk-go v1.55.5 service/ec2/api.go
+	// Headroom, not merely clearance. This file was 6,400,535 bytes at v1.44.0
+	// and grows every release, so a cap that merely exceeds today's largest file
+	// is a cap that starts silently dropping it during the life of a release.
+	if maxSourceFile < 2*largestMeasured {
+		t.Errorf("maxSourceFile = %d, less than twice the largest real source file measured "+
+			"(%d); a generated file of this kind grows every release and would begin to be "+
+			"counted unreadable rather than analyzed", maxSourceFile, largestMeasured)
+	}
+	// And the cap has to still be a cap, or an archive can exhaust the host.
+	if maxSourceFile > 128<<20 {
+		t.Errorf("maxSourceFile = %d, high enough that one file in a hostile archive can "+
+			"exhaust memory", maxSourceFile)
+	}
+}
+
+// TestDirectoryScanNamesTheFilesItCouldNotRead keeps the disclosure actionable.
+//
+// A count with no names is a dead end: the report says one file in a package
+// went unread and gives the reader no way to learn which, or why. The coverage
+// note promised the scan named them before it did.
+func TestDirectoryScanNamesTheFilesItCouldNotRead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "good.js"),
+		[]byte("module.exports.x = 1;\n"), 0644); err != nil {
+		t.Fatalf("write readable fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blob.js"),
+		bytes.Repeat([]byte{0xff}, 2000), 0644); err != nil {
+		t.Fatalf("write blob fixture: %v", err)
+	}
+
+	scan, err := NewJavaScriptAnalyzer().AnalyzeDirectory(dir)
+	if err != nil {
+		t.Fatalf("AnalyzeDirectory: %v", err)
+	}
+	if scan.FilesFailed != 1 || scan.FilesParsed != 1 {
+		t.Fatalf("FilesParsed = %d, FilesFailed = %d; the fixture is not one readable file "+
+			"and one refused one", scan.FilesParsed, scan.FilesFailed)
+	}
+	if len(scan.Unreadable) != 1 {
+		t.Fatalf("Unreadable = %v, want one entry naming the refused file", scan.Unreadable)
+	}
+	if !strings.Contains(scan.Unreadable[0], "blob.js") {
+		t.Errorf("the refusal does not name the file: %q", scan.Unreadable[0])
+	}
+	if !strings.Contains(scan.Unreadable[0], "not text") {
+		t.Errorf("the refusal does not say why, so the reader cannot act on it: %q",
+			scan.Unreadable[0])
+	}
+}
+
+// TestDirectoryScanBoundsHowManyRefusalsItNames keeps a hostile archive from
+// turning one warning into thousands, without ever understating the count.
+func TestDirectoryScanBoundsHowManyRefusalsItNames(t *testing.T) {
+	dir := t.TempDir()
+	const blobs = maxUnreadableReported + 5
+	for i := 0; i < blobs; i++ {
+		name := filepath.Join(dir, fmt.Sprintf("blob%d.js", i))
+		if err := os.WriteFile(name, bytes.Repeat([]byte{0xff}, 2000), 0644); err != nil {
+			t.Fatalf("write blob %d: %v", i, err)
+		}
+	}
+
+	scan, err := NewJavaScriptAnalyzer().AnalyzeDirectory(dir)
+	if err != nil {
+		t.Fatalf("AnalyzeDirectory: %v", err)
+	}
+	if scan.FilesFailed != blobs {
+		t.Errorf("FilesFailed = %d, want the exact count %d: only the naming is bounded",
+			scan.FilesFailed, blobs)
+	}
+	if len(scan.Unreadable) != maxUnreadableReported {
+		t.Errorf("named %d refusals, want the bound of %d", len(scan.Unreadable),
+			maxUnreadableReported)
 	}
 }
 

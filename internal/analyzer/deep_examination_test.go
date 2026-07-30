@@ -289,6 +289,30 @@ public class Plain { public int add(int a, int b) { return a + b; } }
 		t.Errorf("the verdict claims a clean examination without saying a file in it was "+
 			"never read:\n%s", out)
 	}
+
+	// A count with no names is a dead end: the note tells the reader the reading
+	// was incomplete and, without this, gives them no way to find out where.
+	named := dep.Analysis.Analysis.UnreadableFiles
+	if len(named) != 1 {
+		t.Fatalf("UnreadableFiles = %v, want the one refused file named", named)
+	}
+	if !strings.Contains(named[0], "Blob.java") {
+		t.Errorf("the refusal does not name the file it applies to: %q", named[0])
+	}
+	if !strings.Contains(named[0], "not text") {
+		t.Errorf("the refusal does not say why, so the reader cannot act on it: %q", named[0])
+	}
+
+	// And it has to survive into the document a consumer reads, not only the
+	// in-memory result.
+	var buf bytes.Buffer
+	if err := (&output.JSONFormatter{Indent: true}).Format(result, &buf); err != nil {
+		t.Fatalf("format json: %v", err)
+	}
+	if !strings.Contains(buf.String(), "unreadableFiles") ||
+		!strings.Contains(buf.String(), "Blob.java") {
+		t.Errorf("JSON does not name the refused file:\n%s", buf.String())
+	}
 }
 
 // TestDeepScanOfReadableArchiveIsStillReportedAsExamined asks the inverse

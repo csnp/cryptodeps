@@ -212,8 +212,9 @@ func (n coverageNote) Text() string {
 			examinedCount(n.Summary))
 	case casePartialSource:
 		return fmt.Sprintf("%d source file(s) in the dependencies that were examined could not be read, "+
-			"so the cryptography of those dependencies may be under-reported. The scan names them in the "+
-			"warnings it printed, and each dependency carries filesAnalyzed and filesUnreadable in JSON.",
+			"so the cryptography of those dependencies may be under-reported. Each is named on stderr "+
+			"during the scan with the reason, and in JSON under the dependency's "+
+			"analysis.unreadableFiles alongside filesAnalyzed and filesUnreadable.",
 			n.Summary.SourceFilesUnreadable)
 	case caseNothingExamined:
 		if n.Summary.DeepAttempted {

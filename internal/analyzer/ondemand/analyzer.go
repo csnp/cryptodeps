@@ -64,6 +64,8 @@ func (a *Analyzer) Analyze(dep types.Dependency) (*types.PackageAnalysis, error)
 		Analysis: types.AnalysisMetadata{
 			FilesAnalyzed:   scan.FilesParsed,
 			FilesUnreadable: scan.FilesFailed,
+			// Named as well as counted, so the disclosure is actionable.
+			UnreadableFiles: scan.Unreadable,
 		},
 	}
 

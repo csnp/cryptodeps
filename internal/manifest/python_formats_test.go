@@ -277,3 +277,69 @@ func TestSplitRequirementHandlesPEP508(t *testing.T) {
 		})
 	}
 }
+
+// TestPoetryLocationDependencyKeepsItsLocator is the regression test for a
+// dependency confusion the new TOML parser introduced.
+//
+// poetryVersion returned "" for an inline table with no version key, which
+// discarded the path or repository the dependency was actually declared by. The
+// fetcher then had a name with no version and downloaded whatever PyPI serves
+// under that name, so a `path = "../internal-lib"` dependency was replaced by a
+// public package of the same name and that package's source was analyzed and
+// reported as this project's. An attacker only has to register the name of a
+// company's local package to be handed the attribution, and because pip builds
+// sdists, the execution too.
+//
+// The locator is kept so the fetcher's own guards see what was declared: a path
+// is refused as a local reference rather than silently substituted.
+func TestPoetryLocationDependencyKeepsItsLocator(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pyproject.toml")
+	writeFile(t, path, `
+[tool.poetry]
+name = "demo"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+cryptography = "41.0.0"
+internal-lib = {path = "../internal-lib", develop = true}
+forked-dep = {git = "https://github.com/owner/forked-dep.git", rev = "abc123"}
+vendored = {url = "https://example.invalid/vendored-1.0.0.tar.gz"}
+`)
+
+	deps, err := (&PythonParser{}).Parse(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	byName := make(map[string]string)
+	for _, d := range deps {
+		byName[d.Name] = d.Version
+	}
+
+	// Guard the fixture: the ordinary dependency must still parse, or a failure
+	// below could just mean the file was not read.
+	if got := byName["cryptography"]; got != "41.0.0" {
+		t.Fatalf("cryptography version = %q, want 41.0.0; got all %v", got, byName)
+	}
+
+	for _, tc := range []struct{ name, want string }{
+		{"internal-lib", "../internal-lib"},
+		{"forked-dep", "https://github.com/owner/forked-dep.git"},
+		{"vendored", "https://example.invalid/vendored-1.0.0.tar.gz"},
+	} {
+		got, ok := byName[tc.name]
+		if !ok {
+			t.Errorf("%s is missing from the parsed dependencies; got %v", tc.name, byName)
+			continue
+		}
+		if got == "" {
+			t.Errorf("%s has an empty version, so the fetcher will download whatever PyPI "+
+				"serves under the name %q instead of the %q it was declared as",
+				tc.name, tc.name, tc.want)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s version = %q, want the declared locator %q", tc.name, got, tc.want)
+		}
+	}
+}

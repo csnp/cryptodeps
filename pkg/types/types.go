@@ -135,6 +135,11 @@ type AnalysisMetadata struct {
 	// had been skipped. Examination is a claim, and a claim needs its exceptions
 	// stated as well as its evidence.
 	FilesUnreadable int `json:"filesUnreadable,omitempty" yaml:"filesUnreadable,omitempty"`
+	// UnreadableFiles says which files those were and why, bounded so that a
+	// hostile archive cannot turn one warning into thousands. A count with no
+	// names is a dead end: the reader is told the reading was incomplete and
+	// given no way to find out where.
+	UnreadableFiles []string `json:"unreadableFiles,omitempty" yaml:"unreadableFiles,omitempty"`
 }
 
 // SourceWasRead reports whether source analysis parsed at least one file.

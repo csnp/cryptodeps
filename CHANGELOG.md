@@ -140,6 +140,39 @@ so everything below ships together in this release.
   verdict above. An extension is a descriptor rather than the thing itself, so a
   file now counts only if it holds text the analyzer can read.
 
+  "Text the analyzer can read" then had to be corrected twice more. It first
+  meant "the head is valid UTF-8", which accepted every NUL-free binary over the
+  head size, because the allowance for a rune straddling the boundary shrank the
+  head one byte at a time and `utf8.Valid` reports true for an empty slice: 2000
+  bytes of `0xff` counted as a parsed file. Bounding that allowance then left the
+  UTF-8 requirement itself, which was never the right question. These analyzers
+  are line scanners matching ASCII identifiers, so they neither need nor check
+  valid UTF-8, and requiring it refused legitimate source in any single-byte
+  encoding: a `.java` or `.js` file holding one Latin-1 accent in a comment was
+  reported as unreadable and the cryptography beside the accent was never looked
+  for, where 1.2.2 had found it. A file is now text if it holds no NUL byte and
+  its head is either valid UTF-8 or predominantly printable ASCII, which is the
+  property a line scanner actually depends on. The threshold is measured: across
+  140 real npm source files carrying non-ASCII characters, re-encoded to Latin-1,
+  the lowest printable-ASCII fraction was 0.904 and the median 0.999, while
+  random NUL-free bytes reached at most 0.453 and real binaries with their NUL
+  bytes stripped reached 0.286.
+
+- **A source file the analyzer refused was dropped silently, and the package was
+  still reported as examined.** The count of failed files was incremented inside
+  the directory walk and went no further, so a dependency holding one file that
+  parsed and one that did not was described as examined and clean, on every
+  stream and in every format, with zero bytes on stderr. Combined with the
+  encoding defect above it made an evasion rather than an inconvenience: a
+  dependency could hide its cryptography from this scanner by encoding the file
+  that calls MD5 in Latin-1, and the report said the package had been examined
+  and no cryptography was detected. The earlier coverage fix does not reach this
+  state, because it asks its question of a dependency nothing examined, and a
+  dependency read in part is counted as examined. The count now travels with the
+  analysis as `analysis.filesUnreadable`, sums into the summary as
+  `sourceFilesUnreadable`, is named on stderr per package, and reaches all five
+  formats through the one classifier they share.
+
 - **A symlink in an extracted archive was followed out of the source cache.**
   The directory walk lstats, so a symlink is not a directory and fell through to
   the file analyzer, which opened whatever it pointed at. Both `tar` and `unzip`
@@ -417,6 +450,12 @@ so everything below ships together in this release.
   document that claims a package was read now carries the count it was claimed
   from, and one that skips a package says why.
 
+- `analysis.filesUnreadable` per dependency and `summary.sourceFilesUnreadable`
+  per project, in JSON and YAML output, with a warning on stderr naming each
+  package and a coverage note in the table, markdown, SARIF and CBOM. The
+  evidence for an examination now carries its exceptions as well as its count,
+  so a partial reading cannot be read as a complete one.
+
 - `summary.notExamined` and `summary.deepAttempted` in JSON and YAML output, and
   a **Not Examined** row in the markdown summary table. How much of a tree a
   scan actually covered was previously only derivable, and only wrongly, from
@@ -443,6 +482,17 @@ so everything below ships together in this release.
 
 Present in 1.2.2 as well unless noted. Each was reproduced by hand against both
 the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
+
+- **NEW in 1.3.0: a source file whose first 1024 bytes are mostly non-ASCII is
+  not read.** The text check judges a file on its head, and accepts a head that
+  is not valid UTF-8 only if it is predominantly printable ASCII. That covers
+  source in a single-byte encoding, where the code is ASCII even when its
+  comments are not, and it does not cover a file that opens with a long comment
+  in a non-Latin single-byte encoding, such as a cp1251 licence header. UTF-16
+  source is refused for a separate reason: it carries NUL bytes. In every case
+  the file is now counted in `analysis.filesUnreadable`, named on stderr, and
+  disclosed as a coverage note in all five formats, so the gap is stated rather
+  than silent. Reading whole files, or detecting the encoding, is the larger fix.
 
 - **A package that provides hybrid post-quantum cryptography is reported as
   quantum-vulnerable.** `@noble/post-quantum` carries X25519, ECDSA and Ed25519

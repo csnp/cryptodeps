@@ -73,12 +73,28 @@ func ValidateRiskFilter(s string) error {
 // either stream: exit 3 became exit 0 on the same project. A CI gate that
 // silently loosens on a typo is worse than one that refuses to run.
 func ValidateFailOn(s string) error {
-	switch strings.ToLower(strings.TrimSpace(s)) {
+	switch CanonicalFailOn(s) {
 	case "", "none", "any", "partial", "vulnerable":
 		return nil
 	default:
 		return fmt.Errorf("invalid --fail-on value %q: expected one of vulnerable, partial, any, none", s)
 	}
+}
+
+// CanonicalFailOn is the one reading of a --fail-on value.
+//
+// It exists because there were two. The validator trimmed and lowercased before
+// deciding, and the code that turns the value into an exit code only lowercased,
+// so " partial " was accepted as valid and then matched no policy: the gate
+// reverted to vulnerable-only and a project with partial-risk findings exited 0
+// where "partial" exited 3, on either stream in silence. Whitespace around a
+// value is the ordinary result of a YAML block scalar or an expression in a
+// workflow file, which is exactly where this flag is used.
+//
+// Every reader of the flag must go through this, so that accepting a value and
+// acting on it cannot disagree.
+func CanonicalFailOn(s string) string {
+	return strings.ToLower(strings.TrimSpace(s))
 }
 
 // ValidateMinSeverity checks a --min-severity value.
@@ -410,6 +426,15 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResul
 				"Warning: source analysis of %s read %d file(s) and could not read %d more, so its "+
 					"cryptography may be under-reported\n",
 				dep.Name, analysis.Analysis.FilesAnalyzed, analysis.Analysis.FilesUnreadable)
+			// Named, not just counted. A reader told that one file went unread and
+			// not which one has been handed a dead end, and the reason differs in
+			// what they should do about it.
+			for _, reason := range analysis.Analysis.UnreadableFiles {
+				fmt.Fprintf(os.Stderr, "  not read: %s\n", reason)
+			}
+			if n := analysis.Analysis.FilesUnreadable - len(analysis.Analysis.UnreadableFiles); n > 0 {
+				fmt.Fprintf(os.Stderr, "  and %d more not named here\n", n)
+			}
 		}
 		result.Analysis = analysis
 		result.DeepAnalyzed = true

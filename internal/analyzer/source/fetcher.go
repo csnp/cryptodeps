@@ -89,11 +89,23 @@ var packageNamePattern = map[types.Ecosystem]*regexp.Regexp{
 
 // validPackageName rejects a dependency name that is not a name in its
 // ecosystem's own terms.
-//
-// Maven is absent from the table on purpose: its names are coordinates, and
-// validMavenCoordinate already holds them to the same standard after the
-// groupId and artifactId have been separated.
 func validPackageName(ecosystem types.Ecosystem, name string) error {
+	// Maven is absent from the table because its names are coordinates, but it is
+	// answered here rather than only inside the Maven fetcher, so that every
+	// ecosystem's grammar is the FIRST thing a name meets. While this was reached
+	// only later, the traversal screen ran first and refused a hostile coordinate
+	// as a local path, which is a correct refusal that says the wrong thing and,
+	// worse, left the coordinate validator unexercised by the test written to
+	// pin it: one guard masking another is how the masked one comes to be
+	// deleted with a green suite.
+	if ecosystem == types.EcosystemMaven {
+		groupID, artifactID, found := strings.Cut(name, ":")
+		if !found || strings.Contains(artifactID, ":") {
+			return fmt.Errorf("invalid Maven coordinate: %s (expected groupId:artifactId)", name)
+		}
+		return validMavenCoordinate(groupID, artifactID)
+	}
+
 	pattern, ok := packageNamePattern[ecosystem]
 	if !ok {
 		return nil
@@ -211,13 +223,21 @@ func localPathReference(v string) bool {
 	if windowsLocalPath(v) {
 		return true
 	}
-	// A bare relative path such as src/../../etc, as distinct from a registry
-	// reference such as github:owner/repo.
-	if !strings.Contains(v, ":") {
-		for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == '/' || r == '\\' }) {
-			if part == ".." {
-				return true
-			}
+	// A traversal, wherever it appears. This walk used to be skipped for any
+	// value containing a colon, on the reasoning that a colon meant a registry
+	// reference such as github:owner/repo. It only takes an invented scheme to
+	// defeat that: a version of "a1:../../../../../../../victim" carries a colon,
+	// so the walk never ran, and `npm pack left-pad@a1:../../../victim` packed a
+	// directory outside the cache, which this tool then read and published as
+	// that dependency's source with its absolute paths. Verified by sentinel at
+	// traversal depth 7.
+	//
+	// No legitimate version carries a ".." path element, so the colon earns no
+	// exemption here. Whether a value is a remote reference is decided by the
+	// scheme test above, not by the presence of a punctuation mark.
+	for _, part := range strings.FieldsFunc(v, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return true
 		}
 	}
 	return false
@@ -543,7 +563,7 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 			// Extract the tarball
 			extractCmd := exec.Command("tar", "-xzf", tarball, "-C", packageDir)
 			if err := extractCmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to extract tarball: %w", err)
+				return "", f.discardPartialFetch(packageDir, err, "failed to extract tarball")
 			}
 			// npm tarballs conventionally unpack to package/, but not all of
 			// them do: ejs 3.1.10 unpacks to ejs-v3.1.10/. Returning the
@@ -601,14 +621,14 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 			}
 			cmd := exec.Command("unzip", "-q", wheelPath, "-d", extractDir)
 			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to extract wheel: %w", err)
+				return "", f.discardPartialFetch(packageDir, err, "failed to extract wheel")
 			}
 			return extractedSourceRoot(packageDir, zipExtractedDir)
 		} else if strings.HasSuffix(name, ".tar.gz") {
 			tarball := filepath.Join(packageDir, name)
 			cmd := exec.Command("tar", "-xzf", tarball, "-C", packageDir)
 			if err := cmd.Run(); err != nil {
-				return "", fmt.Errorf("failed to extract tarball: %w", err)
+				return "", f.discardPartialFetch(packageDir, err, "failed to extract tarball")
 			}
 			// Resolve the same way the cache-hit path does, so run 1 and run 2
 			// analyze the same tree.
@@ -681,7 +701,7 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	}
 	extractCmd := exec.Command("unzip", "-q", jarPath, "-d", extractDir)
 	if err := extractCmd.Run(); err != nil {
-		return "", fmt.Errorf("failed to extract JAR: %w", err)
+		return "", f.discardPartialFetch(packageDir, err, "failed to extract JAR")
 	}
 
 	return extractedSourceRoot(packageDir, zipExtractedDir)

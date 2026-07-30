@@ -178,7 +178,25 @@ func poetryVersion(constraint any) string {
 		if version, ok := v["version"].(string); ok {
 			return stripVersionOperator(version)
 		}
-		// Git and path dependencies carry no version.
+		// A dependency declared by location rather than by version keeps its
+		// locator, because dropping it does not merely lose information: it
+		// leaves a name with no version, and the fetcher then downloads whatever
+		// PyPI serves under that name. A `path = "../internal-lib"` dependency
+		// was replaced by a public package of the same name, whose source was
+		// then analyzed and reported as this project's. That is dependency
+		// confusion performed by the scanner, and an attacker only has to
+		// register the name of a company's local package to be handed the
+		// attribution, and with pip building sdists, execution.
+		//
+		// Returned raw so the guards in the fetcher see what was really
+		// declared: a path is refused as a local reference, and a URL or a
+		// repository fails to resolve under its own name rather than silently
+		// becoming a different package.
+		for _, key := range [...]string{"path", "file", "url", "git"} {
+			if locator, ok := v[key].(string); ok && strings.TrimSpace(locator) != "" {
+				return locator
+			}
+		}
 		return ""
 	default:
 		return ""

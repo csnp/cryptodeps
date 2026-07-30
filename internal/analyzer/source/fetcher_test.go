@@ -1276,3 +1276,177 @@ func TestMavenCoordinateValidationAcceptsRealArtifacts(t *testing.T) {
 		}
 	}
 }
+
+// TestVersionTraversalIsRefusedBehindAnyScheme is the regression test for the
+// fourth spelling of the local-path class.
+//
+// localPathReference skipped its traversal walk for any value containing a
+// colon, on the reasoning that a colon meant a remote reference such as
+// github:owner/repo. An invented scheme defeats that: a version of
+// "a1:../../../../../../../victim" carries a colon, so the walk never ran, and
+// `npm pack left-pad@a1:../../../victim` packed a directory outside the cache,
+// which the analyzer then read and published as that dependency's source with
+// its absolute paths. Reproduced by sentinel at traversal depth 7 against the
+// 1.3.0 candidate.
+func TestVersionTraversalIsRefusedBehindAnyScheme(t *testing.T) {
+	withoutFetchTools(t)
+	f := NewFetcher(t.TempDir())
+
+	for _, version := range []string{
+		"a1:../../../../../../../victim",        // an invented scheme
+		"npm:../../../victim",                   // a real scheme npm does accept
+		"github:owner/../../../../../../victim", // a remote form carrying a traversal
+		"1.0.0/../../../../../../../../victim",  // no scheme at all, for the baseline
+	} {
+		t.Run(version, func(t *testing.T) {
+			// Guard the fixture: without a ".." element this case is not a traversal
+			// and proves nothing about the walk.
+			if !strings.Contains(version, "..") {
+				t.Fatalf("fixture %q carries no traversal", version)
+			}
+			_, err := f.Fetch(types.Dependency{
+				Name:      "left-pad",
+				Version:   version,
+				Ecosystem: types.EcosystemNPM,
+			})
+			if err == nil {
+				t.Fatalf("a version traversing out of the cache was fetched")
+			}
+			// The REASON matters: PATH is empty here, so "npm not found" would
+			// satisfy err != nil while the guard was absent.
+			if !strings.Contains(err.Error(), "refers to a local path") {
+				t.Errorf("refused for the wrong reason: %v; the traversal has to be refused on "+
+					"its own terms, not incidentally by a missing downloader", err)
+			}
+		})
+	}
+}
+
+// TestRemoteReferencesWithoutTraversalStillFetch is the inverse question.
+//
+// Removing the colon exemption must not refuse the remote references it was
+// written to admit, or --deep loses every git and registry-shorthand dependency.
+func TestRemoteReferencesWithoutTraversalStillFetch(t *testing.T) {
+	withoutFetchTools(t)
+	f := NewFetcher(t.TempDir())
+
+	for _, version := range []string{
+		"github:owner/repo",
+		"git+https://github.com/owner/repo.git#v1.2.3",
+		"npm:left-pad@1.3.0",
+		"https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
+		"^1.2.3",
+		">=1.0.0 <2.0.0",
+		"1.2.3-beta.1+build.5",
+	} {
+		t.Run(version, func(t *testing.T) {
+			_, err := f.Fetch(types.Dependency{
+				Name:      "left-pad",
+				Version:   version,
+				Ecosystem: types.EcosystemNPM,
+			})
+			// The fetch cannot succeed with no downloader on PATH. What must not
+			// happen is a refusal by the guard, which would mean this legitimate
+			// version is never fetched on a real machine either.
+			if err != nil && strings.Contains(err.Error(), "refers to a local path") {
+				t.Errorf("a legitimate remote reference was refused as a local path: %v", err)
+			}
+		})
+	}
+}
+
+// TestFailedExtractionLeavesNoUsableCacheEntry is the regression test for a
+// fail-open that turned an error into a clean examination on the next run.
+//
+// The three download sites route failure through discardPartialFetch; the four
+// extraction sites returned a bare error. Both tar and unzip extract partially
+// before failing, so the entry was left holding a non-empty package directory,
+// which the cache-hit check accepts. The first scan reported the package as not
+// examined and the second reported it as examined, with findings, from a
+// partially extracted archive and no warning on any stream.
+func TestFailedExtractionLeavesNoUsableCacheEntry(t *testing.T) {
+	// Every ecosystem that extracts an archive, because the same bare error was
+	// returned at all four sites and a test covering only npm left three of them
+	// deletable with a green suite.
+	cases := []struct {
+		name string
+		dep  types.Dependency
+		// stubs maps an executable this path shells out to onto a script. The
+		// downloader must succeed and produce an archive; the extractor must
+		// extract something and then fail, which is what a truncated or hostile
+		// archive does.
+		stubs map[string]string
+		// extracted is the directory the extractor half-fills, relative to the
+		// package cache entry.
+		extracted string
+	}{
+		{
+			name: "npm",
+			dep:  types.Dependency{Name: "left-pad", Version: "1.3.0", Ecosystem: types.EcosystemNPM},
+			stubs: map[string]string{
+				"npm": "#!/bin/sh\n: > left-pad-1.3.0.tgz\n",
+				"tar": "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -C) shift; D=\"$1\";; esac; shift; done\n" +
+					"/bin/mkdir -p \"$D/package\"\nprintf 'module.exports=1;\\n' > \"$D/package/index.js\"\nexit 1\n",
+			},
+			extracted: npmExtractedDir,
+		},
+		{
+			name: "maven",
+			dep:  types.Dependency{Name: "org.tukaani:xz", Version: "1.9", Ecosystem: types.EcosystemMaven},
+			stubs: map[string]string{
+				"curl": "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) shift; O=\"$1\";; esac; shift; done\n: > \"$O\"\n",
+				"unzip": "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -d) shift; D=\"$1\";; esac; shift; done\n" +
+					"/bin/mkdir -p \"$D/org\"\nprintf 'class A {}\\n' > \"$D/org/A.java\"\nexit 1\n",
+			},
+			extracted: zipExtractedDir,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			for name, script := range tc.stubs {
+				if err := os.WriteFile(filepath.Join(bin, name), []byte(script), 0755); err != nil {
+					t.Fatalf("write stub %s: %v", name, err)
+				}
+			}
+			// The stubs come first so they shadow any real tool, but the rest of
+			// PATH stays: emptying it left the stubs' own mkdir unresolvable, so
+			// nothing was ever extracted and this test passed while the defect
+			// was present.
+			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+			cacheDir := filepath.Join(t.TempDir(), "cache")
+			f := NewFetcher(cacheDir)
+
+			_, err := f.Fetch(tc.dep)
+			if err == nil {
+				t.Fatal("a failed extraction was reported as a successful fetch")
+			}
+			// Guard the fixture: the fetch has to have failed AT EXTRACTION. If
+			// the stub downloader produced no archive, the fetch fails earlier,
+			// nothing is half-extracted, and every assertion below is answered by
+			// an empty cache.
+			if !strings.Contains(err.Error(), "extract") {
+				t.Fatalf("the fixture did not reach extraction, so it cannot detect a "+
+					"partial one: %v", err)
+			}
+
+			packageDir := filepath.Join(cacheDir, string(tc.dep.Ecosystem),
+				cacheSegment(tc.dep.Name), cacheSegment(tc.dep.Version))
+			if entries, err := os.ReadDir(filepath.Join(packageDir, tc.extracted)); err == nil &&
+				len(entries) > 0 {
+				t.Fatalf("the partially extracted directory survives at %q with %d entries, "+
+					"so the next scan will accept it as a cache hit", packageDir, len(entries))
+			}
+
+			// The second attempt must not silently succeed from what the first left.
+			root, err := f.Fetch(tc.dep)
+			if err == nil {
+				t.Errorf("the second fetch succeeded from a partially extracted entry and "+
+					"returned %q; a scan that could not read a package must not report it "+
+					"as read on the next run", root)
+			}
+		})
+	}
+}

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -216,6 +215,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err := analyzer.ValidateFailOn(failOn); err != nil {
 		return err
 	}
+	// Not normalised here. Both readers of this flag canonicalise it themselves,
+	// which is the layer that holds for any caller, and a second normalisation
+	// here would be code no test can hold: removing it left the suite green.
 
 	// Parse output format
 	format, err := output.ParseFormat(formatFlag)
@@ -289,7 +291,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 // and the --fail-on threshold. This enables CI/CD pipelines to fail builds
 // when quantum-vulnerable crypto is detected.
 func determineExitCode(result *types.ScanResult, threshold string) int {
-	threshold = strings.ToLower(threshold)
+	// Canonicalised through the same function the validator uses, so a caller
+	// that reaches this without going through main cannot reintroduce the split
+	// reading that let " partial " loosen the gate.
+	threshold = analyzer.CanonicalFailOn(threshold)
 
 	switch threshold {
 	case "none":
@@ -333,7 +338,10 @@ func determineExitCode(result *types.ScanResult, threshold string) int {
 
 // determineExitCodeMulti calculates exit code for multi-project results.
 func determineExitCodeMulti(result *types.MultiProjectResult, threshold string) int {
-	threshold = strings.ToLower(threshold)
+	// Canonicalised through the same function the validator uses, so a caller
+	// that reaches this without going through main cannot reintroduce the split
+	// reading that let " partial " loosen the gate.
+	threshold = analyzer.CanonicalFailOn(threshold)
 
 	switch threshold {
 	case "none":

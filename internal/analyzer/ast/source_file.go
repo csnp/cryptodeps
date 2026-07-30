@@ -7,7 +7,6 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"unicode/utf8"
 )
@@ -16,7 +15,13 @@ import (
 // this is not source in any sense this tool can act on, and reading it into
 // memory to find out is how a scanner becomes a way to exhaust the host it runs
 // on with an archive it was handed.
-const maxSourceFile = 8 << 20 // 8 MiB
+//
+// The bound is measured against real source rather than picked: aws-sdk-go
+// v1.55.5 ships service/ec2/api.go at 7,771,273 bytes, which is 93 percent of
+// the 8 MiB this used to be, and it has grown every release. A cap a real file
+// is about to cross drops that file from the analysis, so there is margin here
+// on purpose.
+const maxSourceFile = 32 << 20 // 32 MiB
 
 // headBytes is how much of a file is checked for being text. A magic number
 // lives in the first few bytes, and validating megabytes to reject the first
@@ -55,7 +60,20 @@ func openSource(filename string) (*bufio.Scanner, error) {
 	if err != nil {
 		return nil, err
 	}
-	return bufio.NewScanner(bytes.NewReader(content)), nil
+	s := bufio.NewScanner(bytes.NewReader(content))
+	// bufio's default token limit is 64 KiB, and a line longer than that makes
+	// Scan stop and Err report it. The three line-scanning analyzers return that
+	// error, and the walk then discards every usage they had already found, so
+	// one long line silently cost a whole file: a bundled dist/*.js of 70 KB on
+	// a single line calling crypto.createHash('md5') produced no finding, no
+	// warning, and "No cryptographic usage detected". Minified and bundled
+	// output is normal in published packages, so this was a false negative on
+	// the tool's core purpose in one of its most common inputs.
+	//
+	// readSource has already read the whole file into memory and capped it, so
+	// letting a token reach that same cap costs nothing that has not been spent.
+	s.Buffer(make([]byte, 0, 64*1024), maxSourceFile)
+	return s, nil
 }
 
 // readSource is openSource for an analyzer that needs the whole file, and is
@@ -158,13 +176,4 @@ func printableASCIIFraction(head []byte) float64 {
 		}
 	}
 	return float64(printable) / float64(len(head))
-}
-
-// scanErr reports a scanner failure that occurred after the file was opened,
-// so that a truncated read is not silently counted as a complete one.
-func scanErr(s *bufio.Scanner) error {
-	if err := s.Err(); err != nil && err != io.EOF {
-		return err
-	}
-	return nil
 }
