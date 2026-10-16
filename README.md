@@ -100,10 +100,12 @@ CryptoDeps goes beyond simple dependency scanning by analyzing your code's call 
 
 | Ecosystem | Manifest Files |
 |-----------|----------------|
-| Go | `go.mod`, `go.sum` |
-| npm | `package.json`, `package-lock.json` |
+| Go | `go.mod` |
+| npm | `package.json` |
 | Python | `requirements.txt` and the `requirements-*.txt` family, `requirements/*.txt`, `pyproject.toml` (PEP 621 and Poetry), `Pipfile` |
 | Maven | `pom.xml` |
+
+Lock files (`go.sum`, `package-lock.json` and the Python and Maven equivalents) are not read, so point CryptoDeps at the manifest beside one, for example `cryptodeps analyze ./go.mod` rather than `./go.sum`.
 
 ### Smart remediation
 

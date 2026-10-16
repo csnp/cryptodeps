@@ -54,6 +54,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency's source that they already had. The `Verify:` command is a POSIX
   shell command and has not been checked on Windows.
 
+- **The README listed `go.sum` and `package-lock.json` as supported
+  manifests.** CryptoDeps does not read lock files, and passing one stopped
+  with a bare `unsupported manifest file` and no next step. The manifest table
+  now lists only `go.mod` and `package.json` for Go and npm and says lock files
+  are not read. Passing `go.sum` or `package-lock.json` now says it is a lock
+  file and prints the command that scans the manifest beside it, for example
+  `cryptodeps analyze x/go.mod` for `x/go.sum`. The exit code is unchanged.
+
 ### Added
 
 - **A non-zero exit code now says what produced it.** When findings set the

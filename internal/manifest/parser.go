@@ -52,6 +52,9 @@ func DetectAndParse(path string) (*Manifest, error) {
 	// Detect ecosystem from filename
 	parser, err := getParser(filepath.Base(manifestPath))
 	if err != nil {
+		if lockErr := lockFileError(manifestPath); lockErr != nil {
+			return nil, lockErr
+		}
 		return nil, err
 	}
 
@@ -128,6 +131,37 @@ func getParserForPath(path string) (Parser, error) {
 		return &PythonParser{}, nil
 	}
 	return nil, fmt.Errorf("unsupported manifest file: %s", path)
+}
+
+// lockFileManifests maps a lock file to the manifest CryptoDeps reads in its
+// place. No lock file is parsed in any ecosystem.
+var lockFileManifests = map[string]string{
+	"go.sum":            "go.mod",
+	"package-lock.json": "package.json",
+}
+
+// lockFileError returns the error for a lock file passed as the manifest, or
+// nil when path is not one. The suggested command is built from the path the
+// user gave, so it runs as printed from the same directory.
+func lockFileError(path string) error {
+	manifest, ok := lockFileManifests[strings.ToLower(filepath.Base(path))]
+	if !ok {
+		return nil
+	}
+	next := filepath.Join(filepath.Dir(path), manifest)
+	return fmt.Errorf("%s is a lock file, and CryptoDeps does not read lock files (it reads %s); to scan this project, run: cryptodeps analyze %s",
+		path, manifest, shellQuote(next))
+}
+
+// shellQuote returns s as a single shell word, quoting it only when it holds a
+// character the shell would split on or expand.
+func shellQuote(s string) string {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:+,=@%", r)) {
+			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+		}
+	}
+	return s
 }
 
 // SupportedManifests returns a list of supported manifest filenames.

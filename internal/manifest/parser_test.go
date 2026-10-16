@@ -6,6 +6,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
@@ -384,6 +385,92 @@ func TestDetectAndParseUnsupportedFile(t *testing.T) {
 	_, err := DetectAndParse(unsupported)
 	if err == nil {
 		t.Error("Expected error for unsupported manifest file")
+	}
+}
+
+// chdirTemp moves the test into a fresh directory, so that a relative path
+// reaches the parser exactly as a user would type it.
+func chdirTemp(t *testing.T) {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(wd) })
+}
+
+// A lock file passed as the manifest used to get the same bare "unsupported
+// manifest file" as a Cargo.toml, with no way forward. The error has to say it
+// is a lock file and print the command that scans the manifest beside it, built
+// from the path the user gave so that it runs as printed.
+func TestDetectAndParseLockFileSuggestsManifest(t *testing.T) {
+	tests := []struct {
+		dir      string
+		lockFile string
+		manifest string
+		wantCmd  string
+	}{
+		{"x", "go.sum", "go.mod", "cryptodeps analyze x/go.mod"},
+		{"x", "package-lock.json", "package.json", "cryptodeps analyze x/package.json"},
+		{".", "go.sum", "go.mod", "cryptodeps analyze go.mod"},
+		{"my project", "package-lock.json", "package.json", "cryptodeps analyze 'my project/package.json'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.dir+"/"+tt.lockFile, func(t *testing.T) {
+			chdirTemp(t)
+			if err := os.MkdirAll(tt.dir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			lockPath := filepath.Join(tt.dir, tt.lockFile)
+			if err := os.WriteFile(lockPath, []byte("{}\n"), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Both entry points: analyze uses DetectAndParseAll by default and
+			// DetectAndParse under --no-workspaces.
+			_, single := DetectAndParse(lockPath)
+			_, _, all := DetectAndParseAll(lockPath)
+
+			for name, err := range map[string]error{"DetectAndParse": single, "DetectAndParseAll": all} {
+				if err == nil {
+					t.Fatalf("%s(%q) returned no error", name, lockPath)
+				}
+				msg := err.Error()
+				if !strings.Contains(msg, "lock file") {
+					t.Errorf("%s(%q) error does not say it is a lock file: %q", name, lockPath, msg)
+				}
+				if !strings.Contains(msg, tt.manifest) {
+					t.Errorf("%s(%q) error does not name %s: %q", name, lockPath, tt.manifest, msg)
+				}
+				if !strings.Contains(msg, tt.wantCmd) {
+					t.Errorf("%s(%q) error does not give the command %q: %q", name, lockPath, tt.wantCmd, msg)
+				}
+			}
+		})
+	}
+}
+
+// Any other unsupported file keeps the existing message. The lock-file hint
+// must not turn into a guess for files that have no manifest beside them.
+func TestDetectAndParseOtherUnsupportedKeepsMessage(t *testing.T) {
+	chdirTemp(t)
+	if err := os.MkdirAll("x", 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("x/Cargo.toml", []byte("[package]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := DetectAndParse("x/Cargo.toml")
+	if err == nil {
+		t.Fatal("DetectAndParse(x/Cargo.toml) returned no error")
+	}
+	if want := "unsupported manifest file: Cargo.toml"; err.Error() != want {
+		t.Errorf("DetectAndParse(x/Cargo.toml) error = %q, want %q", err.Error(), want)
 	}
 }
 
