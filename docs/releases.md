@@ -15,7 +15,7 @@ What each release delivered and what is planned next. Start with the [README](..
 - [x] Workspace & monorepo support (npm, pnpm, Go workspaces)
 - [x] Multi-project aggregated results
 
-## v1.3 (Next release)
+## v1.3 (Released)
 
 Correctness of what the tool reports, rather than new surfaces.
 
@@ -28,7 +28,7 @@ Correctness of what the tool reports, rather than new surfaces.
 - [x] Stable ordering across runs of the same scan, in all five formats
       (the scan timestamp and the CBOM serial number necessarily differ)
 
-## v1.4 (Planned)
+## v1.4 (Next release)
 
 - [ ] Improved reachability for npm/Python projects
 - [ ] Transitive dependency crypto inheritance
