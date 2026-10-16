@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every finding, so a filter never turns a failing build into a passing one. The
   exit codes themselves are unchanged.
 
+- **CBOM primitives were wrong for common algorithms.** The CycloneDX primitive
+  was chosen by the database category first, so HS256 was reported as a
+  `signature`, HMAC and bcrypt as a `hash`, ML-KEM as `key-agree`, and AES-GCM
+  and ChaCha20-Poly1305 as `other`. The algorithm is now consulted first: HMAC,
+  the HS256, HS384 and HS512 JWT algorithms, Poly1305 and CMAC are `mac`;
+  AES-GCM, AES-CCM, ChaCha20-Poly1305 and XChaCha20-Poly1305 are `ae`; ML-KEM
+  is `kem`; bcrypt, scrypt, Argon2, PBKDF2 and HKDF are `kdf`. Several names the
+  database carries that had no mapping, among them XSalsa20-Poly1305, A256GCM,
+  BIKE, HQC, SM2 and SM4, now resolve as well.
+
 ### Added
 
 - **A non-zero exit code now says what produced it.** When findings set the
@@ -29,6 +39,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the exit code is computed from. Findings a filter hid are given as one count,
   because reachability is not computed for them. Exit 0 prints nothing, exit 2
   keeps its own messages, and stdout is unchanged in every format.
+
+- **Every finding says what it rests on.** Most database records were inferred
+  from a package's name, description and keywords rather than read from the
+  package, and no report said so. A package whose description mentions
+  certificates was reported as using RSA, ECDSA, ECDH, AES-GCM and
+  ChaCha20-Poly1305, exactly like a finding a person had checked. Each finding
+  now carries a `basis` (`verified` for a curated record, `inferred` for one
+  generated from package metadata, `source` for one read from the package by
+  `--deep`) and a `confidence`. Both are set once, where the finding is looked
+  up or read, so every format reports the same value. The curated seed records,
+  which carried no confidence before, now say `verified`.
+  - Table and markdown: an inferred finding's row ends with `(inferred)`, and a
+    line after the findings says how many of them are inferred. A scan with no
+    inferred finding prints no such line.
+  - JSON: every finding carries `basis` and `confidence`.
+  - SARIF: each result carries `properties` with `quantumRisk`, `basis`,
+    `confidence` and, when reachability analysis ran, `reachability`. The
+    message adds a clause for reachability ("called from your code",
+    "reachable from your code", "in a dependency your code does not call") and
+    one for an inferred basis. Result levels are unchanged: reachability
+    analysis can miss calls, so lowering the level of a finding it did not see
+    called could let a called algorithm fall below a code-scanning gate.
+  - CBOM: each cryptographic asset carries `cryptodeps:quantumRisk`. Each
+    library carries `cryptodeps:algorithm:<name>:basis`,
+    `cryptodeps:algorithm:<name>:confidence` and, when reachability analysis
+    ran, `cryptodeps:algorithm:<name>:reachability` for every algorithm it
+    provides. An asset is shared by every library that provides it, so the
+    per-library facts sit on the library.
 
 ## [1.3.0] - 2026-07-30
 

@@ -99,12 +99,18 @@ func (db *Database) Lookup(ecosystem types.Ecosystem, name, version string) (*ty
 	return nil, false
 }
 
-// enrichWithRemediation adds remediation guidance to each CryptoUsage in the analysis.
+// enrichWithRemediation adds remediation guidance to each CryptoUsage in the
+// analysis, and records on each what it rests on.
+//
+// The basis is set here because every database finding passes through this
+// copy, so the table, markdown, JSON, SARIF and CBOM all read one value instead
+// of each deciding from the record's method for itself.
 func enrichWithRemediation(analysis *types.PackageAnalysis, ecosystem types.Ecosystem) *types.PackageAnalysis {
 	// Create a copy to avoid modifying the cached data
 	result := *analysis
 	result.Crypto = make([]types.CryptoUsage, len(analysis.Crypto))
 	copy(result.Crypto, analysis.Crypto)
+	result.LabelFindings()
 
 	// Enrich each crypto usage with remediation
 	for i := range result.Crypto {

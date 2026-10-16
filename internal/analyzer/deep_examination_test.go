@@ -356,3 +356,39 @@ public class Hashing {
 		t.Errorf("a finding read from the fetched archive is missing from the report:\n%s", out)
 	}
 }
+
+// TestDeepScanFindingsSayTheyWereReadFromSource checks the basis on a finding
+// that source analysis read, which the database lookup never sees. Without it
+// a finding read from the package carried no basis at all, and could not be
+// told apart from one inferred from the package's description.
+func TestDeepScanFindingsSayTheyWereReadFromSource(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("TMPDIR", tmpDir)
+	t.Setenv("PATH", t.TempDir())
+
+	project := mavenDeepFixture(t, tmpDir, map[string]string{
+		"com/google/common/util/concurrent/Hashing.java": `package com.google.common.util.concurrent;
+import java.security.MessageDigest;
+public class Hashing {
+    public byte[] digest(byte[] data) throws Exception {
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        return md.digest(data);
+    }
+}
+`,
+	})
+
+	_, dep, _ := runDeepScan(t, project)
+
+	if !dep.DeepAnalyzed || dep.Analysis == nil || len(dep.Analysis.Crypto) == 0 {
+		t.Fatalf("expected a deep-analyzed finding: %+v (%s)", dep, dep.Error)
+	}
+	for _, c := range dep.Analysis.Crypto {
+		if c.Basis != types.BasisSource {
+			t.Errorf("%s: basis = %q, want %q", c.Algorithm, c.Basis, types.BasisSource)
+		}
+		if c.Confidence == "" {
+			t.Errorf("%s: no confidence on a finding read from source", c.Algorithm)
+		}
+	}
+}

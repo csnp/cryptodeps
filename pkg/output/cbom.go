@@ -65,6 +65,12 @@ type cycloneDXComponent struct {
 	Purl             string                     `json:"purl,omitempty"`
 	Description      string                     `json:"description,omitempty"`
 	CryptoProperties *cycloneDXCryptoProperties `json:"cryptoProperties,omitempty"`
+	// Properties carries what the CycloneDX fields cannot. On an asset, the
+	// algorithm's quantum risk. On a library, for each algorithm it provides,
+	// what the finding rests on and whether the code calls it: an asset is
+	// shared by every library that provides the algorithm, so facts about one
+	// library's finding belong on that library.
+	Properties []cycloneDXProperty `json:"properties,omitempty"`
 }
 
 // cycloneDXDependency links a component to the components it depends on. This
@@ -133,6 +139,7 @@ func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanR
 	// "version": "1.3.2"} could not be traced back to the library it came from.
 	seenAlgorithm := make(map[string]bool)
 	dependsOn := make(map[string][]string)
+	libraryIndex := make(map[string]int)
 
 	for _, dep := range result.Dependencies {
 		if dep.Analysis == nil || len(dep.Analysis.Crypto) == 0 {
@@ -153,6 +160,7 @@ func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanR
 		}
 
 		if _, exists := dependsOn[depRef]; !exists {
+			libraryIndex[depRef] = len(bom.Components)
 			bom.Components = append(bom.Components, cycloneDXComponent{
 				Type:        "library",
 				BOMRef:      depRef,
@@ -179,10 +187,15 @@ func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanR
 							Primitive: cycloneDXPrimitive(crypto.Type, crypto.Algorithm),
 						},
 					},
+					Properties: []cycloneDXProperty{
+						{Name: "cryptodeps:quantumRisk", Value: string(crypto.QuantumRisk)},
+					},
 				})
 			}
 
 			dependsOn[depRef] = append(dependsOn[depRef], algorithmRef)
+			library := &bom.Components[libraryIndex[depRef]]
+			library.Properties = appendUniqueProperties(library.Properties, findingProperties(crypto)...)
 		}
 	}
 
@@ -244,10 +257,81 @@ func describeConstraint(constraint string) string {
 	return "Declared version constraint: " + constraint
 }
 
-// cycloneDXPrimitive maps this tool's algorithm categories onto the closed
+// findingProperties states, on the library that provides it, what one finding
+// rests on and, when reachability was analyzed, whether the code calls it.
+// Named by algorithm so a reader can join them to the asset with bom-ref
+// crypto:<algorithm>.
+func findingProperties(c types.CryptoUsage) []cycloneDXProperty {
+	prefix := "cryptodeps:algorithm:" + c.Algorithm + ":"
+	var props []cycloneDXProperty
+	if c.Basis != "" {
+		props = append(props, cycloneDXProperty{Name: prefix + "basis", Value: string(c.Basis)})
+	}
+	if c.Confidence != "" {
+		props = append(props, cycloneDXProperty{Name: prefix + "confidence", Value: string(c.Confidence)})
+	}
+	if c.Reachability != "" {
+		props = append(props, cycloneDXProperty{Name: prefix + "reachability", Value: string(c.Reachability)})
+	}
+	return props
+}
+
+// appendUniqueProperties adds each property not already present with the same
+// name and value. A library can hold several findings for one algorithm, at
+// different source locations, and they must not repeat the same statement.
+func appendUniqueProperties(props []cycloneDXProperty, add ...cycloneDXProperty) []cycloneDXProperty {
+	for _, p := range add {
+		present := false
+		for _, existing := range props {
+			if existing == p {
+				present = true
+				break
+			}
+		}
+		if !present {
+			props = append(props, p)
+		}
+	}
+	return props
+}
+
+// primitiveByAlgorithm names the CycloneDX primitive of algorithms whose
+// category in the database does not say it. The database files HS256 under
+// "signature", HMAC and the password hashes under "hash", ML-KEM under
+// "key-exchange" and every authenticated cipher under "encryption", so a
+// mapping by category alone called a JWT HMAC a signature, bcrypt a hash,
+// ML-KEM a key agreement and ChaCha20-Poly1305 "other". Keys are upper case.
+//
+// Only algorithms with one primitive whatever their category belong here. RSA,
+// for one, is a signature or an encryption scheme depending on use, and stays
+// resolved by category below.
+var primitiveByAlgorithm = map[string]string{
+	"HMAC": "mac", "HS256": "mac", "HS384": "mac", "HS512": "mac",
+	"POLY1305": "mac", "CMAC": "mac",
+	"AES-GCM": "ae", "AES-CCM": "ae", "A128GCM": "ae", "A192GCM": "ae", "A256GCM": "ae",
+	"CHACHA20-POLY1305": "ae", "XCHACHA20-POLY1305": "ae", "XSALSA20-POLY1305": "ae",
+	"ML-KEM": "kem", "KYBER": "kem", "BIKE": "kem", "HQC": "kem",
+	"BCRYPT": "kdf", "SCRYPT": "kdf", "ARGON2": "kdf", "PBKDF2": "kdf", "HKDF": "kdf",
+}
+
+// cycloneDXPrimitive maps this tool's algorithms and categories onto the closed
 // enum CycloneDX 1.6 allows for algorithmProperties.primitive. Emitting a value
 // outside that enum makes the whole document fail schema validation.
+//
+// The algorithm is consulted first and the category second, because the
+// category is the coarser of the two and is wrong for several common names.
 func cycloneDXPrimitive(cryptoType, algorithm string) string {
+	upper := strings.ToUpper(algorithm)
+	if primitive, ok := primitiveByAlgorithm[upper]; ok {
+		return primitive
+	}
+	switch {
+	case strings.HasPrefix(upper, "HMAC-"):
+		return "mac"
+	case strings.HasPrefix(upper, "AES-") && (strings.HasSuffix(upper, "-GCM") || strings.HasSuffix(upper, "-CCM")):
+		// AES-256-GCM and its kin, named with a key size.
+		return "ae"
+	}
 	switch strings.ToLower(cryptoType) {
 	case "key-exchange":
 		return "key-agree"
@@ -260,15 +344,18 @@ func cycloneDXPrimitive(cryptoType, algorithm string) string {
 	case "encryption":
 		// "encryption" covers several CycloneDX primitives, so resolve it by
 		// algorithm where the algorithm is recognized.
-		switch strings.ToUpper(algorithm) {
-		case "AES", "3DES", "DES", "BLOWFISH", "CAMELLIA", "IDEA", "CAST5", "SEED", "ARIA":
+		switch upper {
+		case "AES", "3DES", "DES", "BLOWFISH", "CAMELLIA", "IDEA", "CAST5", "SEED", "ARIA", "SM4":
 			return "block-cipher"
-		case "CHACHA20", "RC4", "SALSA20":
+		case "CHACHA20", "RC4", "SALSA20", "XSALSA20":
 			return "stream-cipher"
-		case "RSA", "ELGAMAL":
+		case "RSA", "RSA-OAEP", "ELGAMAL", "SM2":
 			return "pke"
-		case "ML-KEM", "KYBER":
-			return "kem"
+		}
+		// AES in a named mode other than the authenticated ones above, such
+		// as AES-128-CTR, is still the AES block cipher.
+		if strings.HasPrefix(upper, "AES-") {
+			return "block-cipher"
 		}
 		return "other"
 	default:

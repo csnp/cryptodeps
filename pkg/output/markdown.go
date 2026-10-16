@@ -72,6 +72,10 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	// Collect remediation for detailed section
 	remediationMap := make(map[string]string) // algorithm -> remediation
 
+	// Counted over the rows this report lists, which are the vulnerable and
+	// partial ones, so the note states a fraction of what the reader can see.
+	listed, inferred := 0, 0
+
 	// Vulnerable
 	fmt.Fprintf(w, "### Quantum Vulnerable\n\n")
 	hasVulnerable := false
@@ -92,12 +96,17 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 				// dependency entry in a pull request is enough. A version of
 				// "1.3.1\n\n## Scan result: CLEAN" put that heading in this
 				// report, in a table row, seven times.
-				fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n",
+				fmt.Fprintf(w, "| `%s` | %s | %s | %s%s |\n",
 					markdownCell(dependencyLabel(dep.Dependency.Name, dep.Dependency.Version)),
 					crypto.Algorithm,
 					crypto.Type,
 					crypto.Severity,
+					inferredMark(crypto.Inferred()),
 				)
+				listed++
+				if crypto.Inferred() {
+					inferred++
+				}
 				if crypto.Remediation != "" {
 					remediationMap[crypto.Algorithm] = crypto.Remediation
 				}
@@ -129,12 +138,17 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 				// dependency entry in a pull request is enough. A version of
 				// "1.3.1\n\n## Scan result: CLEAN" put that heading in this
 				// report, in a table row, seven times.
-				fmt.Fprintf(w, "| `%s` | %s | %s | %s |\n",
+				fmt.Fprintf(w, "| `%s` | %s | %s | %s%s |\n",
 					markdownCell(dependencyLabel(dep.Dependency.Name, dep.Dependency.Version)),
 					crypto.Algorithm,
 					crypto.Type,
 					crypto.Severity,
+					inferredMark(crypto.Inferred()),
 				)
+				listed++
+				if crypto.Inferred() {
+					inferred++
+				}
 				if crypto.Remediation != "" {
 					remediationMap[crypto.Algorithm] = crypto.Remediation
 				}
@@ -145,6 +159,10 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 		fmt.Fprintf(w, "No partial-risk algorithms found.\n")
 	}
 	fmt.Fprintf(w, "\n")
+
+	if note := inferredNote(inferred, listed); note != "" {
+		fmt.Fprintf(w, "> %s\n\n", note)
+	}
 
 	// Remediation Guidance
 	if f.Options.ShowRemediation && len(remediationMap) > 0 {
