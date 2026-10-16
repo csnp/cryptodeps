@@ -227,9 +227,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Initialize database with embedded + cached data
-	// Auto-update if not in offline mode (silently fetches if cache > 7 days old)
-	db := database.NewWithAutoUpdate(!offlineFlag)
+	// Initialize database with embedded + cached data. Without --offline, a
+	// missing cache or one older than 7 days is refreshed first. A refresh that
+	// fails is said once, on stderr, with the database used instead: it used to
+	// be dropped, and the same project gave different results on two runs.
+	db, updateFailure := database.NewWithAutoUpdate(!offlineFlag)
+	if updateFailure != nil {
+		fmt.Fprint(os.Stderr, updateFailure.Notice())
+	}
 
 	// Create analyzer
 	a := analyzer.New(db, analyzer.Options{
@@ -241,7 +246,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	})
 
 	// Get formatter
-	formatter, err := output.GetFormatter(format)
+	formatter, err := newFormatter(format, db)
 	if err != nil {
 		return err
 	}
@@ -299,6 +304,16 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// newFormatter returns the formatter for format, told which database the scan
+// reads. The description is taken from the database the analyzer is given, so
+// a report cannot name one database while its findings came from another.
+func newFormatter(format output.Format, db *database.Database) (output.Formatter, error) {
+	info := db.Info()
+	opts := output.DefaultOptions()
+	opts.Database = &info
+	return output.GetFormatterWithOptions(format, opts)
 }
 
 // exitCodeForSummary is the single reading of a scan for gate purposes.

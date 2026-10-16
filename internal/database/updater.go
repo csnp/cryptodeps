@@ -5,14 +5,18 @@ package database
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
+	"github.com/csnp/qramm-cryptodeps/internal/githubapi"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -29,7 +33,17 @@ const (
 	// DefaultCacheMaxAge is how long before the cache is considered stale.
 	// After this duration, auto-update will fetch a fresh copy.
 	DefaultCacheMaxAge = 7 * 24 * time.Hour // 7 days
+
+	// urlAlternative is the way round a rate-limited release lookup that only
+	// `cryptodeps update` has: --url downloads the file directly and skips the
+	// lookup, which is the request GitHub refused.
+	urlAlternative = "pass --url with the address of a crypto-database.json from https://github.com/csnp/cryptodeps/releases"
 )
+
+// releasesAPI is the release list the database is looked up in. It is a
+// variable so that a test can point it at a local server; DefaultRepoAPI is the
+// value every build ships with.
+var releasesAPI = DefaultRepoAPI
 
 // UpdateConfig contains configuration for database updates.
 type UpdateConfig struct {
@@ -175,7 +189,7 @@ func (u *Updater) Update() (*UpdateResult, error) {
 // findDatabaseURL searches GitHub releases to find the crypto-database.json asset.
 // It looks for releases with the database file attached, preferring db-* tagged releases.
 func (u *Updater) findDatabaseURL() (string, error) {
-	req, err := http.NewRequest("GET", DefaultRepoAPI, nil)
+	req, err := http.NewRequest("GET", releasesAPI, nil)
 	if err != nil {
 		return "", err
 	}
@@ -195,6 +209,9 @@ func (u *Updater) findDatabaseURL() (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if limited := githubapi.RateLimited(resp, urlAlternative); limited != nil {
+			return "", limited
+		}
 		return "", fmt.Errorf("GitHub API error: HTTP %d", resp.StatusCode)
 	}
 
@@ -296,20 +313,25 @@ func (u *Updater) IsCacheStale(maxAge time.Duration) bool {
 	return time.Since(info.ModTime()) > maxAge
 }
 
-// AutoUpdate checks if the cache is stale and updates silently if needed.
-// This is designed to run transparently during normal operations.
-// Returns true if an update was performed, false otherwise.
-// Errors are silently ignored to not disrupt the user experience.
-func (u *Updater) AutoUpdate() bool {
+// AutoUpdate refreshes the cache when it is missing or older than
+// DefaultCacheMaxAge, without progress output. It reports whether an update ran
+// and succeeded, and the error when one was attempted and failed. A cache that
+// is still fresh is not an error.
+//
+// It used to discard that error. The scan then ran on whichever database was
+// left, the same project gave different results on two runs, and nothing said
+// why.
+func (u *Updater) AutoUpdate() (bool, error) {
 	// Don't auto-update if cache is fresh
 	if !u.IsCacheStale(DefaultCacheMaxAge) {
-		return false
+		return false, nil
 	}
 
-	// Attempt silent update (no verbose output)
 	u.config.Verbose = false
-	_, err := u.Update()
-	return err == nil
+	if _, err := u.Update(); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // LoadCachedDatabase loads the cached database and merges it with the embedded data.
@@ -336,29 +358,97 @@ func (db *Database) LoadCachedDatabase() error {
 		db.addToIndex(&remoteDB.Packages[i])
 	}
 
+	db.source = types.DatabaseDownloaded
+	db.version = remoteDB.Version
+	db.updatedAt = remoteDB.UpdatedAt
+
 	return nil
 }
 
 // NewWithCachedData creates a database with both embedded and cached data.
 func NewWithCachedData() *Database {
-	return NewWithAutoUpdate(false)
+	// No update is attempted, so there is no failure to report.
+	db, _ := NewWithAutoUpdate(false)
+	return db
 }
 
-// NewWithAutoUpdate creates a database and optionally auto-updates if the cache is stale.
-// When autoUpdate is true and the cache is older than 7 days, it will silently fetch
-// the latest database in the background. This provides a seamless user experience
-// while keeping the database current.
-func NewWithAutoUpdate(autoUpdate bool) *Database {
+// NewWithAutoUpdate creates a database from the embedded data and the cached
+// download. When autoUpdate is true and the cache is missing or older than 7
+// days, it first tries to download the latest database.
+//
+// A download that was attempted and failed is returned as an *UpdateFailure
+// naming the database loaded in its place. It is nil when no download was
+// needed or the download worked.
+func NewWithAutoUpdate(autoUpdate bool) (*Database, *UpdateFailure) {
 	db := NewEmbedded()
 
-	// Auto-update if requested and cache is stale
+	var updateErr error
 	if autoUpdate {
-		updater := NewUpdater(nil)
-		updater.AutoUpdate() // Silent, errors ignored
+		_, updateErr = NewUpdater(nil).AutoUpdate()
 	}
 
 	// Load cached data (fails silently if not available)
 	_ = db.LoadCachedDatabase()
 
-	return db
+	if updateErr != nil {
+		return db, &UpdateFailure{Err: updateErr, Used: db.Info()}
+	}
+	return db, nil
+}
+
+// UpdateFailure is an automatic database download that was attempted and
+// failed, with the database that was loaded in its place.
+type UpdateFailure struct {
+	Err  error
+	Used types.DatabaseInfo
+}
+
+// Notice is the message for the person running the scan: what failed, which
+// database the scan used instead, and the next step. It is meant for stderr,
+// once per run, so that machine-readable output on stdout is unaffected.
+func (f *UpdateFailure) Notice() string {
+	var b strings.Builder
+
+	var limited *githubapi.RateLimitError
+	if errors.As(f.Err, &limited) {
+		fmt.Fprintf(&b, "Warning: the latest crypto database could not be downloaded. %s.\n", limited.Reason())
+	} else {
+		fmt.Fprintf(&b, "Warning: the latest crypto database could not be downloaded (%s).\n", printable(f.Err.Error()))
+	}
+
+	if f.Used.Source == types.DatabaseDownloaded {
+		var about []string
+		if f.Used.Version != "" {
+			about = append(about, "version "+printable(f.Used.Version))
+		}
+		if date := f.Used.UpdatedDate(); date != "" {
+			about = append(about, "dated "+printable(date))
+		}
+		about = append(about, fmt.Sprintf("%d packages", f.Used.PackageCount))
+		fmt.Fprintf(&b, "This scan used the copy downloaded earlier instead (%s).\n", strings.Join(about, ", "))
+	} else {
+		fmt.Fprintf(&b, "This scan used the built-in database instead (%d packages).\n", f.Used.PackageCount)
+	}
+
+	switch {
+	case limited != nil && limited.WithToken:
+		b.WriteString("Run 'cryptodeps update' after the limit resets to download the latest database.\n")
+	case limited != nil:
+		b.WriteString("Run 'cryptodeps update' to download the latest database. Setting GITHUB_TOKEN to a GitHub token raises GitHub's limit, and cryptodeps uses it whenever it is set.\n")
+	default:
+		b.WriteString("Run 'cryptodeps update' to try the download again.\n")
+	}
+	return b.String()
+}
+
+// printable returns s unchanged when every character in it is printable, and
+// quoted otherwise, so that text taken from a downloaded file or a server
+// response cannot write its own lines or terminal controls into the notice.
+func printable(s string) string {
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return strconv.Quote(s)
+		}
+	}
+	return s
 }
