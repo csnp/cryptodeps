@@ -51,18 +51,27 @@ cryptodeps:
   image: golang:1.22
   script:
     - go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
-    - cryptodeps analyze . --format json > crypto-findings.json
+    - cryptodeps analyze . --format json --fail-on none > crypto-findings.json
     - cryptodeps analyze . --fail-on vulnerable
   artifacts:
+    when: always
     paths:
       - crypto-findings.json
 ```
+
+The report line passes `--fail-on none` so that it exits 0 and the next line
+runs. The last line is the one that fails the job, and `when: always` uploads
+the report when it does. GitLab's default, `on_success`, uploads artifacts only
+when the job succeeds.
 
 ## Exit Codes
 
 | Code | Meaning | Trigger |
 |------|---------|---------|
 | `0` | Success | No findings matching `--fail-on` threshold |
-| `1` | Vulnerable | Quantum-vulnerable crypto detected |
+| `1` | Vulnerable | Quantum-vulnerable crypto detected, with any `--fail-on` threshold except `none` |
 | `2` | Error | Analysis failed, including any manifest that was found but could not be read |
-| `3` | Partial | Partial-risk crypto detected (with `--fail-on partial`) |
+| `3` | Partial | Partial-risk crypto detected with `--fail-on partial`, or crypto with no quantum-vulnerable finding with `--fail-on any` |
+
+[Exit codes](commands.md#exit-codes) on the Commands page gives, for each
+`--fail-on` threshold, when it exits 1 and when it exits 3.

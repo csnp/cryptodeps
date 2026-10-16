@@ -7,7 +7,8 @@ What each release delivered and what is planned next. Start with the [README](..
 - [x] Multi-ecosystem dependency scanning (Go, npm, Python, Maven)
 - [x] Reachability analysis for Go projects
 - [x] Multiple output formats (table, JSON, CBOM, SARIF, Markdown)
-- [x] Quantum risk classification with CNSA 2.0 timeline
+- [x] Quantum risk classification, with a migration timeline in the remediation
+      guidance (for example "Short-term (1-2 years)")
 - [x] Smart remediation guidance with NIST references
 - [x] GitHub repository URL scanning
 - [x] Crypto database of curated and inferred package entries, refreshed weekly
