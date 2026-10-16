@@ -49,6 +49,11 @@ type Dependency struct {
 	Ecosystem Ecosystem `json:"ecosystem" yaml:"ecosystem"`
 	Direct    bool      `json:"direct" yaml:"direct"`                     // true if direct dependency, false if transitive
 	Parent    string    `json:"parent,omitempty" yaml:"parent,omitempty"` // parent dependency (for transitive)
+	// Line is the 1-based line of the manifest that declares this dependency,
+	// or 0 when the parser could not tell. Every finding about the dependency
+	// is reported against it, because a finding that names no line leaves the
+	// reader to search the manifest for what the report is talking about.
+	Line int `json:"line,omitempty" yaml:"line,omitempty"`
 }
 
 // Location represents a source code location.

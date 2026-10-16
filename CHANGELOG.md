@@ -29,6 +29,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database carries that had no mapping, among them XSalsa20-Poly1305, A256GCM,
   BIKE, HQC, SM2 and SM4, now resolve as well.
 
+- **Findings named no file and no line, and gave no way to confirm them.**
+  Every finding from the crypto database reported
+  `"location": {"file": "", "line": 0}` in JSON, SARIF located each result at
+  the manifest with no region, and the remediation blocks in the table said
+  what to change without saying where. Each parser now records the line that
+  declares a dependency: the module's line in `go.mod`, the key's line in its
+  `package.json` block, the requirement's line in a requirements file, the
+  dependency's line in its `pyproject.toml` or `Pipfile` section, and the
+  `<artifactId>` line in `pom.xml`. The dependency carries it as `line`, and:
+  - JSON: each database finding's `location` is the manifest, relative to the
+    scan root, and that line.
+  - SARIF: each result's physical location carries `region.startLine`.
+  - Table and markdown: each algorithm's block lists every dependency that
+    provides it as `Where: <manifest>:<line>  <dependency> <version>`, and
+    gives one `Verify:` command, a `grep -n` of the manifest that runs from
+    the scan root with nothing installed and no network. Dependency names and
+    paths in the command are shell-quoted, because they come from the
+    manifest under scan.
+
+  A dependency whose line cannot be found, such as a Poetry table written as
+  one inline table, keeps line 0, and the outputs then name the file alone.
+  Findings from `--deep` source analysis keep the location inside the
+  dependency's source that they already had. The `Verify:` command is a POSIX
+  shell command and has not been checked on Windows.
+
 ### Added
 
 - **A non-zero exit code now says what produced it.** When findings set the
