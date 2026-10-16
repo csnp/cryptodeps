@@ -1,6 +1,6 @@
 # Commands
 
-Every command and flag, the report filters, the exit codes and common workflows. Start with the [README](../README.md) if you are new to CryptoDeps.
+The `analyze`, `update`, `status` and `version` commands, the `analyze` flags, the report filters, the exit codes and common workflows. Start with the [README](../README.md) if you are new to CryptoDeps.
 
 ## CLI Reference
 
