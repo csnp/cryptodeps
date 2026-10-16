@@ -115,9 +115,11 @@ Exit codes (for CI/CD):
   2 - Analysis error, including any manifest that was found but could not be read
   3 - Partial-risk findings detected (with --fail-on=partial)
 
---risk and --min-severity filter the report. The summary and the exit code are
-computed from what the filters leave, so that every number in the output
-describes the same set of findings.
+--risk and --min-severity choose which findings the report shows, and the
+summary counts what is shown. The exit code counts every finding the scan made,
+including the ones a filter hid, so a filter never turns a failing build into a
+passing one. When findings set the exit code to 1 or 3, a line on stderr after
+the report says which findings did.
 
 Examples:
   cryptodeps analyze .
@@ -244,6 +246,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// What the exit code was computed from, for the explanation below.
+	var summary types.ScanSummary
+	var projects []*types.ScanResult
+
 	// Run analysis - use workspace discovery by default
 	if noWorkspacesFlag {
 		// Single manifest analysis (legacy behavior)
@@ -257,6 +263,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 
 		exitCode = determineExitCode(result, failOn)
+		summary, projects = result.Summary, []*types.ScanResult{result}
 	} else {
 		// Multi-project workspace discovery (default)
 		multiResult, err := a.AnalyzeAll(path)
@@ -269,6 +276,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 
 		exitCode = determineExitCodeMulti(multiResult, failOn)
+		summary, projects = multiResult.TotalSummary, multiResult.Projects
 
 		// An unread manifest means the scan is incomplete, whatever the
 		// findings say. That is an analysis error, so it takes precedence over
@@ -282,6 +290,12 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if types.IncompleteScan(multiResult.Skipped) {
 			exitCode = ExitError
 		}
+	}
+
+	// The exit code counts findings the report may not show, so say which
+	// findings produced it. stderr only: stdout is the report in every format.
+	if line := exitExplanation(exitCode, failOn, summary, projects); line != "" {
+		fmt.Fprintln(os.Stderr, line)
 	}
 
 	return nil
