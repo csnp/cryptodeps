@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
@@ -167,8 +168,8 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	// Remediation Guidance
 	if f.Options.ShowRemediation && len(remediationMap) > 0 {
 		fmt.Fprintf(w, "## Remediation Guidance\n\n")
-		fmt.Fprintf(w, "| Algorithm | Recommended Action |\n")
-		fmt.Fprintf(w, "|-----------|--------------------|\n")
+		fmt.Fprintf(w, "| Algorithm | Recommended Action | Where | Verify |\n")
+		fmt.Fprintf(w, "|-----------|--------------------|-------|--------|\n")
 		// Sorted, not ranged: Go randomises map iteration, so this table was the
 		// one part of the report that still shuffled between runs of the same
 		// scan after the other four formats were made deterministic.
@@ -177,8 +178,29 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 			algos = append(algos, algo)
 		}
 		sort.Strings(algos)
+		// The declarations are named as the summary table above names the
+		// manifest, so the Verify command runs from the directory that path
+		// is relative to. Every piece comes from the tree under scan and goes
+		// into a cell, so each is rendered as a cell code span.
+		manifest := manifestForReport(root, result.Manifest)
 		for _, algo := range algos {
-			fmt.Fprintf(w, "| **%s** | %s |\n", algo, remediationMap[algo])
+			where, verify := "", ""
+			if manifest != "" {
+				providers := declarationsOf(result.Dependencies, algo)
+				refs := make([]string, 0, len(providers))
+				for _, d := range providers {
+					label := d.Name
+					if d.Version != "" {
+						label += " " + d.Version
+					}
+					refs = append(refs, "`"+markdownCell(declarationRef(manifest, d.Line))+"` `"+markdownCell(label)+"`")
+				}
+				where = strings.Join(refs, "<br>")
+				if command := verifyDeclarationCommand(result.Ecosystem, manifest, providers); command != "" {
+					verify = "`" + markdownCell(command) + "`"
+				}
+			}
+			fmt.Fprintf(w, "| **%s** | %s | %s | %s |\n", algo, remediationMap[algo], where, verify)
 		}
 		fmt.Fprintf(w, "\n")
 	}

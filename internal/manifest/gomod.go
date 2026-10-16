@@ -46,7 +46,9 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 	blockEntry := regexp.MustCompile(`^\s*(\S+)\s+(\S+)(?:\s+//\s*indirect)?`)
 
 	scanner := bufio.NewScanner(file)
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 
 		// Skip empty lines and comments
@@ -74,6 +76,7 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 				Version:   cleanVersion(matches[2]),
 				Ecosystem: types.EcosystemGo,
 				Direct:    !strings.Contains(line, "// indirect"),
+				Line:      lineNo,
 			}
 			deps = append(deps, dep)
 			continue
@@ -97,6 +100,9 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 					Version:   cleanVersion(matches[2]),
 					Ecosystem: types.EcosystemGo,
 					Direct:    !strings.Contains(line, "// indirect") && !inIndirectBlock,
+					// The module's own line, not the "require (" that opens
+					// the block: that line names no dependency.
+					Line: lineNo,
 				}
 				deps = append(deps, dep)
 			}

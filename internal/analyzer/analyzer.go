@@ -15,6 +15,7 @@ import (
 	"github.com/csnp/qramm-cryptodeps/internal/analyzer/reachability"
 	"github.com/csnp/qramm-cryptodeps/internal/database"
 	"github.com/csnp/qramm-cryptodeps/internal/manifest"
+	"github.com/csnp/qramm-cryptodeps/pkg/output"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -176,7 +177,7 @@ func (a *Analyzer) Analyze(path string) (*types.ScanResult, error) {
 		return nil, err
 	}
 
-	return a.analyzeManifest(m, path)
+	return a.analyzeManifest(m, path, path)
 }
 
 // AnalyzeAll discovers and analyzes all manifests in a directory (including workspaces).
@@ -192,7 +193,7 @@ func (a *Analyzer) AnalyzeAll(path string) (*types.MultiProjectResult, error) {
 
 	var results []*types.ScanResult
 	for _, m := range manifests {
-		result, err := a.analyzeManifest(m, filepath.Dir(m.Path))
+		result, err := a.analyzeManifest(m, filepath.Dir(m.Path), path)
 		if err != nil {
 			skipped = append(skipped, types.SkippedManifest{Path: m.Path, Reason: err.Error()})
 			continue
@@ -212,8 +213,11 @@ func (a *Analyzer) AnalyzeAll(path string) (*types.MultiProjectResult, error) {
 	return multi, nil
 }
 
-// analyzeManifest analyzes a single parsed manifest.
-func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*types.ScanResult, error) {
+// analyzeManifest analyzes a single parsed manifest. scanRoot is the path the
+// scan was asked to cover, which findings name the manifest relative to.
+func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath, scanRoot string) (*types.ScanResult, error) {
+	declaredIn := output.RelativeToScanRoot(scanRoot, m.Path)
+
 	result := &types.ScanResult{
 		Project:      projectPath,
 		Manifest:     m.Path,
@@ -225,7 +229,7 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath string) (*t
 
 	// Analyze each dependency
 	for _, dep := range m.Dependencies {
-		depResult := a.analyzeDependency(dep)
+		depResult := a.analyzeDependency(dep, declaredIn)
 
 		// Apply the reporting filters before the summary is accumulated, so
 		// that the counts, the table and the exit code all describe the same
@@ -391,8 +395,9 @@ func (a *Analyzer) generateHints(result *types.ScanResult) []string {
 	return hints
 }
 
-// analyzeDependency analyzes a single dependency.
-func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResult {
+// analyzeDependency analyzes a single dependency declared in the manifest
+// declaredIn, which is named relative to the scan root.
+func (a *Analyzer) analyzeDependency(dep types.Dependency, declaredIn string) types.DependencyResult {
 	result := types.DependencyResult{
 		Dependency: dep,
 		InDatabase: false,
@@ -401,6 +406,16 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResul
 	// Look up in database
 	analysis, found := a.db.Lookup(dep.Ecosystem, dep.Name, dep.Version)
 	if found {
+		// A database record says what a package contains, so the one place in
+		// this project a finding from it can point at is the line declaring
+		// the dependency. Without this every finding reported an empty file and
+		// line 0. Lookup returns a copy of the record with its own Crypto
+		// slice, so writing here cannot move another manifest's findings.
+		for i := range analysis.Crypto {
+			if analysis.Crypto[i].Location.File == "" {
+				analysis.Crypto[i].Location = types.Location{File: declaredIn, Line: dep.Line}
+			}
+		}
 		result.Analysis = analysis
 		result.InDatabase = true
 		return result

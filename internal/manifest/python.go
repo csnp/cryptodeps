@@ -66,15 +66,20 @@ type pyProject struct {
 
 // parsePyProject reads PEP 621 and Poetry dependency declarations.
 func (p *PythonParser) parsePyProject(path string) ([]types.Dependency, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	var doc pyProject
-	if _, err := toml.DecodeFile(path, &doc); err != nil {
+	if _, err := toml.Decode(string(data), &doc); err != nil {
 		return nil, fmt.Errorf("parse pyproject.toml: %w", err)
 	}
 
 	var deps []types.Dependency
 	seen := make(map[string]bool)
+	lines := pyprojectDeclarationLines(data)
 
-	add := func(name, version string, direct bool) {
+	add := func(section, name, version string, direct bool) {
 		name = normalizePyPIName(name)
 		if name == "" || seen[name] {
 			return
@@ -85,18 +90,19 @@ func (p *PythonParser) parsePyProject(path string) ([]types.Dependency, error) {
 			Version:   strings.TrimSpace(version),
 			Ecosystem: types.EcosystemPyPI,
 			Direct:    direct,
+			Line:      lines[section][name],
 		})
 	}
 
 	// PEP 621: dependencies are PEP 508 requirement strings.
 	for _, spec := range doc.Project.Dependencies {
 		name, version := splitRequirement(spec)
-		add(name, version, true)
+		add("project.dependencies", name, version, true)
 	}
 	for _, group := range doc.Project.OptionalDependencies {
 		for _, spec := range group {
 			name, version := splitRequirement(spec)
-			add(name, version, false)
+			add("project.optional-dependencies", name, version, false)
 		}
 	}
 
@@ -107,14 +113,14 @@ func (p *PythonParser) parsePyProject(path string) ([]types.Dependency, error) {
 		if strings.EqualFold(name, "python") {
 			continue // the interpreter requirement, not a package
 		}
-		add(name, poetryVersion(constraint), true)
+		add("tool.poetry.dependencies", name, poetryVersion(constraint), true)
 	}
 	for name, constraint := range poetry.DevDependencies {
-		add(name, poetryVersion(constraint), false)
+		add("tool.poetry.dev-dependencies", name, poetryVersion(constraint), false)
 	}
 	for _, group := range poetry.Group {
 		for name, constraint := range group.Dependencies {
-			add(name, poetryVersion(constraint), false)
+			add("tool.poetry.group", name, poetryVersion(constraint), false)
 		}
 	}
 
@@ -130,15 +136,20 @@ type pipfile struct {
 
 // parsePipfile reads a Pipfile.
 func (p *PythonParser) parsePipfile(path string) ([]types.Dependency, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
 	var doc pipfile
-	if _, err := toml.DecodeFile(path, &doc); err != nil {
+	if _, err := toml.Decode(string(data), &doc); err != nil {
 		return nil, fmt.Errorf("parse Pipfile: %w", err)
 	}
 
 	var deps []types.Dependency
 	seen := make(map[string]bool)
+	lines := pipfileDeclarationLines(data)
 
-	add := func(name string, constraint any, direct bool) {
+	add := func(section, name string, constraint any, direct bool) {
 		name = normalizePyPIName(name)
 		if name == "" || seen[name] {
 			return
@@ -153,18 +164,256 @@ func (p *PythonParser) parsePipfile(path string) ([]types.Dependency, error) {
 			Version:   strings.TrimSpace(version),
 			Ecosystem: types.EcosystemPyPI,
 			Direct:    direct,
+			Line:      lines[section][name],
 		})
 	}
 
 	for name, constraint := range doc.Packages {
-		add(name, constraint, true)
+		add("packages", name, constraint, true)
 	}
 	for name, constraint := range doc.DevPackages {
-		add(name, constraint, false)
+		add("dev-packages", name, constraint, false)
 	}
 
 	sort.Slice(deps, func(i, j int) bool { return deps[i].Name < deps[j].Name })
 	return deps, nil
+}
+
+// pyprojectDeclarationLines maps each pyproject.toml dependency section to the
+// line declaring each package in it, by PEP 503 name.
+//
+// The TOML decoder keeps no positions, so the raw text is scanned for the
+// sections the decoder reads, and only those: a name is located where the
+// section declares it, not wherever it first appears in the file, which is as
+// often a comment, a description or the project's own name. Sections are kept
+// apart because the same package can be declared in two of them, and the line
+// reported must be the declaration that produced the dependency.
+func pyprojectDeclarationLines(data []byte) map[string]map[string]int {
+	lines := make(map[string]map[string]int)
+	for _, d := range scanTOMLDecls(data) {
+		p := d.path
+		switch {
+		case pathIs(p, "project", "dependencies"):
+			for _, s := range d.strings {
+				name, _ := splitRequirement(s.value)
+				recordDeclarationLine(lines, "project.dependencies", name, s.line)
+			}
+		case len(p) == 3 && p[0] == "project" && p[1] == "optional-dependencies":
+			for _, s := range d.strings {
+				name, _ := splitRequirement(s.value)
+				recordDeclarationLine(lines, "project.optional-dependencies", name, s.line)
+			}
+		// A Poetry dependency is a key of its section, written as a key line,
+		// as a dotted key on a parent table, or as a sub-table of its own. All
+		// three put the package name at the same depth of the path.
+		case len(p) >= 4 && p[0] == "tool" && p[1] == "poetry" &&
+			(p[2] == "dependencies" || p[2] == "dev-dependencies"):
+			recordDeclarationLine(lines, "tool.poetry."+p[2], p[3], d.line)
+		case len(p) >= 6 && p[0] == "tool" && p[1] == "poetry" && p[2] == "group" && p[4] == "dependencies":
+			recordDeclarationLine(lines, "tool.poetry.group", p[5], d.line)
+		}
+	}
+	return lines
+}
+
+// pipfileDeclarationLines is pyprojectDeclarationLines for a Pipfile, whose
+// packages are keys of its [packages] and [dev-packages] tables.
+func pipfileDeclarationLines(data []byte) map[string]map[string]int {
+	lines := make(map[string]map[string]int)
+	for _, d := range scanTOMLDecls(data) {
+		if len(d.path) >= 2 && (d.path[0] == "packages" || d.path[0] == "dev-packages") {
+			recordDeclarationLine(lines, d.path[0], d.path[1], d.line)
+		}
+	}
+	return lines
+}
+
+// recordDeclarationLine keeps the first line a section declares name on.
+func recordDeclarationLine(lines map[string]map[string]int, section, name string, line int) {
+	name = normalizePyPIName(name)
+	if name == "" {
+		return
+	}
+	if lines[section] == nil {
+		lines[section] = make(map[string]int)
+	}
+	if _, ok := lines[section][name]; !ok {
+		lines[section][name] = line
+	}
+}
+
+// tomlDecl is one key or table header of a TOML document: its full dotted path
+// from the root, the line it is written on, and every string in its value
+// together with the line that string is on.
+type tomlDecl struct {
+	path    []string
+	line    int
+	strings []tomlString
+}
+
+type tomlString struct {
+	value string
+	line  int
+}
+
+// tomlToken is a lexical token of a TOML document. kind is 's' for a string,
+// 'w' for a bare word, 'n' for a newline, or the punctuation byte itself.
+type tomlToken struct {
+	kind byte
+	text string
+	line int
+}
+
+// scanTOMLDecls lists the keys and table headers of a TOML document that has
+// already decoded successfully, with their lines.
+//
+// It is a reader of positions and not a TOML parser: the decoder has already
+// decided what the document means, and this only says where. It does have to
+// read strings and arrays properly, because a line that merely looks like a
+// header or a key inside a multi-line string or a multi-line array is not one.
+// Inline tables are not entered: their keys are not reported.
+func scanTOMLDecls(data []byte) []tomlDecl {
+	toks := lexTOML(string(data))
+	var decls []tomlDecl
+	var table []string
+	for i := 0; i < len(toks); {
+		t := toks[i]
+		switch t.kind {
+		case 'n':
+			i++
+		case '[':
+			// [table] or [[array.of.tables]]
+			j := i + 1
+			if j < len(toks) && toks[j].kind == '[' {
+				j++
+			}
+			parts, next := readTOMLKey(toks, j)
+			table = parts
+			decls = append(decls, tomlDecl{path: parts, line: t.line})
+			i = skipTOMLLine(toks, next)
+		case 's', 'w':
+			parts, next := readTOMLKey(toks, i)
+			if next >= len(toks) || toks[next].kind != '=' {
+				i = skipTOMLLine(toks, next)
+				continue
+			}
+			decl := tomlDecl{path: append(append([]string{}, table...), parts...), line: t.line}
+			depth := 0
+			for i = next + 1; i < len(toks); i++ {
+				v := toks[i]
+				if v.kind == 'n' && depth == 0 {
+					break
+				}
+				switch v.kind {
+				case '[', '{':
+					depth++
+				case ']', '}':
+					if depth > 0 {
+						depth--
+					}
+				case 's':
+					decl.strings = append(decl.strings, tomlString{value: v.text, line: v.line})
+				}
+			}
+			decls = append(decls, decl)
+		default:
+			i = skipTOMLLine(toks, i+1)
+		}
+	}
+	return decls
+}
+
+// readTOMLKey reads a dotted key starting at toks[i] and returns its parts and
+// the index after it.
+func readTOMLKey(toks []tomlToken, i int) ([]string, int) {
+	var parts []string
+	for i < len(toks) && (toks[i].kind == 's' || toks[i].kind == 'w') {
+		parts = append(parts, toks[i].text)
+		i++
+		if i < len(toks) && toks[i].kind == '.' {
+			i++
+			continue
+		}
+		break
+	}
+	return parts, i
+}
+
+// skipTOMLLine returns the index of the next newline token at or after i.
+func skipTOMLLine(toks []tomlToken, i int) int {
+	for i < len(toks) && toks[i].kind != 'n' {
+		i++
+	}
+	return i
+}
+
+// lexTOML splits a TOML document into tokens, dropping whitespace and comments.
+func lexTOML(src string) []tomlToken {
+	var toks []tomlToken
+	line := 1
+	for i := 0; i < len(src); {
+		c := src[i]
+		switch {
+		case c == '\n':
+			toks = append(toks, tomlToken{kind: 'n', line: line})
+			line++
+			i++
+		case c == ' ' || c == '\t' || c == '\r':
+			i++
+		case c == '#':
+			for i < len(src) && src[i] != '\n' {
+				i++
+			}
+		case strings.HasPrefix(src[i:], `"""`) || strings.HasPrefix(src[i:], "'''"):
+			delim := src[i : i+3]
+			end := strings.Index(src[i+3:], delim)
+			if end < 0 {
+				return toks // unterminated, so nothing after it can be placed
+			}
+			body := src[i+3 : i+3+end]
+			toks = append(toks, tomlToken{kind: 's', text: body, line: line})
+			line += strings.Count(body, "\n")
+			i += 3 + end + 3
+		case c == '"':
+			var b strings.Builder
+			j := i + 1
+			for j < len(src) && src[j] != '"' && src[j] != '\n' {
+				if src[j] == '\\' && j+1 < len(src) {
+					b.WriteByte(src[j+1])
+					j += 2
+					continue
+				}
+				b.WriteByte(src[j])
+				j++
+			}
+			toks = append(toks, tomlToken{kind: 's', text: b.String(), line: line})
+			if j < len(src) && src[j] == '"' {
+				j++
+			}
+			i = j
+		case c == '\'':
+			j := i + 1
+			for j < len(src) && src[j] != '\'' && src[j] != '\n' {
+				j++
+			}
+			toks = append(toks, tomlToken{kind: 's', text: src[i+1 : j], line: line})
+			if j < len(src) && src[j] == '\'' {
+				j++
+			}
+			i = j
+		case strings.IndexByte("[]{}=,.", c) >= 0:
+			toks = append(toks, tomlToken{kind: c, line: line})
+			i++
+		default:
+			j := i
+			for j < len(src) && strings.IndexByte(" \t\r\n#[]{}=,.\"'", src[j]) < 0 {
+				j++
+			}
+			toks = append(toks, tomlToken{kind: 'w', text: src[i:j], line: line})
+			i = j
+		}
+	}
+	return toks
 }
 
 // poetryVersion extracts a version constraint from a Poetry or Pipfile value,
@@ -287,7 +536,9 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 	requirementPattern := regexp.MustCompile(`^([a-zA-Z0-9_-]+)(?:\[[^\]]+\])?([<>=!~]+)?(.+)?`)
 
 	scanner := bufio.NewScanner(file)
+	lineNo := 0
 	for scanner.Scan() {
+		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 
 		// Skip empty lines and comments
@@ -326,6 +577,7 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 				Version:   version,
 				Ecosystem: types.EcosystemPyPI,
 				Direct:    true,
+				Line:      lineNo,
 			})
 		}
 	}

@@ -107,6 +107,21 @@ type sarifLocation struct {
 
 type sarifPhysicalLocation struct {
 	ArtifactLocation sarifArtifactLocation `json:"artifactLocation"`
+	// Region is absent when the line is not known. SARIF requires a startLine
+	// of at least 1, so a zero line cannot be written as one.
+	Region *sarifRegion `json:"region,omitempty"`
+}
+
+type sarifRegion struct {
+	StartLine int `json:"startLine"`
+}
+
+// declarationRegion returns the region of a manifest line, or nil for line 0.
+func declarationRegion(line int) *sarifRegion {
+	if line < 1 {
+		return nil
+	}
+	return &sarifRegion{StartLine: line}
 }
 
 type sarifArtifactLocation struct {
@@ -286,6 +301,10 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 					Message: sarifMessage{
 						Text: msgText,
 					},
+					// The result is located at the manifest, so its line is the
+					// dependency's declaration in that manifest. A finding from
+					// source analysis carries a location inside the dependency's
+					// own source, which is not a line of this file.
 					Locations: []sarifLocation{
 						{
 							PhysicalLocation: sarifPhysicalLocation{
@@ -293,6 +312,7 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 									URI:       uri,
 									URIBaseID: baseID,
 								},
+								Region: declarationRegion(dep.Dependency.Line),
 							},
 						},
 					},

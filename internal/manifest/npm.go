@@ -4,6 +4,7 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"sort"
@@ -48,12 +49,13 @@ func (p *NPMParser) Parse(path string) ([]types.Dependency, error) {
 	}
 
 	var deps []types.Dependency
+	lines := npmDeclarationLines(data)
 
 	// Each block is emitted in sorted order. Go randomises map iteration, so
 	// ranging over these maps directly made the whole report shuffle between
 	// runs of the same scan, which breaks diffable CI output and reproducible
 	// SBOMs even though the finding set itself was stable.
-	for _, block := range []map[string]string{
+	for i, block := range []map[string]string{
 		pkg.Dependencies,
 		pkg.DevDependencies,
 		pkg.PeerDependencies,
@@ -65,11 +67,95 @@ func (p *NPMParser) Parse(path string) ([]types.Dependency, error) {
 				Version:   cleanNPMVersion(block[name]),
 				Ecosystem: types.EcosystemNPM,
 				Direct:    true,
+				Line:      lines[npmDependencyBlocks[i]][name],
 			})
 		}
 	}
 
 	return deps, nil
+}
+
+// npmDependencyBlocks names the package.json objects that declare
+// dependencies, in the order Parse emits them.
+var npmDependencyBlocks = [...]string{
+	"dependencies", "devDependencies", "peerDependencies", "optionalDependencies",
+}
+
+// npmDeclarationLines finds the line of every key in each dependency block.
+//
+// json.Unmarshal keeps no positions, so the document is walked a second time
+// as a token stream, which reports the byte offset of each key it reads. A
+// search of the raw text for the name would be wrong as often as it is right:
+// the same name is routinely a script, a description or an override earlier in
+// the file. The block names are matched the way json.Unmarshal matches them,
+// ignoring case, and a block that appears twice is merged with the later key
+// winning, which is also what json.Unmarshal does with a map. Anything that
+// does not walk cleanly leaves its dependencies at line 0.
+func npmDeclarationLines(data []byte) map[string]map[string]int {
+	lines := make(map[string]map[string]int)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return lines
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return lines
+		}
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return lines
+		}
+		key, _ := keyTok.(string)
+		block := ""
+		for _, b := range npmDependencyBlocks {
+			if strings.EqualFold(key, b) {
+				block = b
+			}
+		}
+		if block == "" || len(value) == 0 || value[0] != '{' {
+			continue
+		}
+		// RawMessage holds the value's exact bytes, so it starts len(value)
+		// before the offset the decoder has reached.
+		base := dec.InputOffset() - int64(len(value))
+		if lines[block] == nil {
+			lines[block] = make(map[string]int)
+		}
+		inner := json.NewDecoder(bytes.NewReader(value))
+		if _, err := inner.Token(); err != nil {
+			continue
+		}
+		for inner.More() {
+			nameTok, err := inner.Token()
+			if err != nil {
+				break
+			}
+			name, ok := nameTok.(string)
+			if !ok {
+				break
+			}
+			// A JSON string cannot hold a raw newline, so the line the key
+			// ends on is the line it starts on.
+			lines[block][name] = lineAtOffset(data, base+inner.InputOffset())
+			var skip json.RawMessage
+			if err := inner.Decode(&skip); err != nil {
+				break
+			}
+		}
+	}
+	return lines
+}
+
+// lineAtOffset returns the 1-based line holding the byte at offset.
+func lineAtOffset(data []byte, offset int64) int {
+	if offset < 0 {
+		return 0
+	}
+	if offset > int64(len(data)) {
+		offset = int64(len(data))
+	}
+	return bytes.Count(data[:offset], []byte("\n")) + 1
 }
 
 // sortedKeys returns a map's keys in a stable order.

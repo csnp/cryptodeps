@@ -174,13 +174,21 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 	// Display detailed remediation for vulnerable findings
 	// For reachability-analyzed projects: show CONFIRMED first, then PLANNING
 	// For other projects: show all vulnerable/partial algorithms
+	//
+	// Each block names its dependencies' declarations the way the header above
+	// names the manifest, so the Verify command it prints runs from the same
+	// directory the header's path is relative to.
+	decl := declarationScope{
+		manifest:     manifestForReport(root, result.Manifest),
+		dependencies: result.Dependencies,
+	}
 	if hasReachability {
 		if f.Options.ShowRemediation {
-			f.printDetailedRemediation(w, allCrypto, result.Ecosystem)
+			f.printDetailedRemediation(w, allCrypto, result.Ecosystem, decl)
 		}
 	} else {
 		// Always show remediation for non-reachability projects (Python, npm, Java, etc.)
-		f.printSimpleRemediation(w, allCrypto, result.Ecosystem)
+		f.printSimpleRemediation(w, allCrypto, result.Ecosystem, decl)
 	}
 
 	// Count deep-analyzed packages
@@ -472,8 +480,16 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 	return append(listed, unknown...)
 }
 
+// declarationScope is what a remediation block needs to say where its
+// algorithm comes from: the manifest as the report names it, and the
+// dependencies declared in it.
+type declarationScope struct {
+	manifest     string
+	dependencies []types.DependencyResult
+}
+
 // printSimpleRemediation prints remediation for non-reachability projects.
-func (f *TableFormatter) printSimpleRemediation(w io.Writer, allCrypto []cryptoDetail, ecosystem types.Ecosystem) {
+func (f *TableFormatter) printSimpleRemediation(w io.Writer, allCrypto []cryptoDetail, ecosystem types.Ecosystem, decl declarationScope) {
 	seen := make(map[string]bool)
 	var toRemediate []cryptoDetail
 
@@ -501,14 +517,14 @@ func (f *TableFormatter) printSimpleRemediation(w io.Writer, allCrypto []cryptoD
 	fmt.Fprintln(w, strings.Repeat("═", 90))
 
 	for _, c := range toRemediate {
-		f.printRemediationItem(w, c, ecosystem)
+		f.printRemediationItem(w, c, ecosystem, decl)
 	}
 	fmt.Fprintln(w)
 }
 
 // printDetailedRemediation prints actionable remediation guidance.
 // Shows remediation for CONFIRMED findings first, then PLANNING for available vulnerable algorithms.
-func (f *TableFormatter) printDetailedRemediation(w io.Writer, allCrypto []cryptoDetail, ecosystem types.Ecosystem) {
+func (f *TableFormatter) printDetailedRemediation(w io.Writer, allCrypto []cryptoDetail, ecosystem types.Ecosystem, decl declarationScope) {
 	seen := make(map[string]bool)
 	var confirmed []cryptoDetail
 	var planning []cryptoDetail
@@ -550,7 +566,7 @@ func (f *TableFormatter) printDetailedRemediation(w io.Writer, allCrypto []crypt
 		fmt.Fprintln(w, strings.Repeat("═", 90))
 
 		for _, c := range confirmed {
-			f.printRemediationItem(w, c, ecosystem)
+			f.printRemediationItem(w, c, ecosystem, decl)
 		}
 		fmt.Fprintln(w)
 	}
@@ -564,14 +580,14 @@ func (f *TableFormatter) printDetailedRemediation(w io.Writer, allCrypto []crypt
 		fmt.Fprintln(w)
 
 		for _, c := range planning {
-			f.printRemediationItem(w, c, ecosystem)
+			f.printRemediationItem(w, c, ecosystem, decl)
 		}
 		fmt.Fprintln(w)
 	}
 }
 
 // printRemediationItem prints a single remediation entry.
-func (f *TableFormatter) printRemediationItem(w io.Writer, c cryptoDetail, ecosystem types.Ecosystem) {
+func (f *TableFormatter) printRemediationItem(w io.Writer, c cryptoDetail, ecosystem types.Ecosystem, decl declarationScope) {
 	r := crypto.GetDetailedRemediation(c.algorithm, "", ecosystem)
 	if r == nil {
 		return
@@ -585,6 +601,25 @@ func (f *TableFormatter) printRemediationItem(w io.Writer, c cryptoDetail, ecosy
 
 	fmt.Fprintf(w, "\n%s %s%s\n", riskIcon(c.risk), c.algorithm, priorityMarker)
 	fmt.Fprintln(w, strings.Repeat("─", 50))
+
+	// Where each dependency providing the algorithm is declared, and one
+	// command that confirms it, ahead of the fix: a block that said what to
+	// change and not where left the reader searching the manifest for it. The
+	// name, version and path all come from the tree under scan, so each is
+	// escaped for this report, and the command is quoted for the shell.
+	if decl.manifest != "" {
+		providers := declarationsOf(decl.dependencies, c.algorithm)
+		for _, d := range providers {
+			label := reportSafe(d.Name)
+			if d.Version != "" {
+				label += " " + reportSafe(d.Version)
+			}
+			fmt.Fprintf(w, "  Where:        %s  %s\n", reportSafe(declarationRef(decl.manifest, d.Line)), label)
+		}
+		if command := verifyDeclarationCommand(ecosystem, decl.manifest, providers); command != "" {
+			fmt.Fprintf(w, "  Verify:       %s\n", reportSafe(command))
+		}
+	}
 
 	// Summary and replacement
 	fmt.Fprintf(w, "  Action:       %s\n", r.Summary)

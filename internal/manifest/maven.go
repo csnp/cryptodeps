@@ -4,6 +4,7 @@
 package manifest
 
 import (
+	"bytes"
 	"encoding/xml"
 	"os"
 	"regexp"
@@ -138,8 +139,9 @@ func (p *MavenParser) Parse(path string) ([]types.Dependency, error) {
 	}
 
 	var deps []types.Dependency
+	lines := mavenArtifactLines(data)
 
-	for _, dep := range pom.Dependencies.Dependency {
+	for i, dep := range pom.Dependencies.Dependency {
 		// Skip test-scope dependencies for now
 		isTest := dep.Scope == "test"
 
@@ -157,13 +159,71 @@ func (p *MavenParser) Parse(path string) ([]types.Dependency, error) {
 		// Resolve property placeholders in version
 		version := resolveProperties(dep.Version, props)
 
+		line := 0
+		if i < len(lines) {
+			line = lines[i]
+		}
+
 		deps = append(deps, types.Dependency{
 			Name:      name,
 			Version:   version,
 			Ecosystem: types.EcosystemMaven,
 			Direct:    !isTest, // Mark test deps as not direct for now
+			Line:      line,
 		})
 	}
 
 	return deps, nil
+}
+
+// mavenArtifactLines returns, for each <dependency> directly under
+// <project><dependencies> in document order, the line of its <artifactId>, or
+// 0 where it has none. That is the order xml.Unmarshal fills
+// pomDependencies.Dependency in, so the two line up by index.
+//
+// The artifactId line is the one reported because it is the line that names
+// the dependency: a <dependency> element can open several lines above it. The
+// walk follows the same element path the struct tags do, so the
+// dependencyManagement and profile blocks, which declare versions and not
+// dependencies, are not counted.
+func mavenArtifactLines(data []byte) []int {
+	var lines []int
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	var path []string
+	for {
+		// The offset before the token is where its "<" is, because the
+		// whitespace before an element arrives as a token of its own.
+		start := dec.InputOffset()
+		tok, err := dec.Token()
+		if err != nil {
+			return lines
+		}
+		switch t := tok.(type) {
+		case xml.StartElement:
+			path = append(path, t.Name.Local)
+			switch {
+			case pathIs(path, "project", "dependencies", "dependency"):
+				lines = append(lines, 0)
+			case pathIs(path, "project", "dependencies", "dependency", "artifactId"):
+				lines[len(lines)-1] = lineAtOffset(data, start)
+			}
+		case xml.EndElement:
+			if len(path) > 0 {
+				path = path[:len(path)-1]
+			}
+		}
+	}
+}
+
+// pathIs reports whether path is exactly want.
+func pathIs(path []string, want ...string) bool {
+	if len(path) != len(want) {
+		return false
+	}
+	for i := range want {
+		if path[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
