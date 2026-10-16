@@ -292,10 +292,25 @@ func (d DependencyResult) Examined() bool {
 	return d.InDatabase || d.DeepAnalyzed
 }
 
+// ScanSource names the remote repository a scan read its manifests from. It is
+// nil for a scan of a local path.
+//
+// A fetched repository is written to a temporary directory and scanned from
+// there, so without this a report names only that directory, and a CI log or a
+// SARIF upload cannot show which repository and branch were actually scanned.
+type ScanSource struct {
+	Repository string `json:"repository" yaml:"repository"` // e.g. https://github.com/owner/repo
+	Branch     string `json:"branch" yaml:"branch"`
+	// Path is the subdirectory of the repository the manifests were read from,
+	// when the argument named one.
+	Path string `json:"path,omitempty" yaml:"path,omitempty"`
+}
+
 // ScanResult represents the complete result of scanning a project.
 type ScanResult struct {
 	Project      string             `json:"project" yaml:"project"`
 	Manifest     string             `json:"manifest" yaml:"manifest"`
+	Source       *ScanSource        `json:"source,omitempty" yaml:"source,omitempty"`
 	Ecosystem    Ecosystem          `json:"ecosystem" yaml:"ecosystem"`
 	ScanDate     time.Time          `json:"scanDate" yaml:"scanDate"`
 	Dependencies []DependencyResult `json:"dependencies" yaml:"dependencies"`
@@ -398,6 +413,7 @@ func IncompleteScan(skipped []SkippedManifest) bool {
 // MultiProjectResult represents the result of scanning multiple projects/manifests.
 type MultiProjectResult struct {
 	RootPath string        `json:"rootPath" yaml:"rootPath"`
+	Source   *ScanSource   `json:"source,omitempty" yaml:"source,omitempty"`
 	ScanDate time.Time     `json:"scanDate" yaml:"scanDate"`
 	Projects []*ScanResult `json:"projects" yaml:"projects"`
 	// Skipped lists manifests that were found but could not be analyzed. An

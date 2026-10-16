@@ -7,12 +7,15 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/csnp/qramm-cryptodeps/internal/githubapi"
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 )
 
 // useGitHubAPI points the repository lookup at url for one test.
@@ -38,7 +41,7 @@ func TestFetchGitHubManifestsNamesRateLimit(t *testing.T) {
 	defer server.Close()
 	useGitHubAPI(t, server.URL)
 
-	_, err := FetchGitHubManifests(&GitHubRepo{Owner: "example", Repo: "project"})
+	_, _, err := FetchGitHubManifests(&GitHubRepo{Owner: "example", Repo: "project"})
 	if err == nil {
 		t.Fatal("FetchGitHubManifests succeeded against a rate-limited API")
 	}
@@ -71,11 +74,103 @@ func TestFetchGitHubManifestsKeepsOtherStatusCodes(t *testing.T) {
 	defer server.Close()
 	useGitHubAPI(t, server.URL)
 
-	_, err := FetchGitHubManifests(&GitHubRepo{Owner: "example", Repo: "missing"})
+	_, _, err := FetchGitHubManifests(&GitHubRepo{Owner: "example", Repo: "missing"})
 	if err == nil {
 		t.Fatal("FetchGitHubManifests succeeded against a 404")
 	}
 	if !strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "rate limit") {
 		t.Errorf("a 404 should name its status, not the rate limit: %v", err)
+	}
+}
+
+// inEmptyDir runs the test from a new empty directory, so relative arguments
+// such as servics/api name nothing on disk unless the test creates them.
+func inEmptyDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(previous); err != nil {
+			t.Fatal(err)
+		}
+	})
+	return dir
+}
+
+func offline(t *testing.T) {
+	t.Helper()
+	netguard.SetOffline(true)
+	t.Cleanup(func() { netguard.SetOffline(false) })
+}
+
+func TestResolveTargetOfflineRefusesAMissingPath(t *testing.T) {
+	inEmptyDir(t)
+	offline(t)
+
+	cases := map[string]string{
+		"servics/api":                    "No file or directory named servics/api. --offline does not fetch repositories.",
+		"https://github.com/servics/api": "No file or directory named https://github.com/servics/api. --offline does not fetch repositories.",
+		"./servics/api":                  "No file or directory named ./servics/api.",
+	}
+	for arg, want := range cases {
+		repo, err := ResolveTarget(arg)
+		if err == nil {
+			t.Errorf("ResolveTarget(%q) = %+v with --offline set, want an error", arg, repo)
+			continue
+		}
+		if err.Error() != want {
+			t.Errorf("ResolveTarget(%q) error = %q, want %q", arg, err.Error(), want)
+		}
+	}
+}
+
+// A local directory shaped like owner/repo is a local path, offline or not.
+func TestResolveTargetPrefersALocalPath(t *testing.T) {
+	dir := inEmptyDir(t)
+	if err := os.MkdirAll(filepath.Join(dir, "services", "api"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, off := range []bool{false, true} {
+		netguard.SetOffline(off)
+		repo, err := ResolveTarget("services/api")
+		if err != nil || repo != nil {
+			t.Errorf("offline=%v: ResolveTarget(services/api) = %+v, %v; want a local path", off, repo, err)
+		}
+	}
+	netguard.SetOffline(false)
+}
+
+func TestResolveTargetOnlineReadsAMissingShorthandAsARepository(t *testing.T) {
+	inEmptyDir(t)
+	repo, err := ResolveTarget("servics/api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repo == nil || repo.Owner != "servics" || repo.Repo != "api" {
+		t.Fatalf("ResolveTarget(servics/api) = %+v, want servics/api", repo)
+	}
+	if got, want := repo.RepositoryURL(), "https://github.com/servics/api"; got != want {
+		t.Errorf("RepositoryURL() = %q, want %q", got, want)
+	}
+
+	// Not shaped like a repository: left to the analysis to report.
+	if repo, err := ResolveTarget("./servics/api"); err != nil || repo != nil {
+		t.Errorf("ResolveTarget(./servics/api) = %+v, %v; want a local path", repo, err)
+	}
+}
+
+// The fetch refuses on its own as well, so a caller that skips ResolveTarget
+// still cannot reach GitHub with --offline set.
+func TestFetchGitHubManifestsRefusesWhenOffline(t *testing.T) {
+	offline(t)
+	dir, branch, err := FetchGitHubManifests(&GitHubRepo{Owner: "servics", Repo: "api"})
+	if !errors.Is(err, netguard.ErrOffline) {
+		t.Fatalf("FetchGitHubManifests = %q, %q, %v; want an error wrapping netguard.ErrOffline", dir, branch, err)
 	}
 }

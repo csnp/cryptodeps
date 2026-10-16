@@ -17,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/csnp/qramm-cryptodeps/internal/githubapi"
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -94,9 +95,7 @@ func NewUpdater(config *UpdateConfig) *Updater {
 
 	return &Updater{
 		config: config,
-		client: &http.Client{
-			Timeout: config.Timeout,
-		},
+		client: netguard.Client(config.Timeout),
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -498,7 +499,10 @@ func (f *Fetcher) fetchGoModule(dep types.Dependency) (string, error) {
 	}
 
 	// Get the module cache path (Go handles caching internally)
-	cmd := exec.Command("go", "mod", "download", "-json", moduleSpec)
+	cmd, err := netguard.Command("go", "mod", "download", "-json", moduleSpec)
+	if err != nil {
+		return "", err
+	}
 	output, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("go mod download failed: %w", err)
@@ -576,7 +580,10 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 	// and untrusted input parsed as a flag is the argument-injection half of the
 	// same class as untrusted input parsed as a path. The separator ends flag
 	// parsing, and ordinary and scoped specs are unaffected by it.
-	cmd := exec.Command("npm", "pack", "--ignore-scripts", "--", packageSpec)
+	cmd, err := netguard.Command("npm", "pack", "--ignore-scripts", "--", packageSpec)
+	if err != nil {
+		return "", f.discardPartialFetch(packageDir, err, "npm pack not run")
+	}
 	cmd.Dir = packageDir
 	if err := cmd.Run(); err != nil {
 		return "", f.discardPartialFetch(packageDir, err, "npm pack failed")
@@ -641,8 +648,11 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 	// fetch to built wheels closes that, at the cost of the packages that publish
 	// no wheel, which are now reported as not examined with the reason named
 	// rather than analyzed by running them.
-	cmd := exec.Command("pip", "download", "--no-deps", "--only-binary", ":all:",
+	cmd, err := netguard.Command("pip", "download", "--no-deps", "--only-binary", ":all:",
 		"-d", packageDir, packageSpec)
+	if err != nil {
+		return "", f.discardPartialFetch(packageDir, err, "pip download not run")
+	}
 	if err := cmd.Run(); err != nil {
 		return "", f.discardPartialFetch(packageDir, err,
 			"pip download failed (source distributions are not built, so a package that "+
@@ -727,13 +737,19 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	jarPath := filepath.Join(packageDir, jarBase+"-sources.jar")
 
 	// Use curl to download (available on most systems)
-	cmd := exec.Command("curl", "-sL", "-o", jarPath, "-f", sourcesURL)
+	cmd, err := netguard.Command("curl", "-sL", "-o", jarPath, "-f", sourcesURL)
+	if err != nil {
+		return "", f.discardPartialFetch(packageDir, err, "Maven artifact not downloaded")
+	}
 	if err := cmd.Run(); err != nil {
 		// Try without -sources suffix (main jar) as fallback
 		mainURL := fmt.Sprintf("https://repo1.maven.org/maven2/%s/%s/%s/%s-%s.jar",
 			groupPath, artifactID, dep.Version, artifactID, dep.Version)
 		jarPath = filepath.Join(packageDir, jarBase+".jar")
-		cmd = exec.Command("curl", "-sL", "-o", jarPath, "-f", mainURL)
+		cmd, err = netguard.Command("curl", "-sL", "-o", jarPath, "-f", mainURL)
+		if err != nil {
+			return "", f.discardPartialFetch(packageDir, err, "Maven artifact not downloaded")
+		}
 		if err := cmd.Run(); err != nil {
 			return "", f.discardPartialFetch(packageDir, err,
 				"failed to download Maven artifact (tried sources and main JAR)")

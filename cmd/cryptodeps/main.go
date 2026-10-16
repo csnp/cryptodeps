@@ -13,6 +13,7 @@ import (
 
 	"github.com/csnp/qramm-cryptodeps/internal/analyzer"
 	"github.com/csnp/qramm-cryptodeps/internal/database"
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/output"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 	buildinfo "github.com/csnp/qramm-cryptodeps/pkg/version"
@@ -107,7 +108,10 @@ The path can be:
   - A specific manifest file
   - "." for the current directory
   - A GitHub URL (https://github.com/owner/repo)
-  - A GitHub shorthand (owner/repo)
+  - A GitHub shorthand (owner/repo), used only when no local path of that
+    name exists
+
+With --offline nothing is fetched: an argument that is not a local path exits 2.
 
 Exit codes (for CI/CD):
   0 - No quantum-vulnerable findings
@@ -154,7 +158,7 @@ var statusCmd = &cobra.Command{
 func init() {
 	// Analyze command flags
 	analyzeCmd.Flags().StringVarP(&formatFlag, "format", "f", "table", "Output format (table, json, cbom, sarif, markdown)")
-	analyzeCmd.Flags().BoolVar(&offlineFlag, "offline", false, "Only use local database, no downloads")
+	analyzeCmd.Flags().BoolVar(&offlineFlag, "offline", false, "Make no network connections: use the local database and local paths only")
 	analyzeCmd.Flags().BoolVar(&deepFlag, "deep", false, "Force on-demand analysis for unknown packages")
 	analyzeCmd.Flags().BoolVar(&reachabilityFlag, "reachability", true, "Analyze call graph to find actually-used crypto (Go only, use --reachability=false to disable)")
 	analyzeCmd.Flags().BoolVar(&noWorkspacesFlag, "no-workspaces", false, "Disable workspace/monorepo discovery (scan single manifest only)")
@@ -180,27 +184,36 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// rejected during parsing, before this line runs.
 	cmd.SilenceUsage = true
 
+	// First, before anything below can reach the network. The HTTP clients and
+	// downloading subprocesses are built by netguard, which refuses them while
+	// this is set.
+	netguard.SetOffline(offlineFlag)
+
 	// Default to current directory
 	path := "."
 	if len(args) > 0 {
 		path = args[0]
 	}
 
-	// Check if path is a GitHub URL
-	var tempDir string
-	if analyzer.IsGitHubURL(path) {
-		repo, err := analyzer.ParseGitHubURL(path)
-		if err != nil {
-			return err
-		}
-
-		fmt.Fprintf(os.Stderr, "Fetching %s/%s from GitHub...\n", repo.Owner, repo.Repo)
-		tempDir, err = analyzer.FetchGitHubManifests(repo)
+	// Decide what the argument names before anything else runs. Under
+	// --offline an argument that is not a local path is an error here, rather
+	// than a request to GitHub.
+	repo, err := analyzer.ResolveTarget(path)
+	if err != nil {
+		return err
+	}
+	var source *types.ScanSource
+	if repo != nil {
+		fmt.Fprintln(os.Stderr, analyzer.FetchNotice(path, repo))
+		tempDir, branch, err := analyzer.FetchGitHubManifests(repo)
 		if err != nil {
 			return fmt.Errorf("failed to fetch from GitHub: %w", err)
 		}
 		defer analyzer.CleanupTempDir(tempDir)
 		path = tempDir
+		// Carried into every output format, which would otherwise name only
+		// the temporary directory the manifests were written to.
+		source = &types.ScanSource{Repository: repo.RepositoryURL(), Branch: branch, Path: repo.Path}
 	}
 
 	// Reject unknown filter values before doing any work. Silently ignoring
@@ -262,6 +275,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("analysis failed: %w", err)
 		}
+		result.Source = source
 
 		if err := formatter.Format(result, os.Stdout); err != nil {
 			return err
@@ -275,6 +289,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("analysis failed: %w", err)
 		}
+		multiResult.Source = source
 
 		if err := formatter.FormatMulti(multiResult, os.Stdout); err != nil {
 			return err

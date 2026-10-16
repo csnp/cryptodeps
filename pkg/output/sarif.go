@@ -26,10 +26,35 @@ type sarifLog struct {
 }
 
 type sarifRun struct {
-	Tool               sarifTool                    `json:"tool"`
-	OriginalURIBaseIDs map[string]sarifArtifactBase `json:"originalUriBaseIds,omitempty"`
-	Invocations        []sarifInvocation            `json:"invocations,omitempty"`
-	Results            []sarifResult                `json:"results"`
+	Tool                     sarifTool                    `json:"tool"`
+	VersionControlProvenance []sarifVersionControl        `json:"versionControlProvenance,omitempty"`
+	OriginalURIBaseIDs       map[string]sarifArtifactBase `json:"originalUriBaseIds,omitempty"`
+	Invocations              []sarifInvocation            `json:"invocations,omitempty"`
+	Results                  []sarifResult                `json:"results"`
+}
+
+// sarifVersionControl is the SARIF 2.1.0 versionControlDetails object. It names
+// the repository and branch a fetched scan read, because SRCROOT for such a
+// run is a temporary directory that says nothing about what was scanned. The
+// subdirectory, when the argument named one, has no field of its own in the
+// specification and goes in the property bag.
+type sarifVersionControl struct {
+	RepositoryURI string            `json:"repositoryUri"`
+	Branch        string            `json:"branch,omitempty"`
+	Properties    map[string]string `json:"properties,omitempty"`
+}
+
+// sarifProvenance is the versionControlProvenance for a scan, empty for a
+// local one.
+func sarifProvenance(s *types.ScanSource) []sarifVersionControl {
+	if s == nil {
+		return nil
+	}
+	vc := sarifVersionControl{RepositoryURI: s.Repository, Branch: s.Branch}
+	if s.Path != "" {
+		vc.Properties = map[string]string{"path": s.Path}
+	}
+	return []sarifVersionControl{vc}
 }
 
 // sarifInvocation carries whether the run was complete. A manifest that could
@@ -144,7 +169,7 @@ func (f *SARIFFormatter) Format(result *types.ScanResult, w io.Writer) error {
 	if root == "" {
 		root = filepath.Dir(result.Manifest)
 	}
-	return f.write(w, root, []*types.ScanResult{result}, nil)
+	return f.write(w, root, result.Source, []*types.ScanResult{result}, nil)
 }
 
 // FormatMulti writes multi-project scan results as SARIF.
@@ -159,11 +184,12 @@ func (f *SARIFFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	if w == nil {
 		return errors.New("writer cannot be nil")
 	}
-	return f.write(w, result.RootPath, result.Projects, result.Skipped)
+	return f.write(w, result.RootPath, result.Source, result.Projects, result.Skipped)
 }
 
-// write emits one SARIF run covering every supplied project.
-func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanResult, skipped []types.SkippedManifest) error {
+// write emits one SARIF run covering every supplied project. source is nil for
+// a local scan.
+func (f *SARIFFormatter) write(w io.Writer, root string, source *types.ScanSource, projects []*types.ScanResult, skipped []types.SkippedManifest) error {
 	// A uriBaseId names a directory, and the root has to be absolute before any
 	// manifest path can be expressed relative to it. Both normalizations live in
 	// scanRootDir, which CBOM calls too: when SARIF did this inline and CBOM did
@@ -184,6 +210,7 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 						Rules:           make([]sarifRule, 0),
 					},
 				},
+				VersionControlProvenance: sarifProvenance(source),
 				OriginalURIBaseIDs: map[string]sarifArtifactBase{
 					sarifURIBaseID: {URI: "file://" + filepath.ToSlash(absRoot) + "/"},
 				},

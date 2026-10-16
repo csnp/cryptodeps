@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -23,7 +24,7 @@ type MavenClient struct {
 // NewMavenClient creates a new Maven Central client.
 func NewMavenClient() *MavenClient {
 	return &MavenClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: netguard.Client(30 * time.Second),
 		baseURL:    "https://search.maven.org",
 	}
 }
