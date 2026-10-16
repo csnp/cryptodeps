@@ -46,10 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     gives one `Verify:` command, a `grep -n` of the manifest that runs from
     the scan root with nothing installed and no network. Dependency names and
     paths in the command are shell-quoted, because they come from the
-    manifest under scan. When a path or a name holds a character the report
-    escapes, such as a control character, a backtick or a pipe, no `Verify:`
-    command is printed, because the escaped text is not safe to paste into a
-    shell; the `Where:` line still names the file.
+    manifest under scan. The command is printed only when the manifest path
+    and every name it searches for hold nothing but ASCII letters, digits,
+    spaces and the characters `@%+:,./_[]-`, none of which has a quoting role
+    in POSIX shells, fish or PowerShell. For any other path or name, such as
+    one holding a quote, a backslash, a backtick, a pipe or a control
+    character, no `Verify:` command is printed, and the `Where:` line still
+    names the file.
 
   A dependency whose line cannot be found, such as a Poetry table written as
   one inline table, keeps line 0, and the outputs then name the file alone.
