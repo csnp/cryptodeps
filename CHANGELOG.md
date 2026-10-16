@@ -1131,8 +1131,11 @@ the 1.2.2 and the 1.3.0 binary during the release test, and each is tracked.
 
 ### Security
 - Identifies quantum-vulnerable algorithms (RSA, ECDSA, Ed25519, DH, DSA)
-- Maps findings to CNSA 2.0 compliance requirements
 - Supports OMB M-23-02 cryptographic inventory requirements
+
+This entry previously also said the release "Maps findings to CNSA 2.0
+compliance requirements". No release has implemented a CNSA 2.0 mapping, so
+that line was removed.
 
 [1.3.0]: https://github.com/csnp/cryptodeps/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/csnp/cryptodeps/compare/v1.2.1...v1.2.2
