@@ -123,8 +123,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     provides. An asset is shared by every library that provides it, so the
     per-library facts sit on the library.
 
-- **Every report names the crypto database it read.** The table prints one
-  line under the scan root, such as `Database: built-in, 72 packages` or
+- **The table and JSON reports name the crypto database they read.** The
+  table prints one line under the scan root, such as
+  `Database: built-in, 72 packages` or
   `Database: downloaded 1.1.0 (2026-10-12), 860 packages`, and the JSON
   document carries a top-level `database` object with `source`, `version`,
   `updatedAt` and `packageCount`. The same project can give different findings
