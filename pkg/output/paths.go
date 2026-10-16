@@ -219,7 +219,8 @@ func declarationsOf(results []types.DependencyResult, algorithm string) []types.
 // manifest declaring deps, with their line numbers, so a reader can confirm a
 // finding before acting on it. It runs from the scan root, which is what
 // manifest is relative to, needs nothing installed beyond grep, and reads one
-// local file. It returns "" when there is nothing to look for.
+// local file. It returns "" when there is nothing to look for, and when the
+// command could not be printed as it reads.
 //
 // It does not try to perform the fix. Replacing an algorithm is a change to the
 // code that calls it, and no command can make that change safely.
@@ -249,7 +250,16 @@ func verifyDeclarationCommand(ecosystem types.Ecosystem, manifest string, deps [
 	if strings.HasPrefix(manifest, "-") {
 		manifest = "./" + manifest
 	}
-	return strings.Join(append(args, shellQuote(manifest)), " ")
+	command := strings.Join(append(args, shellQuote(manifest)), " ")
+	// Every word is quoted for the shell, but a report prints a string holding
+	// a control character, a backtick or a pipe as a Go-quoted string, and
+	// inside those double quotes "$(...)" and backticks are live again: the
+	// printed line would run what the path or the name says. Such a command is
+	// left out, and the Where line still names the file.
+	if needsEscaping(command) {
+		return ""
+	}
+	return command
 }
 
 // verifyPattern is the text a manifest declares name with.

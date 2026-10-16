@@ -281,6 +281,88 @@ func TestVerifyCommandQuotesWhatTheManifestControls(t *testing.T) {
 	}
 }
 
+// runPasted runs text a report printed as a command the way a reader pasting
+// it would, with a POSIX shell in dir, whatever its exit status.
+func runPasted(t *testing.T, dir, command string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the Verify command is a POSIX shell command")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no POSIX shell on PATH")
+	}
+	cmd := exec.Command(sh, "-c", command)
+	cmd.Dir = dir
+	_ = cmd.Run()
+}
+
+// TestNoVerifyCommandWhenTheReportEscapesIt is the regression test for a
+// Verify command that ran text from the path it named. The reports print a
+// string holding a control character, a backtick or a pipe as a Go-quoted
+// string, and inside those double quotes "$(...)" and backticks are live
+// again: pasting the table's Verify line for a manifest under a directory
+// named "tools|$(touch pwned)" created the file. The single quotes inside the
+// command do not help once the whole of it is double-quoted, so such a command
+// is not printed at all, and the Where line still names the file.
+func TestNoVerifyCommandWhenTheReportEscapesIt(t *testing.T) {
+	tests := []struct {
+		name, dir, dependency string
+	}{
+		{"pipe in the path", "tools|$(touch pwned)", "jsonwebtoken"},
+		{"backtick in the path", "tools`touch pwned`", "jsonwebtoken"},
+		{"control character in the path", "tools$(touch pwned)\x01", "jsonwebtoken"},
+		{"pipe in the dependency name", "tools", "jsonwebtoken|$(touch pwned)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			scan := npmDeclaredScan(root)
+			scan.Projects[0].Manifest = filepath.Join(root, tt.dir, "package.json")
+			scan.Projects[0].Dependencies[0].Dependency.Name = tt.dependency
+			scan.Projects[0].Dependencies[0].Analysis.Crypto[0].Remediation = "Use HS256/HS512 for symmetric signing"
+
+			table := renderMulti(t, FormatTable, scan)
+			markdown := renderMulti(t, FormatMarkdown, scan)
+
+			// Everything either report prints as a command, as a reader would
+			// copy it: the table's Verify lines, and the markdown code spans
+			// holding a grep, where a cell's "\|" renders as "|".
+			var printed []string
+			for _, line := range linesWithPrefix(table, "Verify:") {
+				printed = append(printed, strings.TrimSpace(strings.TrimPrefix(line, "Verify:")))
+			}
+			for _, line := range strings.Split(markdown, "\n") {
+				spans := strings.Split(line, "`")
+				for i := 1; i < len(spans); i += 2 {
+					if strings.Contains(spans[i], "grep ") {
+						printed = append(printed, strings.ReplaceAll(spans[i], `\|`, "|"))
+					}
+				}
+			}
+
+			scratch := t.TempDir()
+			for _, command := range printed {
+				runPasted(t, scratch, command)
+			}
+			if _, err := os.Stat(filepath.Join(scratch, "pwned")); err == nil {
+				t.Fatalf("pasting a printed Verify command ran text from the manifest: %q", printed)
+			}
+			if len(printed) != 0 {
+				t.Errorf("want no Verify command for a path or name the report escapes, got %q", printed)
+			}
+
+			// The finding still says where it is declared.
+			if where := linesWithPrefix(table, "Where:"); len(where) != 1 {
+				t.Errorf("want one Where line, got %q\n%s", where, table)
+			}
+			if !strings.Contains(markdown, "| **RS256** |") {
+				t.Errorf("remediation row missing:\n%s", markdown)
+			}
+		})
+	}
+}
+
 // TestVerifyFindsWhatEachEcosystemWrites runs the Verify command for the two
 // ecosystems whose reported name is not the text in the manifest: a PyPI name
 // after PEP 503 normalisation, and a Maven coordinate the pom writes as two
