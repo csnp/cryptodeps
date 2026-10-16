@@ -6,7 +6,10 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"testing"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
@@ -224,5 +227,100 @@ func TestCBOMPrimitivesAreInSchemaEnum(t *testing.T) {
 	}
 	if got := cycloneDXPrimitive("encryption", "RSA"); got != "pke" {
 		t.Errorf("RSA encryption mapped to %q, want pke", got)
+	}
+}
+
+// TestCBOMPrimitiveResolvesByAlgorithmFirst covers algorithms whose category in
+// the database does not name their CycloneDX primitive. The database files
+// HS256 under "signature" and HMAC under "hash", so a type-first mapping called
+// every JWT HMAC a signature and HMAC itself a hash, and it reported every
+// authenticated cipher as "other".
+func TestCBOMPrimitiveResolvesByAlgorithmFirst(t *testing.T) {
+	cases := []struct {
+		cryptoType, algorithm, want string
+	}{
+		{"hash", "HMAC", "mac"},
+		{"signature", "HS256", "mac"},
+		{"signature", "HS384", "mac"},
+		{"signature", "HS512", "mac"},
+		{"hash", "Poly1305", "mac"},
+		{"mac", "CMAC", "mac"},
+		{"encryption", "ChaCha20-Poly1305", "ae"},
+		{"encryption", "XChaCha20-Poly1305", "ae"},
+		{"encryption", "AES-GCM", "ae"},
+		{"encryption", "AES-CCM", "ae"},
+		{"key-exchange", "ML-KEM", "kem"},
+		{"encryption", "ML-KEM", "kem"},
+		{"hash", "bcrypt", "kdf"},
+		{"hash", "scrypt", "kdf"},
+		{"hash", "Argon2", "kdf"},
+		{"hash", "PBKDF2", "kdf"},
+		{"hash", "HKDF", "kdf"},
+		// Names the database carries that had no mapping at all.
+		{"encryption", "XSalsa20-Poly1305", "ae"},
+		{"encryption", "A256GCM", "ae"},
+		{"encryption", "AES-256-GCM", "ae"},
+		{"key-exchange", "BIKE", "kem"},
+		{"key-exchange", "HQC", "kem"},
+		{"encryption", "SM2", "pke"},
+		{"encryption", "RSA-OAEP", "pke"},
+		{"encryption", "SM4", "block-cipher"},
+		{"encryption", "AES-128-CTR", "block-cipher"},
+		{"encryption", "XSalsa20", "stream-cipher"},
+		{"mac", "HMAC-SHA256", "mac"},
+		// The type-first mappings this must not disturb.
+		{"key-exchange", "ECDH", "key-agree"},
+		{"encryption", "AES", "block-cipher"},
+		{"encryption", "RSA", "pke"},
+		{"signature", "RS256", "signature"},
+		{"hash", "SHA-256", "hash"},
+	}
+	for _, tc := range cases {
+		got := cycloneDXPrimitive(tc.cryptoType, tc.algorithm)
+		if got != tc.want {
+			t.Errorf("cycloneDXPrimitive(%q, %q) = %q, want %q", tc.cryptoType, tc.algorithm, got, tc.want)
+		}
+		if !cycloneDXPrimitiveEnum[got] {
+			t.Errorf("cycloneDXPrimitive(%q, %q) = %q, which is not in the CycloneDX enum",
+				tc.cryptoType, tc.algorithm, got)
+		}
+	}
+}
+
+// TestCBOMPrimitiveForEveryDatabaseAlgorithm runs every algorithm and category
+// pair the published database holds through the mapping. Each must land in the
+// CycloneDX enum; the ones left at "other" or "unknown" are logged, so a
+// database update that adds a name the mapping does not know is visible.
+func TestCBOMPrimitiveForEveryDatabaseAlgorithm(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "data", "crypto-database.json"))
+	if err != nil {
+		t.Skipf("database file not available: %v", err)
+	}
+	var db struct {
+		Packages []types.PackageAnalysis `json:"packages"`
+	}
+	if err := json.Unmarshal(raw, &db); err != nil {
+		t.Fatalf("parse database: %v", err)
+	}
+
+	unresolved := make(map[string]string)
+	for _, pkg := range db.Packages {
+		for _, c := range pkg.Crypto {
+			got := cycloneDXPrimitive(c.Type, c.Algorithm)
+			if !cycloneDXPrimitiveEnum[got] {
+				t.Errorf("cycloneDXPrimitive(%q, %q) = %q, which is not in the CycloneDX enum", c.Type, c.Algorithm, got)
+			}
+			if got == "other" || got == "unknown" {
+				unresolved[c.Algorithm+" ("+c.Type+")"] = got
+			}
+		}
+	}
+	names := make([]string, 0, len(unresolved))
+	for name := range unresolved {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		t.Logf("still %s: %s", unresolved[name], name)
 	}
 }

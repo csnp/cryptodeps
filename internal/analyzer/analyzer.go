@@ -458,6 +458,9 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency) types.DependencyResul
 				fmt.Fprintf(os.Stderr, "  and %d more not named here\n", n)
 			}
 		}
+		// Labelled here, as a database finding is labelled in Lookup, so that a
+		// finding read from the package says so in every format.
+		analysis.LabelFindings()
 		result.Analysis = analysis
 		result.DeepAnalyzed = true
 	}

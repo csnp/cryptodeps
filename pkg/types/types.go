@@ -72,6 +72,28 @@ const (
 	ConfidenceLow Confidence = "low"
 )
 
+// Basis says what a finding's claim rests on.
+//
+// Most database records were never checked against the package they describe.
+// They were inferred from its name, description and keywords, so a package
+// whose description says "certificate" is recorded as using RSA, ECDSA, ECDH,
+// AES-GCM and ChaCha20-Poly1305. Every report printed those exactly like a
+// finding a person had checked, and the confidence the database recorded
+// beside them reached no format but JSON. The basis is set once, where a
+// finding is looked up or read, so every format reports the same value.
+type Basis string
+
+const (
+	// BasisVerified means a curated database record a person reviewed.
+	BasisVerified Basis = "verified"
+	// BasisInferred means the finding was inferred from the package's name,
+	// description and keywords. Nothing in the package was read to produce it.
+	BasisInferred Basis = "inferred"
+	// BasisSource means source analysis read the package's own files and
+	// found the usage there.
+	BasisSource Basis = "source"
+)
+
 // Reachability indicates whether crypto is actually used by the project.
 type Reachability string
 
@@ -106,6 +128,7 @@ type CryptoUsage struct {
 	Function     string       `json:"function,omitempty" yaml:"function,omitempty"`         // containing function name
 	Remediation  string       `json:"remediation,omitempty" yaml:"remediation,omitempty"`   // migration guidance
 	Confidence   Confidence   `json:"confidence,omitempty" yaml:"confidence,omitempty"`     // verified, high, medium, low
+	Basis        Basis        `json:"basis,omitempty" yaml:"basis,omitempty"`               // verified, inferred, source
 	Reachability Reachability `json:"reachability,omitempty" yaml:"reachability,omitempty"` // CONFIRMED, REACHABLE, AVAILABLE
 	Traces       []CallTrace  `json:"traces,omitempty" yaml:"traces,omitempty"`             // paths from user code to this crypto
 }
@@ -155,6 +178,63 @@ type AnalysisMetadata struct {
 // false-clean class this release exists to close.
 func (p *PackageAnalysis) SourceWasRead() bool {
 	return p != nil && p.Analysis.FilesAnalyzed > 0
+}
+
+// FindingBasis says what the findings in this record rest on, from how the
+// record was made.
+//
+// The methods are the ones the code sets: "embedded" on the curated seed
+// records, "verified" on curated records in the published database, and
+// "inferred" on records generated from package metadata. Source analysis sets
+// no method and is recognised by having parsed files. A record that matches
+// none of these is reported as inferred, because a finding nobody can show was
+// checked must not be presented as checked.
+func (p *PackageAnalysis) FindingBasis() Basis {
+	switch p.Analysis.Method {
+	case "embedded", "verified":
+		return BasisVerified
+	case "inferred":
+		return BasisInferred
+	}
+	if p.SourceWasRead() {
+		return BasisSource
+	}
+	return BasisInferred
+}
+
+// LabelFindings records on every finding its basis and a confidence that
+// agrees with it. It writes p.Crypto in place, so a caller holding a shared
+// record copies the slice first.
+//
+// A curated finding is confidence verified, which the seed records never said.
+// An inferred finding keeps the confidence the inference recorded, and one that
+// recorded none, or claimed verified, is labelled low. A finding source
+// analysis matched in the package's own files is labelled high when its
+// analyzer set nothing finer.
+func (p *PackageAnalysis) LabelFindings() {
+	basis := p.FindingBasis()
+	for i := range p.Crypto {
+		c := &p.Crypto[i]
+		c.Basis = basis
+		switch basis {
+		case BasisVerified:
+			c.Confidence = ConfidenceVerified
+		case BasisSource:
+			if c.Confidence == "" {
+				c.Confidence = ConfidenceHigh
+			}
+		default:
+			if c.Confidence == "" || c.Confidence == ConfidenceVerified {
+				c.Confidence = ConfidenceLow
+			}
+		}
+	}
+}
+
+// Inferred reports whether this finding was inferred from package metadata
+// rather than checked by a person or read from the package.
+func (c CryptoUsage) Inferred() bool {
+	return c.Basis == BasisInferred
 }
 
 // QuantumSummary summarizes the quantum risk of a package.

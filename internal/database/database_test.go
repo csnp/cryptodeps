@@ -4,6 +4,7 @@
 package database
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -405,5 +406,84 @@ func TestStatsCountsPackagesNotIndexEntries(t *testing.T) {
 	}
 	if got, want := stats.ByEcosystem[types.EcosystemPyPI], 1; got != want {
 		t.Errorf("Stats().ByEcosystem[pypi] = %d, want %d", got, want)
+	}
+}
+
+// findingJSON returns a finding as the JSON report serializes it, so these tests
+// check the field names a consumer reads as well as the values behind them.
+func findingJSON(t *testing.T, c types.CryptoUsage) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(c)
+	if err != nil {
+		t.Fatalf("marshal finding: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal finding: %v", err)
+	}
+	return m
+}
+
+// TestLookupLabelsEmbeddedFindingsVerified covers the curated seed records.
+// They carry method "embedded" and no confidence of their own, so every report
+// printed them exactly as it printed a guess from a package description.
+func TestLookupLabelsEmbeddedFindingsVerified(t *testing.T) {
+	db := NewEmbedded()
+	analysis, found := db.Lookup(types.EcosystemGo, "golang.org/x/crypto", "")
+	if !found {
+		t.Fatal("expected golang.org/x/crypto in the embedded database")
+	}
+	if len(analysis.Crypto) == 0 {
+		t.Fatal("expected findings for golang.org/x/crypto")
+	}
+	for _, c := range analysis.Crypto {
+		m := findingJSON(t, c)
+		if m["basis"] != "verified" {
+			t.Errorf("%s: basis = %v, want verified", c.Algorithm, m["basis"])
+		}
+		if m["confidence"] != "verified" {
+			t.Errorf("%s: confidence = %v, want verified", c.Algorithm, m["confidence"])
+		}
+	}
+}
+
+// TestLookupLabelsInferredCachedFindings covers a record from the downloaded
+// database that was inferred from the package's name and description. Its
+// findings have to say so, and keep the confidence the inference recorded.
+func TestLookupLabelsInferredCachedFindings(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.MkdirAll(filepath.Join(home, CacheDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := `{"version":"1.0.0","packages":[{
+		"package":"xml-crypto","version":"6.3.3","ecosystem":"npm",
+		"analysis":{"date":"2026-10-12T00:00:00Z","method":"inferred","tool":"cryptodeps-registry","toolVersion":"1.0.0"},
+		"crypto":[
+			{"algorithm":"ECDH","type":"key-exchange","quantumRisk":"VULNERABLE","severity":"HIGH","location":{"file":"","line":0},"confidence":"medium"},
+			{"algorithm":"AES-GCM","type":"encryption","quantumRisk":"PARTIAL","severity":"LOW","location":{"file":"","line":0},"confidence":"high"}
+		],
+		"quantumSummary":{"vulnerable":1,"partial":1,"safe":0,"unknown":0}}]}`
+	if err := os.WriteFile(filepath.Join(home, CacheDir, DatabaseFileName), []byte(cache), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	db := NewWithCachedData()
+	analysis, found := db.Lookup(types.EcosystemNPM, "xml-crypto", "6.4.0")
+	if !found {
+		t.Fatal("expected xml-crypto from the cached database")
+	}
+	want := map[string]string{"ECDH": "medium", "AES-GCM": "high"}
+	if len(analysis.Crypto) != len(want) {
+		t.Fatalf("got %d findings, want %d", len(analysis.Crypto), len(want))
+	}
+	for _, c := range analysis.Crypto {
+		m := findingJSON(t, c)
+		if m["basis"] != "inferred" {
+			t.Errorf("%s: basis = %v, want inferred", c.Algorithm, m["basis"])
+		}
+		if m["confidence"] != want[c.Algorithm] {
+			t.Errorf("%s: confidence = %v, want %s", c.Algorithm, m["confidence"], want[c.Algorithm])
+		}
 	}
 }

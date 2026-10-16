@@ -83,10 +83,22 @@ type sarifDefaultConfig struct {
 }
 
 type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   sarifMessage    `json:"message"`
-	Locations []sarifLocation `json:"locations"`
+	RuleID     string                 `json:"ruleId"`
+	Level      string                 `json:"level"`
+	Message    sarifMessage           `json:"message"`
+	Locations  []sarifLocation        `json:"locations"`
+	Properties *sarifResultProperties `json:"properties,omitempty"`
+}
+
+// sarifResultProperties is the property bag on each result. It carries what
+// the level cannot: whether the code calls the algorithm, and what the finding
+// rests on. Reachability is omitted when it was not analyzed rather than
+// reported as a verdict nobody reached.
+type sarifResultProperties struct {
+	QuantumRisk  types.QuantumRisk  `json:"quantumRisk"`
+	Basis        types.Basis        `json:"basis,omitempty"`
+	Confidence   types.Confidence   `json:"confidence,omitempty"`
+	Reachability types.Reachability `json:"reachability,omitempty"`
 }
 
 type sarifLocation struct {
@@ -249,13 +261,28 @@ func (f *SARIFFormatter) write(w io.Writer, root string, projects []*types.ScanR
 
 				// Build message with remediation if available
 				msgText := dep.Dependency.Name + "@" + dep.Dependency.Version + " uses " + crypto.Algorithm + " (Quantum Risk: " + string(crypto.QuantumRisk) + ")"
+				msgText += sarifReachabilityClause(crypto.Reachability)
+				if crypto.Inferred() {
+					msgText += ", inferred from the package name and description"
+				}
 				if f.Options.ShowRemediation && crypto.Remediation != "" {
 					msgText += ". Remediation: " + crypto.Remediation
 				}
 
 				res := sarifResult{
 					RuleID: ruleID,
-					Level:  severityToSARIFLevel(crypto.Severity),
+					// The level stays with severity even for a finding the code does
+					// not call. Reachability misses calls today, calls made on a
+					// variable among them, so lowering an uncalled finding would let
+					// a called algorithm fall below a code-scanning gate. The
+					// property and the message carry reachability instead.
+					Level: severityToSARIFLevel(crypto.Severity),
+					Properties: &sarifResultProperties{
+						QuantumRisk:  crypto.QuantumRisk,
+						Basis:        crypto.Basis,
+						Confidence:   crypto.Confidence,
+						Reachability: crypto.Reachability,
+					},
 					Message: sarifMessage{
 						Text: msgText,
 					},
@@ -294,6 +321,21 @@ func sarifArtifactURI(absRoot, manifestPath string) (uri string, baseID string) 
 		return "file://" + path, ""
 	}
 	return path, sarifURIBaseID
+}
+
+// sarifReachabilityClause says in the message whether the code calls the
+// algorithm. It is empty when reachability was not analyzed.
+func sarifReachabilityClause(reach types.Reachability) string {
+	switch reach {
+	case types.ReachabilityConfirmed:
+		return ", called from your code"
+	case types.ReachabilityReachable:
+		return ", reachable from your code"
+	case types.ReachabilityAvailable:
+		return ", in a dependency your code does not call"
+	default:
+		return ""
+	}
 }
 
 // severityToSARIFLevel converts a severity to SARIF level.

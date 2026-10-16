@@ -27,6 +27,46 @@ type cryptoDetail struct {
 	dependency   string
 	traces       []types.CallTrace
 	ecosystem    types.Ecosystem
+	inferred     bool
+}
+
+// inferredMark is appended to the row of a finding inferred from package
+// metadata, so it cannot be read as one that was checked.
+func inferredMark(inferred bool) string {
+	if inferred {
+		return " (inferred)"
+	}
+	return ""
+}
+
+// inferredNote says how many of the listed findings were inferred from the
+// package name and description rather than read from the package. It is empty
+// when none were, so a scan with no inferred finding prints nothing extra.
+func inferredNote(inferred, listed int) string {
+	switch {
+	case inferred == 0:
+		return ""
+	case inferred == 1:
+		noun := "findings"
+		if listed == 1 {
+			noun = "finding"
+		}
+		return fmt.Sprintf("1 of %d %s above is inferred from the package name and description, "+
+			"not read from the package. It is marked (inferred).", listed, noun)
+	default:
+		return fmt.Sprintf("%d of %d findings above are inferred from the package name and description, "+
+			"not read from the package. They are marked (inferred).", inferred, listed)
+	}
+}
+
+func countInferred(listed []cryptoDetail) int {
+	n := 0
+	for _, c := range listed {
+		if c.inferred {
+			n++
+		}
+	}
+	return n
 }
 
 // Format writes the scan result as a table.
@@ -84,15 +124,20 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 				dependency:   depName,
 				traces:       c.Traces,
 				ecosystem:    result.Ecosystem,
+				inferred:     c.Inferred(),
 			})
 		}
 	}
 
 	// Print detailed crypto breakdown grouped by reachability
+	var listed []cryptoDetail
 	if hasReachability {
-		f.printReachabilityBreakdown(w, allCrypto)
+		listed = f.printReachabilityBreakdown(w, allCrypto)
 	} else {
-		f.printSimpleBreakdown(w, allCrypto)
+		listed = f.printSimpleBreakdown(w, allCrypto)
+	}
+	if note := inferredNote(countInferred(listed), len(listed)); note != "" {
+		fmt.Fprintf(w, "[?] %s\n\n", note)
 	}
 
 	// Summary
@@ -283,8 +328,9 @@ func PrintSkipped(w io.Writer, root string, skipped []types.SkippedManifest) {
 	}
 }
 
-// printReachabilityBreakdown prints crypto grouped by reachability status.
-func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cryptoDetail) {
+// printReachabilityBreakdown prints crypto grouped by reachability status, and
+// returns the findings it listed.
+func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cryptoDetail) []cryptoDetail {
 	// Group by reachability
 	confirmed := filterByReachability(allCrypto, types.ReachabilityConfirmed)
 	reachable := filterByReachability(allCrypto, types.ReachabilityReachable)
@@ -303,8 +349,8 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 			icon := riskIcon(c.risk)
 			timeline := formatTimelineShort(getTimeline(c.algorithm))
 			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n",
-				icon, c.algorithm, formatRisk(c.risk), timeline, effort)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s%s\n",
+				icon, c.algorithm, formatRisk(c.risk), timeline, effort, inferredMark(c.inferred))
 			fmt.Fprintf(w, "     └─ %s\n", c.dependency)
 
 			// Show call traces (where in user code)
@@ -327,7 +373,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range reachable {
 			icon := riskIcon(c.risk)
-			fmt.Fprintf(w, "  %-4s %-14s %-12s  %s\n", icon, c.algorithm, formatRisk(c.risk), c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %s%s\n", icon, c.algorithm, formatRisk(c.risk), c.dependency, inferredMark(c.inferred))
 		}
 		fmt.Fprintln(w)
 	}
@@ -353,17 +399,23 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 		for _, dep := range depNames {
 			var algoStrs []string
 			for _, a := range byDep[dep] {
-				algoStrs = append(algoStrs, fmt.Sprintf("%s %s", riskIcon(a.risk), a.algorithm))
+				algoStrs = append(algoStrs, fmt.Sprintf("%s %s%s", riskIcon(a.risk), a.algorithm, inferredMark(a.inferred)))
 			}
 			fmt.Fprintf(w, "  %s\n", dep)
 			fmt.Fprintf(w, "     └─ %s\n", strings.Join(algoStrs, ", "))
 		}
 		fmt.Fprintln(w)
 	}
+
+	listed := make([]cryptoDetail, 0, len(confirmed)+len(reachable)+len(available))
+	listed = append(listed, confirmed...)
+	listed = append(listed, reachable...)
+	return append(listed, available...)
 }
 
-// printSimpleBreakdown prints crypto without reachability grouping.
-func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDetail) {
+// printSimpleBreakdown prints crypto without reachability grouping, and returns
+// the findings it listed.
+func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDetail) []cryptoDetail {
 	sortByRisk(allCrypto)
 
 	// Group by risk level for cleaner output
@@ -377,7 +429,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		for _, c := range vulnerable {
 			timeline := formatTimelineShort(getTimeline(c.algorithm))
 			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s%s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency, inferredMark(c.inferred))
 		}
 		fmt.Fprintln(w)
 	}
@@ -388,7 +440,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		for _, c := range partial {
 			timeline := formatTimelineShort(getTimeline(c.algorithm))
 			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s%s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency, inferredMark(c.inferred))
 		}
 		fmt.Fprintln(w)
 	}
@@ -397,7 +449,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		fmt.Fprintln(w, "[OK] QUANTUM SAFE:")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range safe {
-			fmt.Fprintf(w, "  %-4s %-14s %s\n", riskIcon(c.risk), c.algorithm, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %s%s\n", riskIcon(c.risk), c.algorithm, c.dependency, inferredMark(c.inferred))
 		}
 		fmt.Fprintln(w)
 	}
@@ -408,10 +460,16 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 		fmt.Fprintln(w, "[?] UNKNOWN RISK:")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range unknown {
-			fmt.Fprintf(w, "  %-4s %-14s %s\n", riskIcon(c.risk), c.algorithm, c.dependency)
+			fmt.Fprintf(w, "  %-4s %-14s %s%s\n", riskIcon(c.risk), c.algorithm, c.dependency, inferredMark(c.inferred))
 		}
 		fmt.Fprintln(w)
 	}
+
+	listed := make([]cryptoDetail, 0, len(vulnerable)+len(partial)+len(safe)+len(unknown))
+	listed = append(listed, vulnerable...)
+	listed = append(listed, partial...)
+	listed = append(listed, safe...)
+	return append(listed, unknown...)
 }
 
 // printSimpleRemediation prints remediation for non-reachability projects.
