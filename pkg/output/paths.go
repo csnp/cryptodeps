@@ -219,8 +219,9 @@ func declarationsOf(results []types.DependencyResult, algorithm string) []types.
 // manifest declaring deps, with their line numbers, so a reader can confirm a
 // finding before acting on it. It runs from the scan root, which is what
 // manifest is relative to, needs nothing installed beyond grep, and reads one
-// local file. It returns "" when there is nothing to look for, and when the
-// command could not be printed as it reads.
+// local file. It returns "" when there is nothing to look for, when the
+// command could not be printed as it reads, and when the path or a name holds
+// a character outside pasteSafeWord's set.
 //
 // It does not try to perform the fix. Replacing an algorithm is a change to the
 // code that calls it, and no command can make that change safely.
@@ -239,6 +240,9 @@ func verifyDeclarationCommand(ecosystem types.Ecosystem, manifest string, deps [
 		if pattern == "" || seen[pattern] {
 			continue
 		}
+		if !pasteSafeWord.MatchString(pattern) {
+			return ""
+		}
 		seen[pattern] = true
 		args = append(args, "-e", shellQuote(pattern))
 	}
@@ -249,6 +253,9 @@ func verifyDeclarationCommand(ecosystem types.Ecosystem, manifest string, deps [
 	// being read as an option.
 	if strings.HasPrefix(manifest, "-") {
 		manifest = "./" + manifest
+	}
+	if !pasteSafeWord.MatchString(manifest) {
+		return ""
 	}
 	command := strings.Join(append(args, shellQuote(manifest)), " ")
 	// Every word is quoted for the shell, but a report prints a string holding
@@ -301,6 +308,17 @@ var basicRegexpEscaper = strings.NewReplacer(
 // and "=" are left out because bash and zsh expand them at the start of a
 // word.
 var shellSafeWord = regexp.MustCompile(`^[A-Za-z0-9@%+:,./_-]+$`)
+
+// pasteSafeWord matches a word that cannot end its quoting or start a command
+// when the Verify command is pasted into a POSIX shell, fish or PowerShell:
+// shellSafeWord's characters, a space and brackets, none of which has a
+// quoting role in any of the three. shellQuote quotes for POSIX shells only.
+// Inside its single quotes fish reads a backslash before a quote as an
+// escape, and PowerShell reads a quote that is closed, escaped and reopened
+// differently and takes the typographic quotes U+2018 to U+201B for quotes, so
+// a path holding them ran a command in those shells. A word holding any
+// character outside this set gets no Verify command at all.
+var pasteSafeWord = regexp.MustCompile(`^[A-Za-z0-9 @%+:,./_\[\]-]+$`)
 
 // shellQuote renders s as one literal shell word.
 //

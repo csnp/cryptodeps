@@ -253,31 +253,58 @@ func TestTableWhereWithoutALineNamesTheFile(t *testing.T) {
 // TestVerifyCommandQuotesWhatTheManifestControls pins that a dependency name is
 // data in the printed command and never shell syntax. The name comes from the
 // manifest under scan, which a pull request can change, and a reader is being
-// asked to paste this command into a shell.
+// asked to paste this command into a shell. A name that needs quoting reaches
+// grep as one word. A name holding a quote gets no command: the quote would be
+// written the POSIX way, which fish and PowerShell read differently.
 func TestVerifyCommandQuotesWhatTheManifestControls(t *testing.T) {
-	root := t.TempDir()
-	hostile := "evil$(touch pwned)'x"
-	manifest := "{\n  \"dependencies\": {\n    \"" + hostile + "\": \"1.0.0\"\n  }\n}\n"
-	if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0o644); err != nil {
-		t.Fatal(err)
+	tests := []struct {
+		name, dependency string
+		wantVerify       bool
+	}{
+		{"name that needs quoting", "evil name [x]", true},
+		{"name holding a quote", "evil$(touch pwned)'x", false},
 	}
-	scan := npmDeclaredScan(root)
-	scan.Projects[0].Dependencies[0].Dependency.Name = hostile
-	scan.Projects[0].Dependencies[0].Dependency.Version = "1.0.0"
-	scan.Projects[0].Dependencies[0].Dependency.Line = 3
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			manifest := "{\n  \"dependencies\": {\n    \"" + tt.dependency + "\": \"1.0.0\"\n  }\n}\n"
+			if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			scan := npmDeclaredScan(root)
+			scan.Projects[0].Dependencies[0].Dependency.Name = tt.dependency
+			scan.Projects[0].Dependencies[0].Dependency.Version = "1.0.0"
+			scan.Projects[0].Dependencies[0].Dependency.Line = 3
 
-	out := renderMulti(t, FormatTable, scan)
-	verify := linesWithPrefix(out, "Verify:")
-	if len(verify) != 1 {
-		t.Fatalf("want one Verify line, got %q\n%s", verify, out)
-	}
-	command := strings.TrimSpace(strings.TrimPrefix(verify[0], "Verify:"))
-	got := runVerify(t, root, command)
-	if _, err := os.Stat(filepath.Join(root, "pwned")); err == nil {
-		t.Fatalf("running the Verify command %q executed text from the manifest", command)
-	}
-	if !strings.HasPrefix(got, "3:") {
-		t.Errorf("Verify %q printed %q, want the declaration on line 3", command, got)
+			out := renderMulti(t, FormatTable, scan)
+			verify := linesWithPrefix(out, "Verify:")
+			if !tt.wantVerify {
+				for _, line := range verify {
+					runPasted(t, root, strings.TrimSpace(strings.TrimPrefix(line, "Verify:")))
+				}
+				if _, err := os.Stat(filepath.Join(root, "pwned")); err == nil {
+					t.Fatalf("running the Verify command %q executed text from the manifest", verify)
+				}
+				if len(verify) != 0 {
+					t.Errorf("want no Verify line for %q, got %q\n%s", tt.dependency, verify, out)
+				}
+				if where := linesWithPrefix(out, "Where:"); len(where) != 1 {
+					t.Errorf("want one Where line, got %q\n%s", where, out)
+				}
+				return
+			}
+			if len(verify) != 1 {
+				t.Fatalf("want one Verify line, got %q\n%s", verify, out)
+			}
+			command := strings.TrimSpace(strings.TrimPrefix(verify[0], "Verify:"))
+			got := runVerify(t, root, command)
+			if _, err := os.Stat(filepath.Join(root, "pwned")); err == nil {
+				t.Fatalf("running the Verify command %q executed text from the manifest", command)
+			}
+			if !strings.HasPrefix(got, "3:") {
+				t.Errorf("Verify %q printed %q, want the declaration on line 3", command, got)
+			}
+		})
 	}
 }
 
@@ -358,6 +385,84 @@ func TestNoVerifyCommandWhenTheReportEscapesIt(t *testing.T) {
 			}
 			if !strings.Contains(markdown, "| **RS256** |") {
 				t.Errorf("remediation row missing:\n%s", markdown)
+			}
+		})
+	}
+}
+
+// TestNoVerifyCommandUnlessFishAndPowerShellReadItAsText is the regression test
+// for a Verify command that was safe to paste into a POSIX shell and ran text
+// from the path in another one. The command quotes each word for POSIX
+// shells. Inside those single quotes fish reads a backslash before a quote as
+// an escape, and PowerShell reads a quote that is closed, escaped and
+// reopened differently and takes the typographic quotes for quotes, so
+// pasting the printed command for a manifest under each of the first three
+// directories below created a file: in fish for the first, in PowerShell for
+// the other two. A path holding such a character gets no command, and the
+// Where line still names the file. A path that needs quoting and holds only
+// characters all three read literally inside single quotes still gets one.
+func TestNoVerifyCommandUnlessFishAndPowerShellReadItAsText(t *testing.T) {
+	// U+2019, built from its code point so it cannot be taken for an ASCII
+	// quote when reading this file.
+	rsquo := string(rune(0x2019))
+	tests := []struct {
+		name, dir, wantVerify string
+	}{
+		{"backslash before a quote, read by fish", `a\'b;touch PWNED_FISH;c\'d`, ""},
+		{"quotes around a command, read by PowerShell", `a'$(touch PWNED_PS)'b`, ""},
+		{"typographic quotes, read by PowerShell", "a" + rsquo + "$(touch PWNED_PS2)" + rsquo + "b", ""},
+		{"space and brackets", "my project [v2]",
+			`grep -n -F -e jsonwebtoken './my project [v2]/package.json'`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(root, tt.dir), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, tt.dir, "package.json"), []byte(npmDeclaredManifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			scan := npmDeclaredScan(root)
+			scan.Projects[0].Manifest = filepath.Join(root, tt.dir, "package.json")
+			scan.Projects[0].Dependencies[0].Analysis.Crypto[0].Remediation = "Use HS256/HS512 for symmetric signing"
+
+			table := renderMulti(t, FormatTable, scan)
+			markdown := renderMulti(t, FormatMarkdown, scan)
+
+			// The finding still says where it is declared.
+			if where := linesWithPrefix(table, "Where:"); len(where) != 1 {
+				t.Errorf("want one Where line, got %q\n%s", where, table)
+			}
+			var row string
+			for _, line := range strings.Split(markdown, "\n") {
+				if strings.HasPrefix(line, "| **RS256** |") {
+					row = line
+				}
+			}
+			if row == "" {
+				t.Fatalf("remediation row missing:\n%s", markdown)
+			}
+			verify := linesWithPrefix(table, "Verify:")
+
+			if tt.wantVerify == "" {
+				if len(verify) != 0 {
+					t.Errorf("want no Verify line, got %q", verify)
+				}
+				if !strings.HasSuffix(row, " |  |") {
+					t.Errorf("want an empty Verify cell, got %q", row)
+				}
+				return
+			}
+			if len(verify) != 1 || strings.TrimSpace(strings.TrimPrefix(verify[0], "Verify:")) != tt.wantVerify {
+				t.Fatalf("want Verify %q, got %q\n%s", tt.wantVerify, verify, table)
+			}
+			if !strings.HasSuffix(row, " | `"+tt.wantVerify+"` |") {
+				t.Errorf("want the Verify cell `%s`, got %q", tt.wantVerify, row)
+			}
+			got := runVerify(t, root, tt.wantVerify)
+			if strings.TrimSpace(got) != `4:    "jsonwebtoken": "^8.0.0"` {
+				t.Errorf("Verify printed %q, want the declaration on line 4", got)
 			}
 		})
 	}
