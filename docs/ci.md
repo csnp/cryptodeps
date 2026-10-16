@@ -32,7 +32,7 @@ jobs:
         run: go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
 
       - name: Run Scan
-        run: cryptodeps analyze . --format sarif > results.sarif
+        run: cryptodeps analyze . --format sarif --fail-on none > results.sarif
 
       - name: Upload SARIF to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
