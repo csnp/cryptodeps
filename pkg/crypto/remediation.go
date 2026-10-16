@@ -81,7 +81,7 @@ var remediationDB = map[string]Remediation{
 	},
 	"X25519": {
 		Summary:      "Migrate to ML-KEM or use hybrid X25519+ML-KEM",
-		Replacement:  "ML-KEM-768 or X25519Kyber768Draft00",
+		Replacement:  "ML-KEM-768 or hybrid X25519MLKEM768",
 		NISTStandard: "FIPS 203",
 		Timeline:     "short-term",
 		Effort:       "low",
@@ -398,19 +398,19 @@ var remediationDB = map[string]Remediation{
 	// TLS/SSL
 	"TLS 1.2": {
 		Summary:      "Upgrade to TLS 1.3 and enable PQC key exchange",
-		Replacement:  "TLS 1.3 with X25519Kyber768",
+		Replacement:  "TLS 1.3 with X25519MLKEM768",
 		NISTStandard: "",
 		Timeline:     "short-term",
 		Effort:       "low",
 		Notes:        "TLS 1.3 supports hybrid PQC key exchange. Chrome and other browsers already support it.",
 	},
 	"TLS 1.3": {
-		Summary:      "Enable hybrid PQC key exchange (X25519Kyber768)",
-		Replacement:  "TLS 1.3 with X25519Kyber768Draft00",
+		Summary:      "Enable hybrid PQC key exchange (X25519MLKEM768)",
+		Replacement:  "TLS 1.3 with X25519MLKEM768",
 		NISTStandard: "",
 		Timeline:     "short-term",
 		Effort:       "low",
-		Notes:        "Enable PQC hybrid mode in your TLS configuration. Supported by major browsers.",
+		Notes:        "Enable the X25519MLKEM768 hybrid group (RFC 10024) in your TLS configuration. Supported by major browsers. The earlier pre-standard Kyber hybrid group is obsolete, and Chrome removed it in Chrome 131.",
 	},
 
 	// Authenticated Encryption - Quantum-safe with 256-bit keys

@@ -290,3 +290,56 @@ func TestNISTStandardsPresent(t *testing.T) {
 		})
 	}
 }
+
+func TestRemediationNoObsoleteKyberCodepoint(t *testing.T) {
+	// The pre-standard Kyber hybrid TLS group (IANA 25497) is obsolete.
+	// Remediation text must point at X25519MLKEM768 (IANA 4588, RFC 10024).
+	obsolete := []string{"Kyber768Draft00", "X25519Kyber"}
+	ecosystems := []types.Ecosystem{
+		types.EcosystemGo,
+		types.EcosystemNPM,
+		types.EcosystemPyPI,
+		types.EcosystemMaven,
+	}
+
+	check := func(t *testing.T, r *Remediation) {
+		t.Helper()
+		fields := []string{r.Summary, r.Replacement, r.NISTStandard, r.Timeline, r.Effort, r.Notes}
+		for _, libs := range r.Libraries {
+			fields = append(fields, libs...)
+		}
+		for _, f := range fields {
+			for _, bad := range obsolete {
+				if strings.Contains(f, bad) {
+					t.Errorf("remediation text %q contains obsolete identifier %q", f, bad)
+				}
+			}
+		}
+	}
+
+	for key, r := range remediationDB {
+		t.Run(key, func(t *testing.T) {
+			r := r
+			check(t, &r)
+			for _, eco := range ecosystems {
+				if got := GetDetailedRemediation(key, "", eco); got != nil {
+					check(t, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRemediationRecommendsStandardHybridGroup(t *testing.T) {
+	for _, key := range []string{"X25519", "TLS 1.2", "TLS 1.3"} {
+		t.Run(key, func(t *testing.T) {
+			r, ok := remediationDB[key]
+			if !ok {
+				t.Fatalf("Algorithm %q not in remediationDB", key)
+			}
+			if !strings.Contains(r.Replacement, "X25519MLKEM768") {
+				t.Errorf("Replacement = %q, want it to name X25519MLKEM768", r.Replacement)
+			}
+		})
+	}
+}
