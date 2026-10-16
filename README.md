@@ -228,7 +228,7 @@ The last step exits 1 when it finds quantum-vulnerable cryptography, which fails
 
 ## Documentation
 
-- [Commands](docs/commands.md): every command and flag, report filters, exit codes and common workflows.
+- [Commands](docs/commands.md): the `analyze`, `update`, `status` and `version` commands, the `analyze` flags, report filters, exit codes and common workflows.
 - [Output formats](docs/output-formats.md): table, JSON, CBOM, SARIF and Markdown, with SARIF and CBOM examples.
 - [CI/CD recipes](docs/ci.md): GitHub Actions and GitLab CI, and the exit codes a pipeline sees.
 - [How it works](docs/how-it-works.md): how the code is organized, from the command-line entry point to the crypto database.
