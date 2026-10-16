@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -23,7 +24,7 @@ type PyPIClient struct {
 // NewPyPIClient creates a new PyPI client.
 func NewPyPIClient() *PyPIClient {
 	return &PyPIClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: netguard.Client(30 * time.Second),
 		baseURL:    "https://pypi.org",
 	}
 }

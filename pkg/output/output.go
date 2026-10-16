@@ -96,3 +96,15 @@ func ParseFormat(s string) (Format, error) {
 		return "", fmt.Errorf("unsupported format: %s", s)
 	}
 }
+
+// describeSource names a fetched repository in one line for a plain-text
+// report, for example "https://github.com/owner/repo, branch main". The values
+// come from the command line and from the GitHub API, so plain-text callers
+// pass the result through reportSafe.
+func describeSource(s *types.ScanSource) string {
+	d := s.Repository + ", branch " + s.Branch
+	if s.Path != "" {
+		d += ", path " + s.Path
+	}
+	return d
+}

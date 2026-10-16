@@ -1,0 +1,396 @@
+// Copyright 2025-2026 CyberSecurity NonProfit (CSNP)
+// SPDX-License-Identifier: Apache-2.0
+
+package netguard
+
+import (
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+)
+
+func setOffline(t *testing.T, v bool) {
+	t.Helper()
+	SetOffline(v)
+	t.Cleanup(func() { SetOffline(false) })
+}
+
+// countingServer is a local HTTP server that counts the connections opened to
+// it, so a test can tell a refused connection from a request that failed after
+// connecting.
+func countingServer(t *testing.T) (*httptest.Server, *atomic.Int64) {
+	t.Helper()
+	var conns atomic.Int64
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+	srv.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	srv.Start()
+	t.Cleanup(srv.Close)
+	return srv, &conns
+}
+
+func TestClientMakesNoConnectionWhenOffline(t *testing.T) {
+	srv, conns := countingServer(t)
+	client := Client(5 * time.Second)
+
+	setOffline(t, true)
+	resp, err := client.Get(srv.URL)
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("request succeeded with --offline set")
+	}
+	if !errors.Is(err, ErrOffline) {
+		t.Errorf("error does not wrap ErrOffline, so a caller cannot tell it was refused: %v", err)
+	}
+	if n := conns.Load(); n != 0 {
+		t.Errorf("%d connection(s) reached the server with --offline set, want 0", n)
+	}
+
+	// The same client connects once the policy allows it, so the zero above
+	// was the policy and not a server that could not be reached.
+	SetOffline(false)
+	resp, err = client.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("request failed with the network allowed: %v", err)
+	}
+	resp.Body.Close()
+	if n := conns.Load(); n != 1 {
+		t.Errorf("%d connection(s) reached the server with the network allowed, want 1", n)
+	}
+}
+
+// The policy is read when a connection is dialled, not when the client is
+// built, so a client created at package initialisation, before the flag is
+// parsed, is still held to it.
+func TestClientBuiltBeforeOfflineIsSetIsStillRefused(t *testing.T) {
+	srv, conns := countingServer(t)
+	client := Client(5 * time.Second)
+	setOffline(t, true)
+
+	if resp, err := client.Get(srv.URL); err == nil {
+		resp.Body.Close()
+		t.Fatal("request succeeded with --offline set")
+	}
+	if n := conns.Load(); n != 0 {
+		t.Errorf("%d connection(s) reached the server, want 0", n)
+	}
+}
+
+// The connection to a proxy is dialled through the same check, so a proxy
+// named by HTTPS_PROXY sees nothing either.
+func TestClientMakesNoConnectionToAProxyWhenOffline(t *testing.T) {
+	proxy, conns := countingServer(t)
+	proxyURL, err := url.Parse(proxy.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := Client(5 * time.Second)
+	client.Transport.(*http.Transport).Proxy = http.ProxyURL(proxyURL)
+
+	setOffline(t, true)
+	if resp, err := client.Get("http://example.invalid/"); err == nil {
+		resp.Body.Close()
+		t.Fatal("request succeeded with --offline set")
+	} else if !errors.Is(err, ErrOffline) {
+		t.Errorf("error does not wrap ErrOffline: %v", err)
+	}
+	if n := conns.Load(); n != 0 {
+		t.Errorf("%d connection(s) reached the proxy with --offline set, want 0", n)
+	}
+
+	// With the network allowed, the request goes to the proxy, so the zero
+	// above was the policy.
+	SetOffline(false)
+	resp, err := client.Get("http://example.invalid/")
+	if err != nil {
+		t.Fatalf("request through the proxy failed with the network allowed: %v", err)
+	}
+	resp.Body.Close()
+	if n := conns.Load(); n != 1 {
+		t.Errorf("%d connection(s) reached the proxy with the network allowed, want 1", n)
+	}
+}
+
+func TestCommandIsRefusedWhenOffline(t *testing.T) {
+	setOffline(t, true)
+	cmd, err := Command("curl", "-sL", "https://example.invalid/")
+	if err == nil {
+		t.Fatalf("Command returned %v with --offline set, want an error", cmd)
+	}
+	if !errors.Is(err, ErrOffline) {
+		t.Errorf("error does not wrap ErrOffline: %v", err)
+	}
+	if !strings.Contains(err.Error(), "curl") {
+		t.Errorf("error does not name the program it refused: %v", err)
+	}
+
+	SetOffline(false)
+	if _, err := Command("curl"); err != nil {
+		t.Errorf("Command refused with the network allowed: %v", err)
+	}
+}
+
+// localPrograms are the programs the tool runs that work on local files only.
+// Any other program is assumed to download, and has to be started through
+// Command.
+var localPrograms = map[string]bool{"tar": true, "unzip": true}
+
+// constructed are the types whose construction outside this package would
+// make a connection that Check never sees.
+var constructed = map[string]bool{
+	"net/http.Client":    true,
+	"net/http.Transport": true,
+	"net.Dialer":         true,
+}
+
+// referenced are the functions and values that connect without a client built
+// here.
+var referenced = map[string]bool{
+	"net/http.Get":              true,
+	"net/http.Post":             true,
+	"net/http.PostForm":         true,
+	"net/http.Head":             true,
+	"net/http.DefaultClient":    true,
+	"net/http.DefaultTransport": true,
+	"net.Dial":                  true,
+	"net.DialTimeout":           true,
+	"net.DialTCP":               true,
+	"net.DialUDP":               true,
+	"net.DialIP":                true,
+	"net.DialUnix":              true,
+	"crypto/tls.Dial":           true,
+	"crypto/tls.DialWithDialer": true,
+}
+
+// directNetworkUse lists the places in one file that make a connection or
+// start a downloading program without going through this package.
+func directNetworkUse(fset *token.FileSet, file *ast.File) []string {
+	imports := map[string]string{} // local name -> import path
+	for _, imp := range file.Imports {
+		p, err := strconv.Unquote(imp.Path.Value)
+		if err != nil {
+			continue
+		}
+		name := path.Base(p)
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		imports[name] = p
+	}
+	qualified := func(e ast.Expr) (string, bool) {
+		sel, ok := e.(*ast.SelectorExpr)
+		if !ok {
+			return "", false
+		}
+		id, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return "", false
+		}
+		p, ok := imports[id.Name]
+		if !ok {
+			return "", false
+		}
+		return p + "." + sel.Sel.Name, true
+	}
+
+	var found []string
+	report := func(n ast.Node, what string) {
+		found = append(found, fmt.Sprintf("%s: %s", fset.Position(n.Pos()), what))
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CompositeLit:
+			if name, ok := qualified(n.Type); ok && constructed[name] {
+				report(n, name+" constructed directly")
+			}
+		case *ast.CallExpr:
+			if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "new" && len(n.Args) == 1 {
+				if name, ok := qualified(n.Args[0]); ok && constructed[name] {
+					report(n, name+" constructed directly")
+				}
+			}
+			name, ok := qualified(n.Fun)
+			if !ok || (name != "os/exec.Command" && name != "os/exec.CommandContext") {
+				break
+			}
+			arg := 0
+			if name == "os/exec.CommandContext" {
+				arg = 1
+			}
+			if len(n.Args) > arg {
+				if lit, ok := n.Args[arg].(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					if prog, err := strconv.Unquote(lit.Value); err == nil && localPrograms[prog] {
+						break
+					}
+				}
+			}
+			report(n, name+" for a program not known to be local; start it with netguard.Command")
+		case *ast.SelectorExpr:
+			if name, ok := qualified(n); ok && referenced[name] {
+				report(n, name+" used directly")
+			}
+		}
+		return true
+	})
+	return found
+}
+
+func parseSource(t *testing.T, src string) (*token.FileSet, *ast.File) {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "case.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	return fset, file
+}
+
+// The scan below is only as good as its detector, so the detector is held to
+// cases on both sides of the line.
+func TestDirectNetworkUseDetector(t *testing.T) {
+	flagged := map[string]string{
+		"client literal":    `package p; import "net/http"; var c = &http.Client{}`,
+		"transport literal": `package p; import "net/http"; var tr = http.Transport{}`,
+		"new client":        `package p; import "net/http"; var c = new(http.Client)`,
+		"http.Get":          `package p; import "net/http"; func f() { http.Get("u") }`,
+		"aliased default":   `package p; import h "net/http"; var c = h.DefaultClient`,
+		"net.Dial":          `package p; import "net"; func f() { net.Dial("tcp", "a") }`,
+		"dialer literal":    `package p; import "net"; var d = net.Dialer{}`,
+		"tls.Dial":          `package p; import "crypto/tls"; func f() { tls.Dial("tcp", "a", nil) }`,
+		"downloader":        `package p; import "os/exec"; func f() { exec.Command("curl", "u") }`,
+		"variable program":  `package p; import "os/exec"; func f(n string) { exec.Command(n) }`,
+		"command context":   `package p; import ("context"; "os/exec"); func f() { exec.CommandContext(context.TODO(), "npm") }`,
+	}
+	for name, src := range flagged {
+		t.Run("flags "+name, func(t *testing.T) {
+			fset, file := parseSource(t, src)
+			if got := directNetworkUse(fset, file); len(got) == 0 {
+				t.Errorf("not flagged: %s", src)
+			}
+		})
+	}
+
+	allowed := map[string]string{
+		"client type":   `package p; import "net/http"; type T struct{ c *http.Client }; func f(r *http.Request) {}`,
+		"request":       `package p; import "net/http"; func f() { http.NewRequest("GET", "u", nil) }`,
+		"local program": `package p; import "os/exec"; func f() { exec.Command("tar", "-xzf", "a") }`,
+		"other package": `package p; import "example.com/http"; var c = http.Get`,
+	}
+	for name, src := range allowed {
+		t.Run("allows "+name, func(t *testing.T) {
+			fset, file := parseSource(t, src)
+			if got := directNetworkUse(fset, file); len(got) != 0 {
+				t.Errorf("flagged %v in: %s", got, src)
+			}
+		})
+	}
+}
+
+// moduleRoot is the directory holding this module's go.mod.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod above the test directory")
+		}
+		dir = parent
+	}
+}
+
+// TestNetworkUseGoesThroughNetguard is what makes netguard the one check: a
+// new HTTP client, dialer or downloading subprocess in a non-test file of this
+// module fails here until it is built through Client or Command, so a fetch
+// added later cannot skip --offline.
+func TestNetworkUseGoesThroughNetguard(t *testing.T) {
+	root := moduleRoot(t)
+	self, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var scanned, violations []string
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if p != root && (strings.HasPrefix(name, ".") || name == "testdata" || name == "vendor" || name == "node_modules") {
+				return filepath.SkipDir
+			}
+			// A nested module is not part of this build.
+			if p != root {
+				if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+					return filepath.SkipDir
+				}
+			}
+			if p == self {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		fset := token.NewFileSet()
+		file, err := parser.ParseFile(fset, p, nil, 0)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		scanned = append(scanned, filepath.ToSlash(rel))
+		violations = append(violations, directNetworkUse(fset, file)...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Guard the walk: the files that make network connections today have to be
+	// among those read, or an empty walk would pass.
+	sort.Strings(scanned)
+	for _, want := range []string{
+		"cmd/cryptodeps/main.go",
+		"internal/analyzer/github.go",
+		"internal/analyzer/source/fetcher.go",
+		"internal/database/updater.go",
+		"internal/registry/npm.go",
+	} {
+		if i := sort.SearchStrings(scanned, want); i == len(scanned) || scanned[i] != want {
+			t.Errorf("%s was not scanned", want)
+		}
+	}
+
+	for _, v := range violations {
+		t.Errorf("network use outside netguard: %s", v)
+	}
+}

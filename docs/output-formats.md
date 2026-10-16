@@ -21,6 +21,22 @@ cryptodeps analyze . --format sarif
 cryptodeps analyze . --format markdown
 ```
 
+## Scans of a GitHub repository
+
+A repository fetched from GitHub is scanned from a temporary directory, so each
+format also names the repository and the branch that were read, and the
+subdirectory when the argument named one:
+
+| Format | Where |
+|--------|-------|
+| table | A `Repository:` line above the report |
+| json | A `source` object with `repository`, `branch` and `path` |
+| sarif | `runs[].versionControlProvenance`, with `repositoryUri` and `branch`, and the subdirectory in `properties.path` |
+| cbom | `metadata.properties` named `cryptodeps:sourceRepository`, `cryptodeps:sourceBranch` and `cryptodeps:sourcePath` |
+| markdown | `Repository` and `Branch` rows, and `Repository Path`, in the summary table |
+
+A scan of a local path has none of these.
+
 ## Output Formats Explained
 
 ### SARIF (Static Analysis Results Interchange Format)

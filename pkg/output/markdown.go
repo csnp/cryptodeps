@@ -42,6 +42,7 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	fmt.Fprintf(w, "## Summary\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
+	writeMarkdownSourceRows(w, result.Source)
 	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownCell(manifestForReport(root, result.Manifest)))
 	fmt.Fprintf(w, "| **Ecosystem** | %s |\n", result.Ecosystem)
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.Summary.TotalDependencies)
@@ -285,6 +286,20 @@ func writeMarkdownNoFindingsVerdict(w io.Writer, s types.ScanSummary) {
 	}
 }
 
+// writeMarkdownSourceRows names a fetched repository in a summary table, and
+// writes nothing for a local scan. In code spans, like every path in these
+// reports, because the values come from the command line and the GitHub API.
+func writeMarkdownSourceRows(w io.Writer, s *types.ScanSource) {
+	if s == nil {
+		return
+	}
+	fmt.Fprintf(w, "| **Repository** | `%s` |\n", markdownCell(s.Repository))
+	fmt.Fprintf(w, "| **Branch** | `%s` |\n", markdownCell(s.Branch))
+	if s.Path != "" {
+		fmt.Fprintf(w, "| **Repository Path** | `%s` |\n", markdownCell(s.Path))
+	}
+}
+
 // FormatMulti writes multi-project scan results as Markdown.
 func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writer) error {
 	if result == nil {
@@ -340,6 +355,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	fmt.Fprintf(w, "## Overview\n\n")
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
+	writeMarkdownSourceRows(w, result.Source)
 	fmt.Fprintf(w, "| **Root Path** | `%s` |\n", markdownCell(scanRootDir(result.RootPath)))
 	fmt.Fprintf(w, "| **Projects Scanned** | %d |\n", len(result.Projects))
 	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.TotalSummary.TotalDependencies)

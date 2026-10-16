@@ -1,6 +1,6 @@
 # Commands
 
-The `analyze`, `update`, `status` and `version` commands, the `analyze` flags, the report filters, the exit codes and common workflows. Start with the [README](../README.md) if you are new to CryptoDeps.
+The `analyze`, `update`, `status` and `version` commands, the `analyze` flags, the report filters, how an argument is read as a local path or a GitHub repository, the exit codes and common workflows. Start with the [README](../README.md) if you are new to CryptoDeps.
 
 ## CLI Reference
 
@@ -18,7 +18,7 @@ Analyze Flags:
       --fail-on string      Fail threshold: vulnerable, partial, any, none (default "vulnerable")
       --reachability        Analyze call graph for actual crypto usage (default true, Go only)
       --deep                Force AST analysis for packages not in database
-      --offline             Use only local database, skip auto-updates
+      --offline             Make no network connections: local database and local paths only
       --no-workspaces       Disable workspace discovery (scan single manifest only)
       --risk string         Report only this risk level: vulnerable, partial, safe, unknown, all
       --min-severity string Report only findings at or above: info, low, medium, high, critical
@@ -49,13 +49,34 @@ was found.
 The line goes to stderr only, so JSON, SARIF and CBOM output on stdout is
 unchanged.
 
+## Local paths and GitHub repositories
+
+`analyze` reads its argument as a local path whenever a file or directory of
+that name exists. Only when none does is an argument shaped like `owner/repo`,
+`github.com/owner/repo` or `https://github.com/owner/repo` fetched from GitHub,
+and the first line on stderr says so:
+
+```
+No file or directory named servics/api was found, so fetching the GitHub repository servics/api instead...
+```
+
+A report of a fetched repository names the repository and branch in every
+output format (see [Output formats](output-formats.md)).
+
+With `--offline`, nothing is fetched. An argument that is not a local path is
+reported before anything else runs, and the command exits 2:
+
+```
+Error: No file or directory named servics/api. --offline does not fetch repositories.
+```
+
 ## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | No finding reached the `--fail-on` threshold |
 | 1 | Quantum-vulnerable findings detected, under any `--fail-on` threshold except `none` |
-| 2 | Analysis error, including any manifest that was found but could not be read |
+| 2 | Analysis error, including any manifest that was found but could not be read, and an argument that is not a local path under `--offline` |
 | 3 | Findings reached the `partial` or `any` threshold, and none of them is quantum-vulnerable |
 
 What each `--fail-on` threshold exits with when the analysis succeeds. Findings
@@ -91,7 +112,7 @@ cryptodeps analyze . --reachability=false
 # Analyze a specific manifest file
 cryptodeps analyze ./go.mod
 
-# Offline mode (use cached database)
+# Offline mode (cached database, no network connections)
 cryptodeps analyze . --offline
 
 # Update the crypto knowledge database

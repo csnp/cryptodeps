@@ -108,6 +108,9 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 		return errors.New("writer cannot be nil")
 	}
 	// Header
+	if result.Source != nil {
+		fmt.Fprintf(w, "\nRepository: %s\n", reportSafe(describeSource(result.Source)))
+	}
 	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(manifestForReport(root, result.Manifest)), result.Summary.TotalDependencies)
 
 	// Check if there are any crypto findings
@@ -856,6 +859,11 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 	// Report unread manifests first. They change how every number below should
 	// be read, so they cannot go in a footer.
 	PrintSkipped(w, result.RootPath, result.Skipped)
+
+	// What was fetched, before the temporary directory it was scanned from.
+	if result.Source != nil {
+		fmt.Fprintf(w, "\nRepository: %s\n", reportSafe(describeSource(result.Source)))
+	}
 
 	// If there's only one project, just format it normally. It still gets the
 	// scan root: without it, a single-manifest repository, which is the most

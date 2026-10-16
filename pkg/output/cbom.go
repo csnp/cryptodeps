@@ -129,7 +129,8 @@ func (f *CBOMFormatter) format(result *types.ScanResult, projects []*types.ScanR
 		},
 		Components: make([]cycloneDXComponent, 0),
 	}
-	bom.Metadata.Properties = cbomCoverageProperties(result.Project, projects, skipped)
+	bom.Metadata.Properties = append(cbomSourceProperties(result.Source),
+		cbomCoverageProperties(result.Project, projects, skipped)...)
 
 	// Emit each dependency as a component, then each algorithm it provides as a
 	// cryptographic asset, and link the two through the dependencies graph.
@@ -406,6 +407,7 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 	// Create a merged scan result for CBOM output
 	merged := &types.ScanResult{
 		Project:   result.RootPath,
+		Source:    result.Source,
 		Manifest:  "multiple",
 		Ecosystem: types.EcosystemUnknown,
 		ScanDate:  result.ScanDate,
@@ -418,6 +420,24 @@ func (f *CBOMFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 	}
 
 	return f.format(merged, result.Projects, result.Skipped, w)
+}
+
+// cbomSourceProperties names the repository and branch a fetched scan read,
+// and returns nothing for a local scan. The manifests of a fetched repository
+// are scanned from a temporary directory, so without these the document does
+// not say which repository it describes.
+func cbomSourceProperties(s *types.ScanSource) []cycloneDXProperty {
+	if s == nil {
+		return nil
+	}
+	props := []cycloneDXProperty{
+		{Name: "cryptodeps:sourceRepository", Value: s.Repository},
+		{Name: "cryptodeps:sourceBranch", Value: s.Branch},
+	}
+	if s.Path != "" {
+		props = append(props, cycloneDXProperty{Name: "cryptodeps:sourcePath", Value: s.Path})
+	}
+	return props
 }
 
 // cbomCoverageProperties records what this bill of materials does not cover.

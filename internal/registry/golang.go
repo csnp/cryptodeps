@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
 
@@ -22,7 +23,7 @@ type GoClient struct {
 // NewGoClient creates a new Go module client.
 func NewGoClient() *GoClient {
 	return &GoClient{
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		httpClient: netguard.Client(30 * time.Second),
 		proxyURL:   "https://proxy.golang.org",
 	}
 }

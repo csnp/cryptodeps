@@ -5,8 +5,10 @@ package analyzer
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/csnp/qramm-cryptodeps/internal/githubapi"
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 )
 
 // GitHubRepo represents a parsed GitHub repository URL.
@@ -67,6 +70,48 @@ func IsGitHubURL(path string) bool {
 	return false
 }
 
+// ResolveTarget decides what an analyze argument names, before anything else
+// runs. It returns nil for a local path and the repository for an argument that
+// is to be fetched from GitHub.
+//
+// Under --offline, an argument with no local file or directory of that name is
+// an error. It used to be read as owner/repo before --offline was consulted, so
+// a mistyped local path such as servics/api for services/api was sent to
+// api.github.com, carrying GITHUB_TOKEN when that was set, and if a public
+// repository of that name existed the scan reported on it instead.
+func ResolveTarget(arg string) (*GitHubRepo, error) {
+	if _, err := os.Stat(arg); err == nil || !errors.Is(err, fs.ErrNotExist) {
+		// It exists, or it cannot be checked (a permission error, for
+		// example). Either way it is a local path, and the analysis reports
+		// what it finds there.
+		return nil, nil
+	}
+	if netguard.Offline() {
+		msg := fmt.Sprintf("No file or directory named %s.", arg)
+		if IsGitHubURL(arg) {
+			msg += " --offline does not fetch repositories."
+		}
+		return nil, errors.New(msg)
+	}
+	if !IsGitHubURL(arg) {
+		return nil, nil
+	}
+	return ParseGitHubURL(arg)
+}
+
+// FetchNotice is the first line printed when an argument is fetched from
+// GitHub. It says that no local path of that name was found, because the same
+// argument names a local directory whenever one exists.
+func FetchNotice(arg string, repo *GitHubRepo) string {
+	return fmt.Sprintf("No file or directory named %s was found, so fetching the GitHub repository %s/%s instead...",
+		arg, repo.Owner, repo.Repo)
+}
+
+// RepositoryURL is the canonical URL of the repository.
+func (r *GitHubRepo) RepositoryURL() string {
+	return "https://github.com/" + r.Owner + "/" + r.Repo
+}
+
 // ParseGitHubURL parses a GitHub URL into its components.
 func ParseGitHubURL(url string) (*GitHubRepo, error) {
 	for _, pattern := range githubPatterns {
@@ -88,22 +133,32 @@ func ParseGitHubURL(url string) (*GitHubRepo, error) {
 	return nil, fmt.Errorf("invalid GitHub URL: %s", url)
 }
 
+// githubClient carries every request to GitHub. It is built by netguard, so
+// --offline refuses its connections whichever caller reaches it.
+var githubClient = netguard.Client(30 * time.Second)
+
 // FetchGitHubManifests downloads manifest files from a GitHub repository.
-// Returns a temporary directory containing the manifest files.
-func FetchGitHubManifests(repo *GitHubRepo) (string, error) {
+// It returns a temporary directory containing the manifest files, and the
+// branch they were read from: the one the argument named, or the repository's
+// default branch.
+func FetchGitHubManifests(repo *GitHubRepo) (dir string, branch string, err error) {
+	if err := netguard.Check("fetch " + repo.Owner + "/" + repo.Repo + " from GitHub"); err != nil {
+		return "", "", err
+	}
+
 	// Create temp directory
 	tempDir, err := os.MkdirTemp("", "cryptodeps-github-*")
 	if err != nil {
-		return "", fmt.Errorf("failed to create temp directory: %w", err)
+		return "", "", fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
 	// Get default branch if not specified
-	branch := repo.Branch
+	branch = repo.Branch
 	if branch == "" {
 		branch, err = getDefaultBranch(repo.Owner, repo.Repo)
 		if err != nil {
 			os.RemoveAll(tempDir)
-			return "", err
+			return "", "", err
 		}
 	}
 
@@ -136,17 +191,17 @@ func FetchGitHubManifests(repo *GitHubRepo) (string, error) {
 		localPath := filepath.Join(tempDir, manifest)
 		if err := os.WriteFile(localPath, content, 0644); err != nil {
 			os.RemoveAll(tempDir)
-			return "", fmt.Errorf("failed to write %s: %w", manifest, err)
+			return "", "", fmt.Errorf("failed to write %s: %w", manifest, err)
 		}
 		found = true
 	}
 
 	if !found {
 		os.RemoveAll(tempDir)
-		return "", fmt.Errorf("no supported manifest files found in %s/%s", repo.Owner, repo.Repo)
+		return "", "", fmt.Errorf("no supported manifest files found in %s/%s", repo.Owner, repo.Repo)
 	}
 
-	return tempDir, nil
+	return tempDir, branch, nil
 }
 
 // githubAPI is the GitHub API the repository lookup uses. It is a variable so
@@ -157,7 +212,6 @@ var githubAPI = "https://api.github.com"
 func getDefaultBranch(owner, repo string) (string, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s", githubAPI, owner, repo)
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "CryptoDeps/1.0")
@@ -167,7 +221,7 @@ func getDefaultBranch(owner, repo string) (string, error) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := client.Do(req)
+	resp, err := githubClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch repo info: %w", err)
 	}
@@ -194,11 +248,10 @@ func getDefaultBranch(owner, repo string) (string, error) {
 func fetchRawFile(owner, repo, branch, path string) ([]byte, error) {
 	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, path)
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("User-Agent", "CryptoDeps/1.0")
 
-	resp, err := client.Do(req)
+	resp, err := githubClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
