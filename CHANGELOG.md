@@ -5,6 +5,31 @@ All notable changes to QRAMM CryptoDeps will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **The `analyze` help and the README said the filters decide the exit code.**
+  They said the summary and the exit code are computed from what `--risk` and
+  `--min-severity` leave. The exit code has counted every finding the scan made,
+  including the ones a filter hid, since 1.3.0, so a project scanned with
+  `--risk partial` exited 1 under a summary reading `0 vulnerable`. The help and
+  `docs/commands.md` now say what the code does: the filters choose what the
+  report shows and the summary counts what is shown, and the exit code counts
+  every finding, so a filter never turns a failing build into a passing one. The
+  exit codes themselves are unchanged.
+
+### Added
+
+- **A non-zero exit code now says what produced it.** When findings set the
+  exit code to 1 or 3, `analyze` prints one line on stderr after the report,
+  for example `Exit code 1 (--fail-on vulnerable): the scan found 11
+  quantum-vulnerable findings. 2 are called from your code and 9 are in
+  dependencies where no call from your code was found.` The counts are the ones
+  the exit code is computed from. Findings a filter hid are given as one count,
+  because reachability is not computed for them. Exit 0 prints nothing, exit 2
+  keeps its own messages, and stdout is unchanged in every format.
+
 ## [1.3.0] - 2026-07-30
 
 Fixes both open community issues, and the release-blocking defects a fresh-user

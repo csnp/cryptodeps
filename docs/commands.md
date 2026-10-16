@@ -25,10 +25,26 @@ Analyze Flags:
   -h, --help                Show help
 ```
 
-`--risk` and `--min-severity` filter the report. The summary and the exit code
-are computed from what the filters leave, so every number in the output
-describes the same set of findings. When a filter removes everything, the tool
-says so rather than reporting a clean scan.
+`--risk` and `--min-severity` choose which findings the report shows, and the
+summary counts what is shown. When a filter removes everything, the tool says so
+rather than reporting a clean scan. The exit code counts every finding the scan
+made, including the ones a filter hid, so a filter never turns a failing build
+into a passing one. When findings set the exit code to 1 or 3, one line on
+stderr after the report says which findings did. For a project with six
+quantum-vulnerable findings, scanned with `--risk partial`, the summary reads
+`0 vulnerable` and the line reads:
+
+```
+Exit code 1 (--fail-on vulnerable): the scan found 6 quantum-vulnerable findings. None of them is in the report: --risk or --min-severity hid them, and hidden findings still count toward the exit code. Run the same command without --risk and --min-severity to list them.
+```
+
+For a Go project, where reachability analysis runs, the line also splits the
+findings in the report by reachability: called from your code, reached from
+your code through other calls, or in dependencies where no call from your code
+was found.
+
+The line goes to stderr only, so JSON, SARIF and CBOM output on stdout is
+unchanged.
 
 ## Exit codes
 
