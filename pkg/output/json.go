@@ -15,6 +15,9 @@ import (
 // JSONFormatter formats scan results as JSON.
 type JSONFormatter struct {
 	Indent bool
+	// Database, when set, is written as the document's top-level "database"
+	// object.
+	Database *types.DatabaseInfo
 }
 
 // jsonTool identifies the build that produced a document. Consumers need this
@@ -36,14 +39,21 @@ func currentTool() jsonTool {
 // jsonScanDocument is a ScanResult with the emitting tool's identity attached.
 // The embedded pointer inlines the scan result's own fields, so the shape is
 // the previous one plus a "tool" object.
+//
+// "database" names the crypto database the findings were read from. Like the
+// tool, it belongs to the run rather than to the result: the same project gave
+// different findings against the built-in and the downloaded database, and the
+// documents could not be told apart.
 type jsonScanDocument struct {
-	Tool jsonTool `json:"tool"`
+	Tool     jsonTool            `json:"tool"`
+	Database *types.DatabaseInfo `json:"database,omitempty"`
 	*types.ScanResult
 }
 
 // jsonMultiDocument is the same wrapper for multi-project results.
 type jsonMultiDocument struct {
-	Tool jsonTool `json:"tool"`
+	Tool     jsonTool            `json:"tool"`
+	Database *types.DatabaseInfo `json:"database,omitempty"`
 	*types.MultiProjectResult
 }
 
@@ -55,7 +65,7 @@ func (f *JSONFormatter) Format(result *types.ScanResult, w io.Writer) error {
 	if w == nil {
 		return errors.New("writer cannot be nil")
 	}
-	return f.encode(w, jsonScanDocument{Tool: currentTool(), ScanResult: result})
+	return f.encode(w, jsonScanDocument{Tool: currentTool(), Database: f.Database, ScanResult: result})
 }
 
 // FormatMulti writes multi-project scan results as JSON.
@@ -66,7 +76,7 @@ func (f *JSONFormatter) FormatMulti(result *types.MultiProjectResult, w io.Write
 	if w == nil {
 		return errors.New("writer cannot be nil")
 	}
-	return f.encode(w, jsonMultiDocument{Tool: currentTool(), MultiProjectResult: result})
+	return f.encode(w, jsonMultiDocument{Tool: currentTool(), Database: f.Database, MultiProjectResult: result})
 }
 
 func (f *JSONFormatter) encode(w io.Writer, doc any) error {

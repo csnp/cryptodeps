@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/csnp/qramm-cryptodeps/internal/githubapi"
 )
 
 // GitHubRepo represents a parsed GitHub repository URL.
@@ -147,9 +149,13 @@ func FetchGitHubManifests(repo *GitHubRepo) (string, error) {
 	return tempDir, nil
 }
 
+// githubAPI is the GitHub API the repository lookup uses. It is a variable so
+// that a test can point it at a local server.
+var githubAPI = "https://api.github.com"
+
 // getDefaultBranch fetches the default branch of a repository.
 func getDefaultBranch(owner, repo string) (string, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, repo)
+	url := fmt.Sprintf("%s/repos/%s/%s", githubAPI, owner, repo)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, _ := http.NewRequest("GET", url, nil)
@@ -168,6 +174,9 @@ func getDefaultBranch(owner, repo string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		if limited := githubapi.RateLimited(resp, ""); limited != nil {
+			return "", limited
+		}
 		return "", fmt.Errorf("GitHub API error: %s", resp.Status)
 	}
 

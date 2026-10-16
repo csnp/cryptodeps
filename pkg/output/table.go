@@ -71,7 +71,30 @@ func countInferred(listed []cryptoDetail) int {
 
 // Format writes the scan result as a table.
 func (f *TableFormatter) Format(result *types.ScanResult, w io.Writer) error {
+	if result != nil && w != nil {
+		f.printDatabase(w)
+	}
 	return f.formatProject(result, "", w)
+}
+
+// printDatabase names the crypto database the scan read, once, above the
+// findings. The same project gave different numbers against the built-in and
+// the downloaded database, and the report did not say which it had used. The
+// version and date come from a downloaded file and are escaped like any other
+// text from outside the tool.
+func (f *TableFormatter) printDatabase(w io.Writer) {
+	db := f.Options.Database
+	if db == nil {
+		return
+	}
+	name := reportSafe(db.Source)
+	if db.Version != "" {
+		name += " " + reportSafe(db.Version)
+	}
+	if date := db.UpdatedDate(); date != "" {
+		name += " (" + reportSafe(date) + ")"
+	}
+	fmt.Fprintf(w, "Database: %s, %d packages\n", name, db.PackageCount)
 }
 
 // formatProject renders one project. root is the scan root when this render is
@@ -845,11 +868,13 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 		// nothing to resolve "./package.json" against. Every other format
 		// declares its root; this one had stopped.
 		fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(scanRootDir(result.RootPath)))
+		f.printDatabase(w)
 		return f.formatProject(result.Projects[0], result.RootPath, w)
 	}
 
 	// Header showing discovered projects
 	fmt.Fprintf(w, "\nScanning %s...\n", reportSafe(scanRootDir(result.RootPath)))
+	f.printDatabase(w)
 	fmt.Fprintf(w, "Found %d projects:\n", len(result.Projects))
 	for _, p := range result.Projects {
 		relPath := getRelativePath(result.RootPath, p.Manifest)

@@ -62,6 +62,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file and prints the command that scans the manifest beside it, for example
   `cryptodeps analyze x/go.mod` for `x/go.sum`. The exit code is unchanged.
 
+- **A failed automatic database update was silent.** Before a scan without
+  `--offline`, cryptodeps downloads the latest database when the local copy is
+  missing or more than 7 days old. When that download failed, the error was
+  discarded and the scan ran on the built-in database or the older copy, with
+  nothing to say so. `analyze` now prints one warning on stderr that names what
+  failed, the database the scan used instead, and the next step:
+  `cryptodeps update`, plus `GITHUB_TOKEN` when GitHub's rate limit is the
+  cause. Output on stdout is not affected by the warning.
+
+- **GitHub's API rate limit read as a bare HTTP 403.** Without a token GitHub
+  allows 60 API requests an hour, and once they were used up
+  `cryptodeps update` printed `GitHub API error: HTTP 403` and
+  `cryptodeps analyze owner/repo` printed `GitHub API error: 403 Forbidden`.
+  Both now name the rate limit, give the time it resets in local time, and say
+  how to continue: set `GITHUB_TOKEN`, or for `update`, pass `--url` with the
+  address of a `crypto-database.json` from the
+  [releases page](https://github.com/csnp/cryptodeps/releases). Other refusals
+  still name their status code.
+
 ### Added
 
 - **A non-zero exit code now says what produced it.** When findings set the
@@ -100,6 +119,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     ran, `cryptodeps:algorithm:<name>:reachability` for every algorithm it
     provides. An asset is shared by every library that provides it, so the
     per-library facts sit on the library.
+
+- **Every report names the crypto database it read.** The table prints one
+  line under the scan root, such as `Database: built-in, 72 packages` or
+  `Database: downloaded 1.1.0 (2026-10-12), 860 packages`, and the JSON
+  document carries a top-level `database` object with `source`, `version`,
+  `updatedAt` and `packageCount`. The same project can give different findings
+  against the built-in and the downloaded database, and until now neither
+  report said which one it had used. SARIF, CBOM and markdown output are
+  unchanged.
 
 ## [1.3.0] - 2026-07-30
 

@@ -406,6 +406,39 @@ type MultiProjectResult struct {
 	TotalSummary ScanSummary       `json:"totalSummary" yaml:"totalSummary"`
 }
 
+// Database sources, as DatabaseInfo.Source reports them.
+const (
+	// DatabaseBuiltIn is the seed data compiled into the binary.
+	DatabaseBuiltIn = "built-in"
+	// DatabaseDownloaded is a copy fetched from a database release and cached
+	// locally, by `cryptodeps update` or by the automatic update before a scan.
+	DatabaseDownloaded = "downloaded"
+)
+
+// DatabaseInfo identifies the crypto database a scan read.
+//
+// The same project gave "2 with crypto | 8 vulnerable" on one run and "3 with
+// crypto | 11 vulnerable" on the next, because a failed update left the first
+// run on the built-in data, and neither report said which database it had read.
+// A report that names its database can be compared with another one.
+type DatabaseInfo struct {
+	Source string `json:"source" yaml:"source"`
+	// Version and UpdatedAt are the downloaded file's own. The built-in data has
+	// neither, and they are left out rather than reported as empty strings.
+	Version      string `json:"version,omitempty" yaml:"version,omitempty"`
+	UpdatedAt    string `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
+	PackageCount int    `json:"packageCount" yaml:"packageCount"`
+}
+
+// UpdatedDate is UpdatedAt shortened to its date, or UpdatedAt as written when
+// it is not an RFC 3339 timestamp.
+func (d DatabaseInfo) UpdatedDate() string {
+	if t, err := time.Parse(time.RFC3339, d.UpdatedAt); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return d.UpdatedAt
+}
+
 // AggregateResults combines multiple scan results into a single multi-project result.
 func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResult {
 	multi := &MultiProjectResult{

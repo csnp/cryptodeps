@@ -21,6 +21,13 @@ import (
 type Database struct {
 	path  string
 	index map[types.Ecosystem]map[string]*types.PackageAnalysis
+
+	// source, version and updatedAt say which data the index holds. They are
+	// set where the data is loaded, so Info reports what was read rather than
+	// what was meant to be.
+	source    string
+	version   string
+	updatedAt string
 }
 
 // New creates a new database instance.
@@ -34,8 +41,9 @@ func New(path string) *Database {
 // NewEmbedded creates a database with embedded seed data.
 func NewEmbedded() *Database {
 	db := &Database{
-		path:  "",
-		index: make(map[types.Ecosystem]map[string]*types.PackageAnalysis),
+		path:   "",
+		index:  make(map[types.Ecosystem]map[string]*types.PackageAnalysis),
+		source: types.DatabaseBuiltIn,
 	}
 	db.loadEmbeddedData()
 	return db
@@ -157,6 +165,18 @@ func (db *Database) Stats() DatabaseStats {
 	}
 
 	return stats
+}
+
+// Info identifies this database for a report: where its data came from, the
+// downloaded file's version and date when there is one, and the number of
+// records it holds, counted as Stats counts them.
+func (db *Database) Info() types.DatabaseInfo {
+	return types.DatabaseInfo{
+		Source:       db.source,
+		Version:      db.version,
+		UpdatedAt:    db.updatedAt,
+		PackageCount: db.Stats().TotalPackages,
+	}
 }
 
 // DatabaseStats contains statistics about the database.

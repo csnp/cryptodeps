@@ -28,6 +28,10 @@ type FormatterOptions struct {
 	ShowRemediation bool
 	// Verbose enables detailed output
 	Verbose bool
+	// Database identifies the crypto database the scan read. The table prints
+	// it as one line and JSON as a top-level "database" object; the other
+	// formats do not show it. Nil leaves it out.
+	Database *types.DatabaseInfo
 }
 
 // DefaultOptions returns default formatter options.
@@ -62,7 +66,7 @@ func GetFormatterWithOptions(format Format, opts FormatterOptions) (Formatter, e
 	case FormatTable:
 		f = &TableFormatter{Options: opts}
 	case FormatJSON:
-		f = &JSONFormatter{Indent: true}
+		f = &JSONFormatter{Indent: true, Database: opts.Database}
 	case FormatCBOM:
 		f = &CBOMFormatter{}
 	case FormatSARIF:
