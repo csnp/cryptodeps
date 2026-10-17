@@ -217,7 +217,7 @@ func parseNPMWorkspaces(pkgJSONPath string) ([]string, error) {
 	var pkg struct {
 		Workspaces interface{} `json:"workspaces"`
 	}
-	if err := json.Unmarshal(data, &pkg); err != nil {
+	if err := json.Unmarshal(trimUTF8BOM(data), &pkg); err != nil {
 		return nil, err
 	}
 
@@ -465,7 +465,7 @@ func validateManifest(path string) error {
 	switch filename {
 	case "package.json":
 		var pkg map[string]interface{}
-		if err := json.Unmarshal(data, &pkg); err != nil {
+		if err := json.Unmarshal(trimUTF8BOM(data), &pkg); err != nil {
 			return fmt.Errorf("not valid JSON: %w", err)
 		}
 		return nil

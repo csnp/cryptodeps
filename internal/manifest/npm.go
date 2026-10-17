@@ -42,6 +42,7 @@ func (p *NPMParser) Parse(path string) ([]types.Dependency, error) {
 	if err != nil {
 		return nil, err
 	}
+	data = trimUTF8BOM(data)
 
 	var pkg packageJSON
 	if err := json.Unmarshal(data, &pkg); err != nil {
@@ -73,6 +74,18 @@ func (p *NPMParser) Parse(path string) ([]types.Dependency, error) {
 	}
 
 	return deps, nil
+}
+
+// utf8BOM is the byte order mark a UTF-8 file can start with.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
+
+// trimUTF8BOM drops a leading UTF-8 byte order mark. encoding/json rejects the
+// mark as an invalid character, so a package.json saved with one was refused
+// with "invalid character 'ï' looking for beginning of value" and none of its
+// dependencies were analyzed. The mark holds no newline, so the declaration
+// lines found in the trimmed document are the lines of the file.
+func trimUTF8BOM(data []byte) []byte {
+	return bytes.TrimPrefix(data, utf8BOM)
 }
 
 // npmDependencyBlocks names the package.json objects that declare
