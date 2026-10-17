@@ -205,8 +205,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		path = args[0]
 	}
 
-	// Decide what the argument names before anything else runs. Under
-	// --offline an argument that is not a local path is an error here, rather
+	// Decide what the argument names before anything else runs. An argument
+	// that is not a local path is an error here unless it is read as a GitHub
+	// repository, and under --offline it is an error here even then, rather
 	// than a request to GitHub.
 	repo, err := analyzer.ResolveTarget(path)
 	if err != nil {

@@ -89,6 +89,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now say `uses: csnp/cryptodeps@v1.3.1` and point to the releases page for
   the tag to pin.
 
+- **Without `--offline`, a path argument that names nothing was printed raw in
+  the error.** `cryptodeps analyze " x"` (a leading space) printed
+  `Error: analysis failed: cannot access path: stat  x: no such file or directory`
+  and `cryptodeps analyze ""` printed
+  `Error: analysis failed: cannot access path: stat : no such file or directory`,
+  while with `--offline` the same arguments were reported as
+  `Error: No file or directory named " x".` and
+  `Error: The path argument is empty.` Without `--offline`, an argument that
+  names no file or directory and is not shaped like a GitHub repository is now
+  reported as `--offline` reports it: an empty argument as empty, and an
+  argument that starts or ends with white space or holds a character that does
+  not print in double quotes. It is reported before anything else runs, so with
+  no cached database the command no longer tries to download one from GitHub
+  first. The exit code is still 2.
+
 ## [1.3.1] - 2026-10-17
 
 ### Fixed

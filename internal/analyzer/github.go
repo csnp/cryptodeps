@@ -73,14 +73,20 @@ func IsGitHubURL(path string) bool {
 }
 
 // ResolveTarget decides what an analyze argument names, before anything else
-// runs. It returns nil for a local path and the repository for an argument that
-// is to be fetched from GitHub.
+// runs. It returns nil for a local path, the repository for an argument that
+// is to be fetched from GitHub, and an error for an argument that names
+// neither.
 //
 // Under --offline, an argument with no local file or directory of that name is
 // an error. It used to be read as owner/repo before --offline was consulted, so
 // a mistyped local path such as servics/api for services/api was sent to
 // api.github.com, carrying GITHUB_TOKEN when that was set, and if a public
 // repository of that name existed the scan reported on it instead.
+//
+// Without --offline, such an argument is the same error unless it is read as
+// a repository. It used to be left to the analysis, whose error printed it
+// raw: " x" as "cannot access path: stat  x: no such file or directory", and
+// "" as "cannot access path: stat : no such file or directory".
 func ResolveTarget(arg string) (*GitHubRepo, error) {
 	if _, err := os.Stat(arg); err == nil || !errors.Is(err, fs.ErrNotExist) {
 		// It exists, or it cannot be checked (a permission error, for
@@ -88,23 +94,22 @@ func ResolveTarget(arg string) (*GitHubRepo, error) {
 		// what it finds there.
 		return nil, nil
 	}
-	if netguard.Offline() {
-		if arg == "" {
-			// An empty variable in `cryptodeps analyze "$SCAN_PATH"` arrives
-			// here. Printed bare, the message read "named ." as if the
-			// current directory were missing.
-			return nil, errors.New("The path argument is empty.")
-		}
-		msg := fmt.Sprintf("No file or directory named %s.", QuoteIfUnclear(arg))
-		if IsGitHubURL(arg) {
-			msg += " --offline does not fetch repositories."
-		}
-		return nil, errors.New(msg)
+	repository := IsGitHubURL(arg)
+	if repository && !netguard.Offline() {
+		return ParseGitHubURL(arg)
 	}
-	if !IsGitHubURL(arg) {
-		return nil, nil
+	if arg == "" {
+		// An empty variable in `cryptodeps analyze "$SCAN_PATH"` arrives
+		// here. Printed bare, the message read "named ." as if the
+		// current directory were missing.
+		return nil, errors.New("The path argument is empty.")
 	}
-	return ParseGitHubURL(arg)
+	msg := fmt.Sprintf("No file or directory named %s.", QuoteIfUnclear(arg))
+	if repository {
+		// Only under --offline: a repository is fetched otherwise.
+		msg += " --offline does not fetch repositories."
+	}
+	return nil, errors.New(msg)
 }
 
 // QuoteIfUnclear returns arg as a message prints it. An argument that is

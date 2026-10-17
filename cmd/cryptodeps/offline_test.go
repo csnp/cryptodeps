@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -228,5 +229,43 @@ func TestWithoutOfflineTheFetchIsAnnouncedAndObserved(t *testing.T) {
 	want := "No file or directory named servics/api was found, so fetching the GitHub repository servics/api instead..."
 	if first != want {
 		t.Errorf("first line of stderr is %q, want %q", first, want)
+	}
+}
+
+// Without --offline, an argument that names nothing and is not shaped like a
+// repository was left to the analysis, so `analyze " x"` printed
+// "Error: analysis failed: cannot access path: stat  x: no such file or
+// directory" and `analyze ""` printed "Error: analysis failed: cannot access
+// path: stat : no such file or directory". Each is now reported as --offline
+// reports it, before the database refresh, so it opens no connection either.
+func TestWithoutOfflineAMissingPathIsReportedAsOfflineReportsIt(t *testing.T) {
+	proxy, log := startConnectionLog(t)
+
+	for arg, want := range map[string]string{
+		"":              "Error: The path argument is empty.\n",
+		" x":            "Error: No file or directory named \" x\".\n",
+		"\tx":           "Error: No file or directory named \"\\tx\".\n",
+		"./servics/api": "Error: No file or directory named ./servics/api.\n",
+	} {
+		t.Run(strconv.Quote(arg), func(t *testing.T) {
+			before := len(log.snapshot())
+			stdout, stderr, code := runCLI(t, proxy, "analyze", arg)
+
+			if got := log.snapshot()[before:]; len(got) != 0 {
+				t.Errorf("%d connection(s) for an argument that names nothing, want 0: %q", len(got), got)
+			}
+			if code != ExitError {
+				t.Errorf("exit code %d, want %d", code, ExitError)
+			}
+			if stderr != want {
+				t.Errorf("stderr is %q, want %q", stderr, want)
+			}
+			if stdout != "" {
+				t.Errorf("a report was written for an argument that names nothing:\n%s", stdout)
+			}
+			if _, offlineStderr, _ := runCLI(t, proxy, "analyze", arg, "--offline"); stderr != offlineStderr {
+				t.Errorf("stderr is %q, and with --offline it is %q", stderr, offlineStderr)
+			}
+		})
 	}
 }
