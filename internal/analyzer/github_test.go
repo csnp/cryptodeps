@@ -158,6 +158,41 @@ func TestResolveTargetOfflineShowsAnUnclearArgument(t *testing.T) {
 	}
 }
 
+// The fetch notice printed the argument and the repository with %s, so a
+// newline in `analyze "https://github.com/a/b<NL>x"` split the notice over
+// three lines and a tab was printed raw, while the error printed after it
+// quoted the same argument. Both are now named the way the error names them.
+func TestFetchNoticeShowsAnUnclearArgument(t *testing.T) {
+	cases := []struct {
+		arg  string
+		repo GitHubRepo
+		want string
+	}{
+		{
+			"servics/api", GitHubRepo{Owner: "servics", Repo: "api"},
+			"No file or directory named servics/api was found, so fetching the GitHub repository servics/api instead...",
+		},
+		{
+			"https://github.com/a/b\nx", GitHubRepo{Owner: "a", Repo: "b\nx"},
+			`No file or directory named "https://github.com/a/b\nx" was found, so fetching the GitHub repository "a/b\nx" instead...`,
+		},
+		{
+			"https://github.com/a/b\tx", GitHubRepo{Owner: "a", Repo: "b\tx"},
+			`No file or directory named "https://github.com/a/b\tx" was found, so fetching the GitHub repository "a/b\tx" instead...`,
+		},
+		{
+			"https://github.com/a\tb/c", GitHubRepo{Owner: "a\tb", Repo: "c"},
+			`No file or directory named "https://github.com/a\tb/c" was found, so fetching the GitHub repository "a\tb/c" instead...`,
+		},
+	}
+	for _, c := range cases {
+		repo := c.repo
+		if got := FetchNotice(c.arg, &repo); got != c.want {
+			t.Errorf("FetchNotice(%q, owner %q, repo %q) = %q, want %q", c.arg, c.repo.Owner, c.repo.Repo, got, c.want)
+		}
+	}
+}
+
 // A local directory shaped like owner/repo is a local path, offline or not.
 func TestResolveTargetPrefersALocalPath(t *testing.T) {
 	dir := inEmptyDir(t)

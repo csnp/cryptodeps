@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The fetch notice printed a GitHub URL argument raw.** Given
+  `https://github.com/a/b` with a newline and `x` after it, `analyze` split the
+  line `No file or directory named ... was found, so fetching the GitHub
+  repository ... instead...` over three lines, and with a tab in place of the
+  newline it printed the tab as is, while the error printed after the notice
+  quoted the same argument. The notice now names the argument and the
+  repository through the same quoting as that error and the `--offline`
+  message, so for the newline case it reads `No file or directory named
+  "https://github.com/a/b\nx" was found, so fetching the GitHub repository
+  "a/b\nx" instead...`.
+
 - **`analyze` panicked on a GitHub URL argument that held a control
   character.** Given `https://github.com/a/b` with a tab and `x` after it, or a
   `/tree/` URL with a tab in its path, it printed the fetch notice and then a

@@ -121,10 +121,12 @@ func QuoteIfUnclear(arg string) string {
 
 // FetchNotice is the first line printed when an argument is fetched from
 // GitHub. It says that no local path of that name was found, because the same
-// argument names a local directory whenever one exists.
+// argument names a local directory whenever one exists. The argument and the
+// repository are named through QuoteIfUnclear, as the error printed after a
+// failed fetch names the argument.
 func FetchNotice(arg string, repo *GitHubRepo) string {
-	return fmt.Sprintf("No file or directory named %s was found, so fetching the GitHub repository %s/%s instead...",
-		arg, repo.Owner, repo.Repo)
+	return fmt.Sprintf("No file or directory named %s was found, so fetching the GitHub repository %s instead...",
+		QuoteIfUnclear(arg), QuoteIfUnclear(repo.Owner+"/"+repo.Repo))
 }
 
 // RepositoryURL is the canonical URL of the repository.
