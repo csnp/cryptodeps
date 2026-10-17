@@ -126,6 +126,56 @@ require github.com/foo/bar v1.0.0 => ./local
 	}
 }
 
+// TestGoModParserIndirectMarkerIsPerLine checks that a "// indirect" entry
+// placed before a direct one in the same require block marks only its own
+// line, so the direct entries after it stay direct.
+func TestGoModParserIndirectMarkerIsPerLine(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	gomod := `module example.com/app
+
+go 1.21
+
+require (
+	github.com/x/y v1.0.0 // indirect
+	github.com/golang-jwt/jwt/v5 v5.2.0
+	golang.org/x/crypto v0.17.0
+	github.com/pkg/errors v0.9.1 // indirect
+	github.com/sirupsen/logrus v1.9.0
+)
+`
+	gomodPath := filepath.Join(tmpDir, "go.mod")
+	if err := os.WriteFile(gomodPath, []byte(gomod), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps, err := (&GoModParser{}).Parse(gomodPath)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	want := map[string]bool{
+		"github.com/x/y":               false,
+		"github.com/golang-jwt/jwt/v5": true,
+		"golang.org/x/crypto":          true,
+		"github.com/pkg/errors":        false,
+		"github.com/sirupsen/logrus":   true,
+	}
+	if len(deps) != len(want) {
+		t.Fatalf("got %d dependencies, want %d: %+v", len(deps), len(want), deps)
+	}
+	for _, dep := range deps {
+		direct, ok := want[dep.Name]
+		if !ok {
+			t.Errorf("unexpected dependency %q", dep.Name)
+			continue
+		}
+		if dep.Direct != direct {
+			t.Errorf("%s: Direct = %v, want %v", dep.Name, dep.Direct, direct)
+		}
+	}
+}
+
 func TestNPMParser(t *testing.T) {
 	tmpDir, _ := os.MkdirTemp("", "manifest-test")
 	defer os.RemoveAll(tmpDir)
