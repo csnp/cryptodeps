@@ -66,7 +66,7 @@ Just as an SBOM inventories software dependencies, a CBOM inventories all crypto
 ```json
 {
   "bomFormat": "CycloneDX",
-  "specVersion": "1.5",
+  "specVersion": "1.6",
   "serialNumber": "urn:uuid:...",
   "components": [
     {

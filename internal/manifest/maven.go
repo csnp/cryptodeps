@@ -189,6 +189,7 @@ func (p *MavenParser) Parse(path string) ([]types.Dependency, error) {
 func mavenArtifactLines(data []byte) []int {
 	var lines []int
 	dec := xml.NewDecoder(bytes.NewReader(data))
+	index := newLineIndex(data)
 	var path []string
 	for {
 		// The offset before the token is where its "<" is, because the
@@ -205,7 +206,7 @@ func mavenArtifactLines(data []byte) []int {
 			case pathIs(path, "project", "dependencies", "dependency"):
 				lines = append(lines, 0)
 			case pathIs(path, "project", "dependencies", "dependency", "artifactId"):
-				lines[len(lines)-1] = lineAtOffset(data, start)
+				lines[len(lines)-1] = index.line(start)
 			}
 		case xml.EndElement:
 			if len(path) > 0 {

@@ -97,6 +97,7 @@ func npmDeclarationLines(data []byte) map[string]map[string]int {
 	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
 		return lines
 	}
+	index := newLineIndex(data)
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
@@ -137,7 +138,7 @@ func npmDeclarationLines(data []byte) map[string]map[string]int {
 			}
 			// A JSON string cannot hold a raw newline, so the line the key
 			// ends on is the line it starts on.
-			lines[block][name] = lineAtOffset(data, base+inner.InputOffset())
+			lines[block][name] = index.line(base + inner.InputOffset())
 			var skip json.RawMessage
 			if err := inner.Decode(&skip); err != nil {
 				break
@@ -147,15 +148,37 @@ func npmDeclarationLines(data []byte) map[string]map[string]int {
 	return lines
 }
 
-// lineAtOffset returns the 1-based line holding the byte at offset.
-func lineAtOffset(data []byte, offset int64) int {
+// lineIndex holds the byte offset of every newline in a document, in order.
+//
+// The npm and Maven parsers look up one line per dependency. Counting the
+// newlines from the start of the file on each lookup made a manifest's parse
+// time grow with the number of dependencies times the file size, and the
+// manifest under scan is text anyone who can open a pull request can change.
+// The newlines are found once here, and each lookup is a binary search over
+// them.
+type lineIndex []int64
+
+// newLineIndex records the offset of every newline in data.
+func newLineIndex(data []byte) lineIndex {
+	var index lineIndex
+	for offset := 0; ; {
+		i := bytes.IndexByte(data[offset:], '\n')
+		if i < 0 {
+			return index
+		}
+		index = append(index, int64(offset+i))
+		offset += i + 1
+	}
+}
+
+// line returns the 1-based line holding the byte at offset, or 0 for a
+// negative offset. An offset past the end of the document is on the last line.
+func (index lineIndex) line(offset int64) int {
 	if offset < 0 {
 		return 0
 	}
-	if offset > int64(len(data)) {
-		offset = int64(len(data))
-	}
-	return bytes.Count(data[:offset], []byte("\n")) + 1
+	// The newlines before offset are the ones the search passes over.
+	return sort.Search(len(index), func(i int) bool { return index[i] >= offset }) + 1
 }
 
 // sortedKeys returns a map's keys in a stable order.
