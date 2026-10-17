@@ -68,24 +68,94 @@ func TestStaticBadgeMessage(t *testing.T) {
 	}
 }
 
-// repoFileHolds reports whether link names a file in the repository whose
-// text contains every word of value, ignoring case.
-func repoFileHolds(link, value string) bool {
+// repoFileHolds reports whether link, written in the repository file from,
+// names another file in the repository whose text holds every word of value.
+// A link back to from does not count: from is the file the badge is drawn in,
+// not a source of its value.
+func repoFileHolds(from, link, value string) bool {
 	u, err := url.Parse(link)
 	if err != nil || u.Scheme != "" || u.Host != "" || u.Path == "" {
 		return false
 	}
-	b, err := os.ReadFile(filepath.Join(repoRoot, filepath.FromSlash(u.Path)))
+	path := filepath.Join(repoRoot, filepath.FromSlash(u.Path))
+	target, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
-	text := strings.ToLower(string(b))
-	for _, word := range strings.Fields(strings.ToLower(value)) {
-		if !strings.Contains(text, word) {
+	if self, err := os.Stat(filepath.Join(repoRoot, filepath.FromSlash(from))); err == nil && os.SameFile(target, self) {
+		return false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return holdsWords(string(b), value)
+}
+
+// holdsWords reports whether text holds every word of value, ignoring case,
+// as a whole word: with no letter, number or underscore beside it on either
+// side. The sides are matched as characters rather than as \b, which would
+// need a word character after the + of a grade such as B+.
+func holdsWords(text, value string) bool {
+	for _, word := range strings.Fields(value) {
+		whole := regexp.MustCompile(`(?i)(?:^|[^\pL\pN_])` + regexp.QuoteMeta(word) + `(?:$|[^\pL\pN_])`)
+		if !whole.MatchString(text) {
 			return false
 		}
 	}
 	return true
+}
+
+// TestHoldsWords checks that holdsWords finds each word of a value only as a
+// whole word.
+func TestHoldsWords(t *testing.T) {
+	for _, c := range []struct {
+		text, value string
+		holds       bool
+	}{
+		{"A", "A", true},
+		{"github.com/spf13/cobra v1.8.0", "A", false},
+		{"submitted to the Licensor, including but not limited to", "MIT", false},
+		{"Apache License\n   Version 2.0, January 2004", "Apache 2.0", true},
+		{"apache license version 2.0", "Apache 2.0", true},
+		{"Version 12.0", "2.0", false},
+		{"go report: B+\n", "B+", true},
+		{"go report: B", "B+", false},
+		{"go report: AB+", "B+", false},
+		{"go_report_A", "A", false},
+		{"", "A", false},
+	} {
+		if got := holdsWords(c.text, c.value); got != c.holds {
+			t.Errorf("holdsWords(%q, %q) = %v, want %v", c.text, c.value, got, c.holds)
+		}
+	}
+}
+
+// TestRepoFileHolds checks repoFileHolds on the values and links of static
+// badges drawn in README.md. go.mod holds the letter a only inside longer
+// words, such as cobra and yaml, and LICENSE holds mit only inside longer
+// words, such as submitted and limited, so neither holds the grade A or the
+// license MIT; LICENSE holds Apache and 2.0 as whole words. A link back to
+// README.md, also written as ./README.md#readme, and a link out of the
+// repository do not count.
+func TestRepoFileHolds(t *testing.T) {
+	for _, c := range []struct {
+		image, link string
+		holds       bool
+	}{
+		{"https://img.shields.io/badge/go%20report-A-brightgreen", "go.mod", false},
+		{"https://img.shields.io/badge/go%20report-A-brightgreen", "README.md", false},
+		{"https://img.shields.io/badge/go%20report-A-brightgreen", "./README.md#readme", false},
+		{"https://img.shields.io/badge/go%20report-A-brightgreen", "https://goreportcard.com/report/github.com/csnp/qramm-cryptodeps", false},
+		{"https://img.shields.io/badge/go%20report-B%2B-brightgreen", "go.mod", false},
+		{"https://img.shields.io/badge/License-MIT-blue.svg", "LICENSE", false},
+		{"https://img.shields.io/badge/License-Apache%202.0-blue.svg", "LICENSE", true},
+	} {
+		message, _ := staticBadgeMessage(c.image)
+		if got := repoFileHolds("README.md", c.link, message); got != c.holds {
+			t.Errorf("repoFileHolds(%q, %q, %q) = %v, want %v", "README.md", c.link, message, got, c.holds)
+		}
+	}
 }
 
 // TestDocsReadmeBadgesTakeTheirValuesFromASource covers a "go report: A"
@@ -93,12 +163,13 @@ func repoFileHolds(link, value string) bool {
 // was typed into its URL and not measured, and it linked to goreportcard.com,
 // whose own badge for the module read "go report: retired" on 2026-10-17.
 //
-// A static badge passes only when it links to a file in the repository that
-// holds its value, as the License badge links to LICENSE. Other badges, such
-// as the CI workflow badge and the shields.io badge that reads go.mod, are not
-// checked: the test does not reach the network, so it cannot see the value a
-// service returns. A badge inside a fenced code block is an example, not one
-// of the README's badges, and is skipped.
+// A static badge passes only when it links to another file in the repository
+// that holds each word of its value as a whole word, as the License badge
+// links to LICENSE, which holds Apache and 2.0. Other badges, such as the CI
+// workflow badge and the shields.io badge that reads go.mod, are not checked:
+// the test does not reach the network, so it cannot see the value a service
+// returns. A badge inside a fenced code block is an example, not one of the
+// README's badges, and is skipped.
 func TestDocsReadmeBadgesTakeTheirValuesFromASource(t *testing.T) {
 	const file = "README.md"
 	found := 0
@@ -114,11 +185,11 @@ func TestDocsReadmeBadgesTakeTheirValuesFromASource(t *testing.T) {
 			found++
 			alt, image, link := m[1], m[2], m[3]
 			message, static := staticBadgeMessage(image)
-			if !static || repoFileHolds(link, message) {
+			if !static || repoFileHolds(file, link, message) {
 				continue
 			}
 			t.Errorf("%s:%d: the %q badge shows %q, written into its URL %s, and links to %s, "+
-				"not to a file in the repository that holds that value. Use a badge that reads "+
+				"not to another file in the repository that holds that value. Use a badge that reads "+
 				"its value from a service, or remove it", file, i+1, alt, message, image, link)
 		}
 	}
