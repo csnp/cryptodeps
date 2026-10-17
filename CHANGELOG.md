@@ -59,10 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **requirements.txt `-r` includes and `name @ url` lines were dropped with no
   signal.** Such lines, and `-e` and plain URL lines, are now listed by line
   number with a reason, before the results in the table and markdown reports,
-  and under `unreadLines` in JSON. The included file or the package name is
-  shown; a URL from the manifest is not, so a `-r` line that names a URL is
-  listed by its line number and kind only. The dependencies they declare are
-  still not analyzed.
+  and under `unreadLines` in JSON. They are listed the same way in the other
+  requirements files the scan reads, the `requirements-*.txt` family (such as
+  `requirements-dev.txt` or `requirements_test.txt`) and `requirements/*.txt`.
+  The included file or the package name is shown; a URL from the manifest is
+  not, so a `-r` line that names a URL is listed by its line number and kind
+  only. The dependencies they declare are still not analyzed.
 
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the

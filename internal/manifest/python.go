@@ -522,10 +522,10 @@ var pypiSeparatorPattern = regexp.MustCompile(`[-_.]+`)
 // as "paramiko @ https://example.org/paramiko.tar.gz".
 var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*@`)
 
-// unreadLines lists the lines of a requirements.txt that declare dependencies
+// unreadLines lists the lines of a requirements file that declare dependencies
 // parseRequirementsTxt does not read: "-r" includes, editable installs, URL
-// requirements and local path requirements. It returns nil for every other
-// manifest.
+// requirements and local path requirements. It returns nil for every manifest
+// the scan does not read with parseRequirementsTxt.
 //
 // parseRequirementsTxt skips these lines, and the scan used to say nothing
 // about them, so a requirements.txt holding "-r extra.txt" was reported as
@@ -536,7 +536,7 @@ var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s
 // A local path such as "./vendor/foo-1.0.tar.gz" is shown, as the file of an
 // "-r" include is.
 func unreadLines(path string) []types.UnreadLine {
-	if strings.ToLower(filepath.Base(path)) != "requirements.txt" {
+	if !readAsRequirements(path) {
 		return nil
 	}
 	file, err := os.Open(path)
@@ -620,6 +620,33 @@ func localPathRequirementName(line string) string {
 		path = append(path, tok)
 	}
 	return strings.Join(path, " ")
+}
+
+// readAsRequirements reports whether the scan reads path with
+// parseRequirementsTxt, as it does requirements.txt, the requirements-*.txt
+// family and the requirements/*.txt layout. It asks getParserForPath, the
+// lookup DetectAndParseAll picks parsers with, rather than repeating its rule,
+// and then leaves out pyproject.toml and Pipfile, which Parse reads with
+// readers of their own. For a file DetectAndParse accepts, getParserForPath
+// returns the parser getParser chose.
+//
+// unreadLines used to test for the name "requirements.txt" alone, so an "-r"
+// include, an "-e" line or a URL requirement in requirements-dev.txt or
+// requirements/dev.txt was dropped with no signal, though the scan reads both
+// files.
+func readAsRequirements(path string) bool {
+	parser, err := getParserForPath(path)
+	if err != nil {
+		return false
+	}
+	if _, ok := parser.(*PythonParser); !ok {
+		return false
+	}
+	switch strings.ToLower(filepath.Base(path)) {
+	case "pyproject.toml", "pipfile":
+		return false
+	}
+	return true
 }
 
 // requirementOption reports whether line is the option short or long, and
