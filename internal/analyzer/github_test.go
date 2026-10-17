@@ -130,6 +130,34 @@ func TestResolveTargetOfflineRefusesAMissingPath(t *testing.T) {
 	}
 }
 
+// An empty argument, as an empty "$SCAN_PATH" gives, was reported as
+// "No file or directory named ." and one space as "named  .", which read as
+// if the current directory were missing. The empty argument is now named as
+// empty, and an argument the bare form would hide is quoted.
+func TestResolveTargetOfflineShowsAnUnclearArgument(t *testing.T) {
+	inEmptyDir(t)
+	offline(t)
+
+	cases := map[string]string{
+		"":             "The path argument is empty.",
+		" ":            `No file or directory named " ".`,
+		"\tx":          `No file or directory named "\tx".`,
+		" servics/api": `No file or directory named " servics/api".`,
+		"servics/api ": `No file or directory named "servics/api ".`,
+		"my dir":       "No file or directory named my dir.",
+	}
+	for arg, want := range cases {
+		repo, err := ResolveTarget(arg)
+		if err == nil {
+			t.Errorf("ResolveTarget(%q) = %+v with --offline set, want an error", arg, repo)
+			continue
+		}
+		if err.Error() != want {
+			t.Errorf("ResolveTarget(%q) error = %q, want %q", arg, err.Error(), want)
+		}
+	}
+}
+
 // A local directory shaped like owner/repo is a local path, offline or not.
 func TestResolveTargetPrefersALocalPath(t *testing.T) {
 	dir := inEmptyDir(t)
