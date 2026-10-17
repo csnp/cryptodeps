@@ -130,6 +130,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shown in double quotes, for example `Error: No file or directory named " ".`
   Other arguments are printed as before, and the exit code is still 2.
 
+### Changed
+
+- **The GitHub Action passes its inputs to its scripts through environment
+  variables.** Each script reads `path`, `format`, `fail-on`, `version` and
+  `sarif-file` as a quoted shell variable rather than having the value written
+  into the script text. A `format` or `fail-on` value the CLI does not accept now
+  stops the analysis step with exit code 2 and an error naming the accepted
+  values, the same exit code the CLI gave it.
+
 ### Added
 
 - **A non-zero exit code now says what produced it.** When findings set the

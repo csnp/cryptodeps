@@ -61,32 +61,65 @@ runs:
         go-version: '1.22'
         cache: false
 
+    # Inputs reach every run: script through env: and are read as quoted shell
+    # variables. A ${{ }} expression inside run: is pasted into the script text
+    # before bash parses it, so its value would be read as shell syntax.
     - name: Install CryptoDeps
       shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
       run: |
-        if [ "${{ inputs.version }}" = "latest" ]; then
+        if [ "$INPUT_VERSION" = "latest" ]; then
           go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest
         else
-          go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@${{ inputs.version }}
+          go install "github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@$INPUT_VERSION"
         fi
 
     - name: Run CryptoDeps Analysis
       id: analyze
       shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
       run: |
         set +e
 
+        # Refuse a format or fail-on value the CLI would refuse, with the exit
+        # code 2 the CLI gives it. The sets are the ones the CLI accepts: format
+        # also takes md and an empty value (table), and fail-on is compared in
+        # lower case with surrounding whitespace removed.
+        invalid_input() {
+          echo "::error::$1"
+          echo "vulnerable=0" >> $GITHUB_OUTPUT
+          echo "partial=0" >> $GITHUB_OUTPUT
+          echo "crypto=0" >> $GITHUB_OUTPUT
+          echo "exit_code=2" >> $GITHUB_OUTPUT
+          exit 2
+        }
+        case "$INPUT_FORMAT" in
+          table|json|sarif|cbom|markdown|md|'') ;;
+          *) invalid_input "Invalid format input $(printf '%q' "$INPUT_FORMAT"): expected one of table, json, sarif, cbom, markdown" ;;
+        esac
+        FAIL_ON=$(printf '%s' "$INPUT_FAIL_ON" | tr '[:upper:]' '[:lower:]')
+        FAIL_ON="${FAIL_ON#"${FAIL_ON%%[![:space:]]*}"}"
+        FAIL_ON="${FAIL_ON%"${FAIL_ON##*[![:space:]]}"}"
+        case "$FAIL_ON" in
+          vulnerable|partial|any|none) ;;
+          *) invalid_input "Invalid fail-on input $(printf '%q' "$INPUT_FAIL_ON"): expected one of vulnerable, partial, any, none" ;;
+        esac
+
         # Run analysis
-        OUTPUT=$(cryptodeps analyze "${{ inputs.path }}" \
-          --format "${{ inputs.format }}" \
-          --fail-on "${{ inputs.fail-on }}" \
+        OUTPUT=$(cryptodeps analyze "$INPUT_PATH" \
+          --format "$INPUT_FORMAT" \
+          --fail-on "$FAIL_ON" \
           --offline 2>&1)
         EXIT_CODE=$?
 
         echo "$OUTPUT"
 
         # Parse summary for outputs (extract from table or JSON)
-        if [ "${{ inputs.format }}" = "json" ]; then
+        if [ "$INPUT_FORMAT" = "json" ]; then
           # Workspace discovery is the default, and a multi-project document
           # carries totalSummary rather than summary. Reading only .summary made
           # every published count 0 on the default path, so the action reported
@@ -118,6 +151,9 @@ runs:
       # then still push a report into the Security tab.
       if: ${{ !cancelled() && inputs.sarif-file != '' }}
       shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_SARIF_FILE: ${{ inputs.sarif-file }}
       run: |
         # A non-zero exit here must not stop the upload. --fail-on none silences
         # the finding-based exit codes, but exit 2 still reports an analysis
@@ -126,14 +162,14 @@ runs:
         # steps run under -e, so without this the step failed and the upload
         # below never ran. Only a missing or empty document is a real failure.
         set +e
-        cryptodeps analyze "${{ inputs.path }}" \
+        cryptodeps analyze "$INPUT_PATH" \
           --format sarif \
           --fail-on none \
-          --offline > "${{ inputs.sarif-file }}"
+          --offline > "$INPUT_SARIF_FILE"
         EXIT_CODE=$?
         set -e
 
-        if [ ! -s "${{ inputs.sarif-file }}" ]; then
+        if [ ! -s "$INPUT_SARIF_FILE" ]; then
           echo "::error::cryptodeps wrote no SARIF output (exit $EXIT_CODE)"
           exit 1
         fi
