@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
@@ -741,8 +742,8 @@ var perRequirementOptionPattern = regexp.MustCompile(`\s-`)
 //
 // Lines are read as pip reads them, with a line that ends in a backslash
 // joined to the next one, and a requirement ends at its first per-requirement
-// option. Read one physical line at a time, a pin with its hash on the next
-// line,
+// option or at the end of its version specifier. Read one physical line at a
+// time, a pin with its hash on the next line,
 //
 //	cryptography==42.0.0 \
 //	    --hash=sha256:...
@@ -794,10 +795,11 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 		}
 
 		// Parse requirement line, which ends at its first per-requirement
-		// option
+		// option and at the end of its version specifier
 		if loc := perRequirementOptionPattern.FindStringIndex(line); loc != nil {
 			line = line[:loc[0]]
 		}
+		line = line[:requirementEnd(line)]
 		if matches := requirementPattern.FindStringSubmatch(line); matches != nil {
 			name := matches[1]
 			version := ""
@@ -824,4 +826,84 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 	}
 
 	return deps, nil
+}
+
+// requirementEnd returns the length of the requirement a requirements.txt line
+// begins with: its name, its extras and its version specifier. It returns
+// len(line) when no version follows the name and extras.
+//
+// pip ends a version specifier after one or more clauses, each an operator and
+// a version, joined by commas, with whitespace allowed around each part and the
+// whole optionally in parentheses. After it, pip's requirement parser expects
+// the semicolon that begins an environment marker, or the end, and rejects the
+// line otherwise: for "cryptography==42.0.0 xxx" it reports "Expected comma
+// (within version specifier), semicolon (after version specifier) or end". The
+// last group of requirementPattern takes the rest of the line, so that line was
+// reported as cryptography at version "42.0.0 xxx". Cut at requirementEnd, it
+// is read as cryptography 42.0.0.
+//
+// The first clause needs no operator here, because "cryptography 42.0.0" has
+// been read as version 42.0.0. The name is read as requirementNamePattern reads
+// it, with its dots, which requirementPattern stops at.
+func requirementEnd(line string) int {
+	name := requirementNamePattern.FindString(line)
+	if name == "" {
+		return len(line)
+	}
+	i := skipSpace(line, len(name))
+	if strings.HasPrefix(line[i:], "[") {
+		n := strings.IndexByte(line[i:], ']')
+		if n < 0 {
+			return len(line)
+		}
+		i = skipSpace(line, i+n+1)
+	}
+	if strings.HasPrefix(line[i:], "@") {
+		return len(line) // a name @ url reference has no version
+	}
+	paren := strings.HasPrefix(line[i:], "(")
+	if paren {
+		i++
+	}
+	versionEnds := func(r rune) bool {
+		return unicode.IsSpace(r) || r == ',' || r == ';' || (paren && r == ')')
+	}
+	end := -1
+	for first := true; ; first = false {
+		j := skipSpace(line, i)
+		k := len(line) - len(strings.TrimLeft(line[j:], "<>=!~"))
+		if k == j && !first {
+			break // after a comma, a clause begins with its operator
+		}
+		k = skipSpace(line, k)
+		n := strings.IndexFunc(line[k:], versionEnds)
+		if n < 0 {
+			n = len(line) - k
+		}
+		if n == 0 {
+			break
+		}
+		end = k + n
+		i = skipSpace(line, end)
+		if !strings.HasPrefix(line[i:], ",") {
+			break
+		}
+		i++
+		end = i // pip accepts a comma that ends the list
+	}
+	if end < 0 {
+		return len(line)
+	}
+	if paren {
+		if j := skipSpace(line, end); strings.HasPrefix(line[j:], ")") {
+			end = j + 1
+		}
+	}
+	return end
+}
+
+// skipSpace returns the index of the first character of s at or after i that
+// is not whitespace, or len(s) when there is none.
+func skipSpace(s string, i int) int {
+	return len(s) - len(strings.TrimLeftFunc(s[i:], unicode.IsSpace))
 }

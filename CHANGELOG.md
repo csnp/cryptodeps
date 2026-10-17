@@ -140,6 +140,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   comment at the end of a `require` entry, each longer than 64 KiB, are read
   the same way.
 
+- **Text after a version specifier in requirements.txt was reported as part
+  of the version.** The dependency parser kept the text after a
+  requirement's version specifier in its version, so
+  `cryptography==42.0.0 xxx`, which pip 26.0 rejects with `Expected comma
+  (within version specifier), semicolon (after version specifier) or end`,
+  was reported by `analyze --offline --format json` as
+  `"version": "42.0.0 xxx"` and printed in the table as
+  `cryptography@42.0.0 xxx`. With 70,000 characters after the version, each
+  table row naming the dependency carried all of them. A requirement now ends
+  where its version specifier ends, as pip reads it: clauses of an operator
+  and a version, joined by commas, with whitespace allowed around each part
+  and the whole optionally in parentheses. That line now reports
+  cryptography `42.0.0`, the JSON output for it differs only in the version
+  and timestamps, and the exit code is 1 before and after. Lines with
+  nothing after their specifier, such as `cryptography>=41.0, <43`,
+  `cryptography (>= 41.0, < 43)` and `zope.interface >= 5.0`, are read as
+  before.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the
