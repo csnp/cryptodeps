@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	"github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // MarkdownFormatter formats scan results as Markdown.
@@ -20,36 +21,61 @@ type MarkdownFormatter struct {
 
 // Format writes the scan result as Markdown.
 func (f *MarkdownFormatter) Format(result *types.ScanResult, w io.Writer) error {
-	return f.formatProject(result, "", w)
-}
-
-// formatProject renders one project. root is the scan root when this render is
-// part of a workspace report and empty when it stands alone, so that a manifest
-// is named the same way here as in the project list above it. Threaded as an
-// argument rather than held on the formatter, which is what cbom.go does, so the
-// formatter stays stateless.
-func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string, w io.Writer) error {
 	if result == nil {
 		return errors.New("result cannot be nil")
 	}
 	if w == nil {
 		return errors.New("writer cannot be nil")
 	}
-	// Title
 	fmt.Fprintf(w, "# CryptoDeps Scan Report\n\n")
+	f.writeProject(w, result, projectLayout{depth: 2, totals: true, nist: true})
+	writeMarkdownFooter(w)
+	return nil
+}
+
+// projectLayout says how one project is rendered: as the whole report, or as a
+// section of a workspace report under the project's own heading. A workspace
+// report used to render each project as a complete report, with its own H1
+// title and footer, so a scan of 11 projects carried 12 H1 headings.
+type projectLayout struct {
+	// root is the scan root when the project is part of a workspace report and
+	// empty when it stands alone, so that a manifest is named the same way here
+	// as in the project list above it.
+	root string
+	// depth is the heading level of the project's top sections: 2 when it is
+	// the whole report, 3 under the project heading of a workspace report.
+	depth int
+	// totals is whether the Summary carries the dependency and finding counts.
+	// A workspace report of one project leaves them to its Overview, which
+	// states the same numbers.
+	totals bool
+	// nist is whether the NIST reference table follows the guidance. A
+	// workspace report prints it once, after the projects.
+	nist bool
+}
+
+// writeProject renders one project. The root is threaded through the layout
+// rather than held on the formatter, which is what cbom.go does, so the
+// formatter stays stateless.
+func (f *MarkdownFormatter) writeProject(w io.Writer, result *types.ScanResult, layout projectLayout) {
+	section := strings.Repeat("#", layout.depth)
+	subsection := section + "#"
+	root := layout.root
 
 	// Summary
-	fmt.Fprintf(w, "## Summary\n\n")
+	fmt.Fprintf(w, "%s Summary\n\n", section)
 	fmt.Fprintf(w, "| Metric | Value |\n")
 	fmt.Fprintf(w, "|--------|-------|\n")
 	writeMarkdownSourceRows(w, result.Source)
 	fmt.Fprintf(w, "| **Manifest** | `%s` |\n", markdownCell(manifestForReport(root, result.Manifest)))
 	fmt.Fprintf(w, "| **Ecosystem** | %s |\n", result.Ecosystem)
-	fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.Summary.TotalDependencies)
-	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.Summary.WithCrypto)
-	fmt.Fprintf(w, "| **Quantum Vulnerable** | %d |\n", result.Summary.QuantumVulnerable)
-	fmt.Fprintf(w, "| **Quantum Partial** | %d |\n", result.Summary.QuantumPartial)
-	writeMarkdownSafeRows(w, result.Summary)
+	if layout.totals {
+		fmt.Fprintf(w, "| **Total Dependencies** | %d |\n", result.Summary.TotalDependencies)
+		fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.Summary.WithCrypto)
+		fmt.Fprintf(w, "| **Quantum Vulnerable** | %d |\n", result.Summary.QuantumVulnerable)
+		fmt.Fprintf(w, "| **Quantum Partial** | %d |\n", result.Summary.QuantumPartial)
+		writeMarkdownSafeRows(w, result.Summary)
+	}
 	fmt.Fprintf(w, "| **Not in Database** | %d |\n", result.Summary.NotInDatabase)
 	// Not the same number once --deep is in play, and the difference is the
 	// part a reader needs in order to know how much of the tree this report
@@ -72,7 +98,8 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 
 	if !hasAnyCrypto(result.Dependencies) {
 		writeMarkdownNoFindingsVerdict(w, result.Summary)
-		return nil
+		fmt.Fprintf(w, "\n")
+		return
 	}
 
 	// A filtered report describes only what survived the filter, so say so next
@@ -83,7 +110,7 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	}
 
 	// Findings by risk level
-	fmt.Fprintf(w, "## Findings\n\n")
+	fmt.Fprintf(w, "%s Findings\n\n", section)
 
 	// Collect remediation for detailed section
 	remediationMap := make(map[string]string) // algorithm -> remediation
@@ -93,7 +120,7 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	listed, inferred := 0, 0
 
 	// Vulnerable
-	fmt.Fprintf(w, "### Quantum Vulnerable\n\n")
+	fmt.Fprintf(w, "%s Quantum Vulnerable\n\n", subsection)
 	hasVulnerable := false
 	for _, dep := range result.Dependencies {
 		if dep.Analysis == nil {
@@ -135,7 +162,7 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	fmt.Fprintf(w, "\n")
 
 	// Partial
-	fmt.Fprintf(w, "### Quantum Partial Risk\n\n")
+	fmt.Fprintf(w, "%s Quantum Partial Risk\n\n", subsection)
 	hasPartial := false
 	for _, dep := range result.Dependencies {
 		if dep.Analysis == nil {
@@ -182,7 +209,7 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 
 	// Remediation Guidance
 	if f.Options.ShowRemediation && len(remediationMap) > 0 {
-		fmt.Fprintf(w, "## Remediation Guidance\n\n")
+		fmt.Fprintf(w, "%s Remediation Guidance\n\n", section)
 		fmt.Fprintf(w, "| Algorithm | Recommended Action | Where | Verify |\n")
 		fmt.Fprintf(w, "|-----------|--------------------|-------|--------|\n")
 		// Sorted, not ranged: Go randomises map iteration, so this table was the
@@ -220,14 +247,9 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 		fmt.Fprintf(w, "\n")
 	}
 
-	// NIST PQC Standards Reference
-	fmt.Fprintf(w, "## NIST Post-Quantum Cryptography Standards\n\n")
-	fmt.Fprintf(w, "| Standard | Algorithm | Use Case |\n")
-	fmt.Fprintf(w, "|----------|-----------|----------|\n")
-	fmt.Fprintf(w, "| [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final) | ML-KEM (Kyber) | Key Encapsulation |\n")
-	fmt.Fprintf(w, "| [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) | ML-DSA (Dilithium) | Digital Signatures |\n")
-	fmt.Fprintf(w, "| [FIPS 205](https://csrc.nist.gov/pubs/fips/205/final) | SLH-DSA (SPHINCS+) | Stateless Hash Signatures |\n")
-	fmt.Fprintf(w, "\n")
+	if layout.nist {
+		writeMarkdownNISTReference(w, section)
+	}
 
 	// Notes section for packages nothing examined. Keyed on NotExamined rather
 	// than NotInDatabase: a package the database does not carry and source
@@ -237,30 +259,49 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	// NotExamined and needs its own note. The heading belongs to either state
 	// rather than to the first one that happened to be written.
 	if result.Summary.NotExamined > 0 || result.Summary.SourceFilesUnreadable > 0 {
-		fmt.Fprintf(w, "## Notes\n\n")
+		fmt.Fprintf(w, "%s Notes\n\n", section)
 	}
 	if result.Summary.NotExamined > 0 {
 		pct := float64(result.Summary.NotExamined) / float64(result.Summary.TotalDependencies) * 100
-		fmt.Fprintf(w, "> **%d packages (%.0f%%) were not examined.**\n", result.Summary.NotExamined, pct)
+		// Worded to read the same for one package as for several, which
+		// "1 packages (17%) were not examined" did not.
+		fmt.Fprintf(w, "> **Packages that were not examined: %d of %d (%.0f%%).**\n",
+			result.Summary.NotExamined, result.Summary.TotalDependencies, pct)
 		if result.Summary.DeepAttempted {
 			fmt.Fprintf(w, "> Source analysis could not read them; see the warnings printed during the scan.\n\n")
 		} else if result.Summary.DeepSkippedOffline {
 			fmt.Fprintf(w, "> %s.\n\n", deepSkippedOffline)
 		} else {
-			fmt.Fprintf(w, "> Run with `--deep` flag to analyze these packages via source code inspection.\n\n")
+			fmt.Fprintf(w, "> Run with `--deep` flag to analyze them via source code inspection.\n\n")
 		}
 	}
 	if result.Summary.SourceFilesUnreadable > 0 {
-		fmt.Fprintf(w, "> **%d source files could not be read** in packages that were examined, so "+
-			"their cryptography may be under-reported.\n", result.Summary.SourceFilesUnreadable)
+		fmt.Fprintf(w, "> **%s could not be read** in packages that were examined, so "+
+			"their cryptography may be under-reported.\n",
+			countOf(result.Summary.SourceFilesUnreadable, "source file", "source files"))
 		fmt.Fprintf(w, "> The scan names them in the warnings it printed.\n\n")
 	}
+}
 
-	// Footer
+// writeMarkdownNISTReference writes the table of NIST post-quantum standards
+// under a heading at the level of section.
+func writeMarkdownNISTReference(w io.Writer, section string) {
+	fmt.Fprintf(w, "%s NIST Post-Quantum Cryptography Standards\n\n", section)
+	fmt.Fprintf(w, "| Standard | Algorithm | Use Case |\n")
+	fmt.Fprintf(w, "|----------|-----------|----------|\n")
+	fmt.Fprintf(w, "| [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final) | ML-KEM (Kyber) | Key Encapsulation |\n")
+	fmt.Fprintf(w, "| [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final) | ML-DSA (Dilithium) | Digital Signatures |\n")
+	fmt.Fprintf(w, "| [FIPS 205](https://csrc.nist.gov/pubs/fips/205/final) | SLH-DSA (SPHINCS+) | Stateless Hash Signatures |\n")
+	fmt.Fprintf(w, "\n")
+}
+
+// writeMarkdownFooter ends a report, once, with the tool and the version that
+// wrote it. The footer named no version, and the link named the repository by
+// the name it had before it was renamed.
+func writeMarkdownFooter(w io.Writer) {
 	fmt.Fprintf(w, "---\n\n")
-	fmt.Fprintf(w, "*Generated by [CryptoDeps](https://github.com/csnp/qramm-cryptodeps) - Part of the [QRAMM Toolkit](https://qramm.org)*\n")
-
-	return nil
+	fmt.Fprintf(w, "*Generated by [CryptoDeps](%s) version `%s` - Part of the [QRAMM Toolkit](https://qramm.org)*\n",
+		version.InformationURI, markdownCode(version.Version()))
 }
 
 // writeMarkdownNoFindingsVerdict states what a findings-free scan established.
@@ -408,19 +449,27 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	}
 	fmt.Fprintf(w, "\n")
 
-	// Individual project reports
+	// Individual project reports, each a section under its own heading rather
+	// than a complete report with a title and footer of its own.
+	layout := projectLayout{root: result.RootPath, depth: 3, totals: len(result.Projects) > 1}
+	anyFindings := false
 	for _, project := range result.Projects {
 		fmt.Fprintf(w, "---\n\n")
 		// In a code span, like every other path in this document. A bare heading
 		// renders whatever the name contains, and a directory can be named
 		// "**CLEAN**" or "[no findings](https://...)".
 		fmt.Fprintf(w, "## `%s`\n\n", markdownCode(getRelativePath(result.RootPath, project.Manifest)))
-
-		// Use the single-project formatter for detailed output
-		if err := f.formatProject(project, result.RootPath, w); err != nil {
-			return err
-		}
+		f.writeProject(w, project, layout)
+		anyFindings = anyFindings || hasAnyCrypto(project.Dependencies)
 	}
+
+	// Once, after the projects, where each project with findings used to print
+	// its own copy.
+	if anyFindings {
+		fmt.Fprintf(w, "---\n\n")
+		writeMarkdownNISTReference(w, "##")
+	}
+	writeMarkdownFooter(w)
 
 	return nil
 }

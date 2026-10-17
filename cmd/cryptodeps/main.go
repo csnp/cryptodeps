@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -93,12 +94,37 @@ Examples:
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
+	Args:  cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Read through pkg/version rather than the locals, so that this command
-		// and every machine-readable emitter provably agree.
-		fmt.Printf("%s %s\n", buildinfo.Name, buildinfo.Version())
-		fmt.Printf("  commit: %s\n", buildinfo.Commit())
-		fmt.Printf("  built:  %s\n", buildinfo.Date())
+		fmt.Print(versionText())
+	},
+}
+
+// versionText is what `cryptodeps version` and `cryptodeps --version` print.
+// It reads through pkg/version rather than the locals, so that both and every
+// machine-readable emitter provably agree.
+func versionText() string {
+	return fmt.Sprintf("%s %s\n  commit: %s\n  built:  %s\n",
+		buildinfo.Name, buildinfo.Version(), buildinfo.Commit(), buildinfo.Date())
+}
+
+// helpCmd replaces cobra's help command, which answered a topic that names no
+// command with "Unknown help topic" and the usage, and exited 0.
+var helpCmd = &cobra.Command{
+	Use:   "help [command]",
+	Short: "Help about any command",
+	Long: `Help provides help for any command in the application.
+Simply type cryptodeps help [path to command] for full details.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		target, _, err := cmd.Root().Find(args)
+		if target == nil || err != nil {
+			cmd.SilenceUsage = true
+			return fmt.Errorf("unknown help topic %q for %q\nRun '%s --help' for usage.",
+				strings.Join(args, " "), cmd.Root().CommandPath(), cmd.Root().CommandPath())
+		}
+		target.InitDefaultHelpFlag()
+		target.InitDefaultVersionFlag()
+		return target.Help()
 	},
 }
 
@@ -109,12 +135,20 @@ var analyzeCmd = &cobra.Command{
 and assess their quantum computing vulnerability.
 
 The path can be:
-  - A directory containing a manifest file (go.mod, package.json, etc.)
+  - A directory containing a manifest file
   - A specific manifest file
   - "." for the current directory
-  - A GitHub URL (https://github.com/owner/repo)
+  - A GitHub URL (https://github.com/owner/repo), or one naming a directory
+    in it (https://github.com/owner/repo/tree/branch/dir)
   - A GitHub shorthand (owner/repo), used only when no local path of that
     name exists
+
+In a directory, the manifest files read are go.mod, package.json,
+pyproject.toml, Pipfile, pom.xml and requirements.txt, including variants such
+as requirements-dev.txt and requirements/base.txt. Lock files such as go.sum,
+package-lock.json and yarn.lock are not read. build.gradle, build.gradle.kts,
+Cargo.toml, Gemfile and composer.json are named in the output but not read:
+cryptodeps has no parser for them.
 
 With --offline nothing is fetched: an argument that is not a local path exits 2.
 
@@ -139,8 +173,8 @@ Examples:
   cryptodeps analyze .
   cryptodeps analyze ./go.mod
   cryptodeps analyze /path/to/project --format json
-  cryptodeps analyze https://github.com/golang-jwt/jwt
-  cryptodeps analyze golang-jwt/jwt
+  cryptodeps analyze https://github.com/csnp/cryptodeps/tree/main/examples/vulnerable-demo
+  cryptodeps analyze FiloSottile/age
   cryptodeps analyze . --fail-on vulnerable --format sarif`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runAnalyze,
@@ -155,6 +189,7 @@ This fetches the newest package data, algorithm classifications, and
 remediation guidance from GitHub releases.
 
 The database is cached locally at ~/.cryptodeps/crypto-database.json`,
+	Args: cobra.NoArgs,
 	RunE: runUpdate,
 }
 
@@ -162,12 +197,13 @@ var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show database status",
 	Long:  `Display information about the crypto knowledge database.`,
+	Args:  cobra.NoArgs,
 	RunE:  runStatus,
 }
 
 func init() {
 	// Analyze command flags
-	analyzeCmd.Flags().StringVarP(&formatFlag, "format", "f", "table", "Output format (table, json, cbom, sarif, markdown)")
+	analyzeCmd.Flags().StringVarP(&formatFlag, "format", "f", "table", "Output format ("+strings.Join(output.FormatNames(), ", ")+")")
 	analyzeCmd.Flags().BoolVar(&offlineFlag, "offline", false, "Make no network connections: use the local database and local paths only")
 	analyzeCmd.Flags().BoolVar(&deepFlag, "deep", false, "Analyze the source of packages absent from the database. Downloads each package, so it needs network access and, for Go modules and npm packages, go or npm on PATH; skipped under --offline")
 	analyzeCmd.Flags().BoolVar(&reachabilityFlag, "reachability", true, "Analyze call graph to find actually-used crypto (Go only, use --reachability=false to disable)")
@@ -179,6 +215,16 @@ func init() {
 	// Update command flags
 	updateCmd.Flags().StringVar(&updateURL, "url", "", "Custom database URL (default: CSNP GitHub)")
 	updateCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "Verbose output")
+
+	// --version and -v print what `cryptodeps version` prints. Set here rather
+	// than in the command literal, because buildinfo.Set has not run when
+	// package variables are initialised. -v on update stays --verbose: this
+	// flag belongs to the root command only.
+	rootCmd.Version = buildinfo.Version()
+	rootCmd.Flags().BoolP("version", "v", false, "Print version information")
+	cobra.AddTemplateFunc("versionText", versionText)
+	rootCmd.SetVersionTemplate("{{versionText}}")
+	rootCmd.SetHelpCommand(helpCmd)
 
 	// Add commands
 	rootCmd.AddCommand(versionCmd)
@@ -248,10 +294,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// which is the layer that holds for any caller, and a second normalisation
 	// here would be code no test can hold: removing it left the suite green.
 
-	// Parse output format
+	// Parse output format. Worded as the three checks above word theirs, with
+	// the accepted values: "unsupported format: xml" named none of them.
 	format, err := output.ParseFormat(formatFlag)
 	if err != nil {
-		return err
+		return fmt.Errorf("invalid --format value %q: expected one of %s", formatFlag, strings.Join(output.FormatNames(), ", "))
 	}
 
 	// Initialize database with embedded + cached data. Without --offline, a

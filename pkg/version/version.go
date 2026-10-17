@@ -59,8 +59,11 @@ const Name = "cryptodeps"
 // DisplayName is the tool name for human-facing and SARIF driver use.
 const DisplayName = "CryptoDeps"
 
-// InformationURI is the tool's home, reported in SARIF.
-const InformationURI = "https://github.com/csnp/qramm-cryptodeps"
+// InformationURI is the tool's home, reported in SARIF and in the markdown
+// footer. The repository was renamed from qramm-cryptodeps to cryptodeps, and
+// the database download comes from releases under the new name, so this names
+// it too. The Go module path keeps the old name.
+const InformationURI = "https://github.com/csnp/cryptodeps"
 
 // Vendor is the publishing organisation, reported in CBOM.
 const Vendor = "CSNP"

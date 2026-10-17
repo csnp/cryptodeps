@@ -56,8 +56,12 @@ Run `--format` for each of table, json, cbom, sarif, markdown on the same tree.
 - [ ] CBOM validates against the official CycloneDX 1.6 schema and SARIF against
       official SARIF 2.1.0, both fetched upstream, not against the tool's own
       tests.
-- [ ] Five runs of each format are byte-identical once the JSON `scanDate` and
-      the CBOM `serialNumber` are normalized.
+- [ ] Five runs of each format are byte-identical once the fields that hold
+      the time of the run or a random value are normalized: in JSON, `scanDate`
+      (at the top level and in each project) and, when the scan read the
+      built-in database, each dependency's `analysis.analysis.date`; in CBOM,
+      `serialNumber` and `metadata.timestamp`. Table, SARIF and markdown have
+      none.
 - [ ] No emoji, no em-dashes, no ANSI escape bytes in any format.
 
 ## 4. Untrusted input

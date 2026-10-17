@@ -55,7 +55,7 @@ SARIF output integrates with GitHub Code Scanning, VS Code SARIF Viewer, and oth
     "tool": {
       "driver": {
         "name": "CryptoDeps",
-        "informationUri": "https://github.com/csnp/qramm-cryptodeps"
+        "informationUri": "https://github.com/csnp/cryptodeps"
       }
     },
     "results": [...]
@@ -75,15 +75,25 @@ Just as an SBOM inventories software dependencies, a CBOM inventories all crypto
   "components": [
     {
       "type": "cryptographic-asset",
-      "name": "RSA-2048",
+      "bom-ref": "crypto:RS256",
+      "name": "RS256",
       "cryptoProperties": {
         "assetType": "algorithm",
         "algorithmProperties": {
-          "primitive": "pke",
-          "parameterSetIdentifier": "2048"
+          "primitive": "signature"
         }
-      }
+      },
+      "properties": [
+        {
+          "name": "cryptodeps:quantumRisk",
+          "value": "VULNERABLE"
+        }
+      ]
     }
   ]
 }
 ```
+
+This is the component written for RS256, which `github.com/golang-jwt/jwt/v5`
+provides. Each algorithm a scan finds is one such component, named as the
+report names it, and each dependency that provides it is a `library` component.

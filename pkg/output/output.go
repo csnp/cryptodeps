@@ -7,6 +7,7 @@ package output
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
 )
@@ -74,9 +75,16 @@ func GetFormatterWithOptions(format Format, opts FormatterOptions) (Formatter, e
 	case FormatMarkdown:
 		f = &MarkdownFormatter{Options: opts}
 	default:
-		return nil, fmt.Errorf("unsupported format: %s", format)
+		return nil, fmt.Errorf("unsupported format %q: expected one of %s", format, strings.Join(FormatNames(), ", "))
 	}
 	return f, nil
+}
+
+// FormatNames returns the format names ParseFormat accepts, in the order the
+// help and the error for an unknown format list them. ParseFormat also accepts
+// "md" for markdown and "" for table.
+func FormatNames() []string {
+	return []string{string(FormatTable), string(FormatJSON), string(FormatCBOM), string(FormatSARIF), string(FormatMarkdown)}
 }
 
 // ParseFormat parses a format string.
@@ -93,7 +101,7 @@ func ParseFormat(s string) (Format, error) {
 	case "markdown", "md":
 		return FormatMarkdown, nil
 	default:
-		return "", fmt.Errorf("unsupported format: %s", s)
+		return "", fmt.Errorf("unsupported format %q: expected one of %s", s, strings.Join(FormatNames(), ", "))
 	}
 }
 

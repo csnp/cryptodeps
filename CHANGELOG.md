@@ -89,6 +89,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now say `uses: csnp/cryptodeps@v1.3.1` and point to the releases page for
   the tag to pin.
 
+- **Findings from the 1.3.1 release walkthrough.**
+  - `cryptodeps --version` and `cryptodeps -v` print what `cryptodeps version`
+    prints, where both were rejected as unknown flags with exit code 2.
+    `update -v` is still `--verbose`.
+  - `status`, `version` and `update` reject an argument
+    (`Error: unknown command "extra" for "cryptodeps status"`, exit code 2)
+    instead of ignoring it, and `help bogus` exits 2 with
+    `Error: unknown help topic "bogus" for "cryptodeps"` instead of 0.
+  - `--format xml` answers
+    `invalid --format value "xml": expected one of table, json, cbom, sarif, markdown`
+    instead of `unsupported format: xml`.
+  - `analyze --help` names the manifest files read in a directory, the lock
+    files that are not read, and the manifests named but not read. A lock file
+    passed as the argument (`yarn.lock`, `pnpm-lock.yaml`,
+    `npm-shrinkwrap.json`, `Pipfile.lock` or `poetry.lock`) gets the message
+    `package-lock.json` already got, and a directory holding only lock files
+    names them and the manifest read in their place, where it said only
+    `no supported manifest files found`.
+  - The `analyze --help` examples `golang-jwt/jwt` and
+    `https://github.com/golang-jwt/jwt` found 0 dependencies. They are now
+    `https://github.com/csnp/cryptodeps/tree/main/examples/vulnerable-demo` and
+    `FiloSottile/age`, which found 3 and 9 dependencies on 2026-10-17; the
+    README example is changed the same way.
+  - Counts of one are singular: `found 1 dependency`,
+    `1 package not in database`, and in markdown
+    `Packages that were not examined: 1 of 2 (50%).` The table marks the
+    not-in-database notice `[?]` rather than `[!]`, the mark of a
+    quantum-vulnerable finding, and no longer follows it with the hint that
+    repeats it. JSON still carries the hint.
+  - The table heading `CONFIRMED - Actually used by your code` says
+    `(requires action)` only when a row under it is quantum-vulnerable or
+    partial-risk. It said so above a single `[OK] bcrypt SAFE` row.
+  - Reachability analysis notes a function once per algorithm, so three
+    `ed25519` calls in one function give one trace instead of three identical
+    ones, and the table prints each `Called from` line once.
+  - A markdown workspace report has one H1 title, nests each project's sections
+    under the project heading, and prints the NIST table and the footer once:
+    a scan of 4 projects carried 5 H1 headings, 4 NIST tables and 4 footers. A
+    report of one project states its totals in the Overview only. The footer
+    names the tool version, and a report with no findings has one.
+  - SARIF `informationUri`, the markdown footer and the release lookup of
+    `update` name `https://github.com/csnp/cryptodeps`, the repository's name
+    since it was renamed from `qramm-cryptodeps`. The Go module path is
+    unchanged.
+  - The CBOM example in `docs/output-formats.md` shows the RS256 component the
+    tool writes, not an `RSA-2048` component with a `parameterSetIdentifier`
+    that no CBOM carries. The release smoke test names `analysis.analysis.date`
+    (with the built-in database) and CBOM `metadata.timestamp` among the fields
+    that differ between runs.
+
 - **Without `--offline`, a path argument that names nothing was printed raw in
   the error.** `cryptodeps analyze " x"` (a leading space) printed
   `Error: analysis failed: cannot access path: stat  x: no such file or directory`

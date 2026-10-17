@@ -396,9 +396,13 @@ func (a *Analyzer) generateHints(result *types.ScanResult) []string {
 	if result.Summary.NotInDatabase > 0 && !a.options.Deep {
 		pct := float64(result.Summary.NotInDatabase) / float64(result.Summary.TotalDependencies) * 100
 		if pct >= 50 || (result.Summary.WithCrypto == 0 && result.Summary.NotInDatabase > 5) {
+			packages := "packages"
+			if result.Summary.NotInDatabase == 1 {
+				packages = "package"
+			}
 			hints = append(hints, fmt.Sprintf(
-				"%d packages (%.0f%%) not in database. Run with --deep for source code analysis.",
-				result.Summary.NotInDatabase, pct))
+				"%d %s (%.0f%%) not in database. Run with --deep for source code analysis.",
+				result.Summary.NotInDatabase, packages, pct))
 		}
 	}
 
