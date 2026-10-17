@@ -82,11 +82,16 @@ reported before anything else runs, and the command exits 2:
 Error: No file or directory named servics/api. --offline does not fetch repositories.
 ```
 
-An empty argument, which `cryptodeps analyze "$SCAN_PATH" --offline` passes
-when `SCAN_PATH` is empty, is reported as `Error: The path argument is empty.`
-An argument that starts or ends with a space, or holds a tab or another
-character that does not print, is shown in double quotes, for example
-`Error: No file or directory named " ".`
+Without `--offline`, an argument that is not a local path and is not shaped
+like a repository is reported the same way, also before anything else runs,
+and the command exits 2, for example
+`Error: No file or directory named ./servics/api.`
+
+An empty argument, which `cryptodeps analyze "$SCAN_PATH"` passes when
+`SCAN_PATH` is empty, is reported as `Error: The path argument is empty.`,
+with or without `--offline`. An argument that starts or ends with a space, or
+holds a tab or another character that does not print, is shown in double
+quotes, for example `Error: No file or directory named " ".`
 
 ## Exit codes
 

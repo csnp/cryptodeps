@@ -222,9 +222,44 @@ func TestResolveTargetOnlineReadsAMissingShorthandAsARepository(t *testing.T) {
 		t.Errorf("RepositoryURL() = %q, want %q", got, want)
 	}
 
-	// Not shaped like a repository: left to the analysis to report.
-	if repo, err := ResolveTarget("./servics/api"); err != nil || repo != nil {
-		t.Errorf("ResolveTarget(./servics/api) = %+v, %v; want a local path", repo, err)
+	// Not shaped like a repository: reported as missing, as under --offline.
+	want := "No file or directory named ./servics/api."
+	if repo, err := ResolveTarget("./servics/api"); repo != nil || err == nil || err.Error() != want {
+		t.Errorf("ResolveTarget(./servics/api) = %+v, %v; want the error %q", repo, err, want)
+	}
+}
+
+// Without --offline, an argument that names nothing and is not read as a
+// repository was left to the analysis, whose error printed it raw: " x" as
+// "cannot access path: stat  x: no such file or directory", and "" as
+// "cannot access path: stat : no such file or directory". It is now the error
+// --offline gives.
+func TestResolveTargetOnlineNamesAMissingPathAsOfflineDoes(t *testing.T) {
+	inEmptyDir(t)
+	t.Cleanup(func() { netguard.SetOffline(false) })
+
+	cases := map[string]string{
+		"":             "The path argument is empty.",
+		" ":            `No file or directory named " ".`,
+		" x":           `No file or directory named " x".`,
+		"\tx":          `No file or directory named "\tx".`,
+		"\x1b[2Jx":     `No file or directory named "\x1b[2Jx".`,
+		" servics/api": `No file or directory named " servics/api".`,
+		"servics/api ": `No file or directory named "servics/api ".`,
+		"my dir":       "No file or directory named my dir.",
+	}
+	for arg, want := range cases {
+		for _, off := range []bool{false, true} {
+			netguard.SetOffline(off)
+			repo, err := ResolveTarget(arg)
+			if err == nil {
+				t.Errorf("offline=%v: ResolveTarget(%q) = %+v, want an error", off, arg, repo)
+				continue
+			}
+			if err.Error() != want {
+				t.Errorf("offline=%v: ResolveTarget(%q) error = %q, want %q", off, arg, err.Error(), want)
+			}
+		}
 	}
 }
 
