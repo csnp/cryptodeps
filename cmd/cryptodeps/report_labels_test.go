@@ -152,12 +152,15 @@ func itoa(n int) string {
 
 // A requirements.txt "-r extra.txt" include and a "name @ url" line were
 // dropped with no signal. Both are now named, by line, in the table and in
-// JSON, and the URL itself is not copied into either.
+// JSON, and the URL itself is not copied into either. An "-r" include that
+// names a URL, which pip fetches, is listed by line only, so a credential in
+// the URL stays out of every report.
 func TestRequirementsLinesNotReadAreReported(t *testing.T) {
 	proxy, _ := startConnectionLog(t)
 	project := writeProject(t, map[string]string{
-		"requirements.txt": "cryptography==42.0.0\nPyJWT==2.8.0\n-r extra.txt\nparamiko @ https://example.invalid/paramiko.tar.gz\n",
-		"extra.txt":        "pycryptodome==3.20.0\n",
+		"requirements.txt": "cryptography==42.0.0\nPyJWT==2.8.0\n-r extra.txt\n" +
+			"paramiko @ https://example.invalid/paramiko.tar.gz\n-r https://example.invalid/private-reqs.txt\n",
+		"extra.txt": "pycryptodome==3.20.0\n",
 	})
 
 	stdout, stderr, _ := runCLI(t, proxy, "analyze", project, "--offline", "--format", "json")
@@ -174,9 +177,10 @@ func TestRequirementsLinesNotReadAreReported(t *testing.T) {
 		t.Fatalf("parsing JSON: %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
 	}
 	unread := doc.Projects[0].UnreadLines
-	if len(unread) != 2 || unread[0].Line != 3 || unread[0].Name != "extra.txt" ||
-		unread[1].Line != 4 || unread[1].Name != "paramiko" {
-		t.Fatalf("unreadLines = %+v, want line 3 extra.txt and line 4 paramiko", unread)
+	if len(unread) != 3 || unread[0].Line != 3 || unread[0].Name != "extra.txt" ||
+		unread[1].Line != 4 || unread[1].Name != "paramiko" ||
+		unread[2].Line != 5 || unread[2].Name != "" {
+		t.Fatalf("unreadLines = %+v, want line 3 extra.txt, line 4 paramiko and line 5 with no name", unread)
 	}
 	for _, u := range unread {
 		if u.Reason == "" {
@@ -192,7 +196,7 @@ func TestRequirementsLinesNotReadAreReported(t *testing.T) {
 		if format == "json" {
 			continue
 		}
-		for _, want := range []string{"line 3", "extra.txt", "line 4", "paramiko", "did not read"} {
+		for _, want := range []string{"line 3", "extra.txt", "line 4", "paramiko", "line 5", "did not read"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("%s output does not contain %q:\n%s", format, want, out)
 			}

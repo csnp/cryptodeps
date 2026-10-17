@@ -529,7 +529,9 @@ var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s
 // parseRequirementsTxt skips these lines, and the scan used to say nothing
 // about them, so a requirements.txt holding "-r extra.txt" was reported as
 // though extra.txt did not exist. A URL is never copied into the result,
-// because one in a manifest can carry credentials.
+// because one in a manifest can carry credentials. That holds for an "-r"
+// include as well: pip fetches "-r https://host/reqs.txt", so such a line is
+// listed by its kind and line number only, while "-r extra.txt" names the file.
 func unreadLines(path string) []types.UnreadLine {
 	if strings.ToLower(filepath.Base(path)) != "requirements.txt" {
 		return nil
@@ -554,6 +556,11 @@ func unreadLines(path string) []types.UnreadLine {
 		}
 
 		if include, ok := requirementOption(line, "-r", "--requirement"); ok {
+			if strings.Contains(include, "://") {
+				unread = append(unread, types.UnreadLine{Line: lineNo,
+					Reason: "included requirements URLs are not followed, so the dependencies it declares are not analyzed"})
+				continue
+			}
 			unread = append(unread, types.UnreadLine{Line: lineNo, Name: include,
 				Reason: "included requirements files are not followed, so the dependencies it declares are not analyzed"})
 			continue

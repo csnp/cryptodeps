@@ -11,7 +11,9 @@ import (
 )
 
 // Every requirements.txt line that declares dependencies the parser skips is
-// listed with its line number, and option lines that declare none are not.
+// listed with its line number, option lines that declare none are not, and no
+// URL from the manifest is copied into the result, not even the URL of an
+// "-r" include, which pip fetches and which can carry credentials.
 func TestRequirementsUnreadLines(t *testing.T) {
 	dir := t.TempDir()
 	content := strings.Join([]string{
@@ -19,12 +21,14 @@ func TestRequirementsUnreadLines(t *testing.T) {
 		"-r extra.txt",           // 2
 		"--requirement=more.txt", // 3
 		"-rdev.txt",              // 4
-		"paramiko[ed25519] @ https://example.invalid/p", // 5
-		"-e git+https://example.invalid/repo.git#egg=x", // 6
-		"https://example.invalid/pkg.whl",               // 7
-		"--index-url https://example.invalid/simple",    // 8 not a dependency
-		"-c constraints.txt",                            // 9 not a dependency
-		"# -r commented.txt",                            // 10 comment
+		"paramiko[ed25519] @ https://example.invalid/p",  // 5
+		"-e git+https://example.invalid/repo.git#egg=x",  // 6
+		"https://example.invalid/pkg.whl",                // 7
+		"-r https://example.invalid/private-reqs.txt",    // 8 a URL include
+		"--requirement=https://example.invalid/more.txt", // 9 a URL include
+		"--index-url https://example.invalid/simple",     // 10 not a dependency
+		"-c constraints.txt",                             // 11 not a dependency
+		"# -r commented.txt",                             // 12 comment
 		"",
 	}, "\n")
 	path := filepath.Join(dir, "requirements.txt")
@@ -44,7 +48,7 @@ func TestRequirementsUnreadLines(t *testing.T) {
 		line int
 		name string
 	}{
-		{2, "extra.txt"}, {3, "more.txt"}, {4, "dev.txt"}, {5, "paramiko"}, {6, ""}, {7, ""},
+		{2, "extra.txt"}, {3, "more.txt"}, {4, "dev.txt"}, {5, "paramiko"}, {6, ""}, {7, ""}, {8, ""}, {9, ""},
 	}
 	if len(m.Unread) != len(want) {
 		t.Fatalf("Unread = %+v, want %d entries", m.Unread, len(want))
