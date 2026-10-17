@@ -6,6 +6,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -525,6 +526,51 @@ func TestDetectAndParseOtherUnsupportedKeepsMessage(t *testing.T) {
 	}
 	if want := "unsupported manifest file: Cargo.toml"; err.Error() != want {
 		t.Errorf("DetectAndParse(x/Cargo.toml) error = %q, want %q", err.Error(), want)
+	}
+}
+
+// A requirements/*.txt file passed as the argument was refused as
+// "unsupported manifest file: dev.txt": DetectAndParse looked its parser up by
+// filename, while a scan of the directory looks it up by path and reads the
+// file. Given as the argument, the file is now read with the dependencies and
+// unread lines the scan of its directory lists for it.
+func TestDetectAndParseRequirementsDirectoryFile(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		filepath.Join("requirements", "dev.txt"): "-r requirements.txt\nparamiko>=3.0\n",
+	})
+	path := filepath.Join(dir, "requirements", "dev.txt")
+
+	scanned, skipped, err := DetectAndParseAll(dir)
+	if err != nil || len(skipped) != 0 || len(scanned) != 1 {
+		t.Fatalf("DetectAndParseAll(dir) = %d manifests, skipped %+v, error %v; want 1 manifest", len(scanned), skipped, err)
+	}
+	want := scanned[0]
+	if len(want.Dependencies) != 1 || want.Dependencies[0].Name != "paramiko" ||
+		len(want.Unread) != 1 || want.Unread[0].Line != 1 || want.Unread[0].Name != "requirements.txt" {
+		t.Fatalf("scan of the directory: dependencies %+v, unread %+v; want paramiko and the -r include on line 1",
+			want.Dependencies, want.Unread)
+	}
+
+	// Both entry points: analyze uses DetectAndParseAll by default and
+	// DetectAndParse under --no-workspaces.
+	single, err := DetectAndParse(path)
+	if err != nil {
+		t.Fatalf("DetectAndParse(%s): %v", path, err)
+	}
+	all, skipped, err := DetectAndParseAll(path)
+	if err != nil || len(skipped) != 0 || len(all) != 1 {
+		t.Fatalf("DetectAndParseAll(%s) = %d manifests, skipped %+v, error %v; want 1 manifest", path, len(all), skipped, err)
+	}
+	for name, got := range map[string]*Manifest{"DetectAndParse": single, "DetectAndParseAll": all[0]} {
+		if got.Ecosystem != types.EcosystemPyPI {
+			t.Errorf("%s: Ecosystem = %q, want %q", name, got.Ecosystem, types.EcosystemPyPI)
+		}
+		if !reflect.DeepEqual(got.Dependencies, want.Dependencies) {
+			t.Errorf("%s: Dependencies = %+v, want %+v", name, got.Dependencies, want.Dependencies)
+		}
+		if !reflect.DeepEqual(got.Unread, want.Unread) {
+			t.Errorf("%s: Unread = %+v, want %+v", name, got.Unread, want.Unread)
+		}
 	}
 }
 

@@ -81,6 +81,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   backslash is not joined to the next line. The dependencies, findings and
   exit code for that file are unchanged.
 
+- **A `requirements/*.txt` file passed as the argument was refused.** A scan
+  of a directory reads `requirements/dev.txt` as a requirements file, but
+  `cryptodeps analyze requirements/dev.txt --offline` exited 2 with `Error:
+  analysis failed: unsupported manifest file: dev.txt`, with and without
+  `--no-workspaces`, because the parser for a file argument was chosen by the
+  file's name alone. It is now chosen by the file's path, as in a scan of a
+  directory. For a `requirements/dev.txt` holding `-r requirements.txt` and
+  `paramiko>=3.0`, the scan of the file now lists `paramiko` and the unread
+  `-r requirements.txt` line, its JSON report differs from the report for a
+  scan of the directory only in timestamps and paths, and both exit 1. Other
+  files keep their message: `docs/notes.txt` and `x/Cargo.toml` are refused
+  with `unsupported manifest file: notes.txt` and `unsupported manifest file:
+  Cargo.toml`, as before.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the

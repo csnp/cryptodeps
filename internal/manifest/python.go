@@ -631,10 +631,9 @@ func localPathRequirementName(line string) string {
 // readAsRequirements reports whether the scan reads path with
 // parseRequirementsTxt, as it does requirements.txt, the requirements-*.txt
 // family and the requirements/*.txt layout. It asks getParserForPath, the
-// lookup DetectAndParseAll picks parsers with, rather than repeating its rule,
-// and then leaves out pyproject.toml and Pipfile, which Parse reads with
-// readers of their own. For a file DetectAndParse accepts, getParserForPath
-// returns the parser getParser chose.
+// lookup DetectAndParse and DetectAndParseAll pick parsers with, rather than
+// repeating its rule, and then leaves out pyproject.toml and Pipfile, which
+// Parse reads with readers of their own.
 //
 // unreadLines used to test for the name "requirements.txt" alone, so an "-r"
 // include, an "-e" line or a URL requirement in requirements-dev.txt or
