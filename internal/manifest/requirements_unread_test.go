@@ -184,6 +184,71 @@ func TestUnreadLinesForEveryRequirementsFile(t *testing.T) {
 	}
 }
 
+// pip reads a line that ends in a backslash together with the next one, so
+// "-r \" followed by a URL on the next line is one URL include. It was listed
+// as an include named "\" and then as a URL requirement. Each continued line
+// is now listed once, by the number of its first line, and a comment line is
+// not continued.
+func TestRequirementsUnreadLinesJoinContinuedLines(t *testing.T) {
+	const (
+		urlInclude  = "included requirements URLs are not followed"
+		fileInclude = "included requirements files are not followed"
+		editable    = "editable installs (-e) are not read"
+		directRef   = "name @ URL references are not read"
+		urlReq      = "URL requirements are not read"
+	)
+	type entry struct {
+		line   int
+		name   string
+		reason string
+	}
+	cases := []struct {
+		name  string
+		lines []string
+		want  []entry
+	}{
+		{"URL include", []string{"cryptography==42.0.0", `-r \`, "https://example.invalid/continued.txt"},
+			[]entry{{2, "", urlInclude}}},
+		{"file include", []string{`-r \`, "extra.txt"},
+			[]entry{{1, "extra.txt", fileInclude}}},
+		{"over three lines", []string{`--requirement \`, `\`, "more.txt"},
+			[]entry{{1, "more.txt", fileInclude}}},
+		{"CRLF line endings", []string{"-r \\\r", "extra.txt\r"},
+			[]entry{{1, "extra.txt", fileInclude}}},
+		{"editable install", []string{`-e \`, "git+https://example.invalid/repo.git#egg=x"},
+			[]entry{{1, "", editable}}},
+		{"name @ URL", []string{`paramiko @ \`, "https://example.invalid/p"},
+			[]entry{{1, "paramiko", directRef}}},
+		{"comment line ending in a backslash", []string{`# see below \`, "https://example.invalid/pkg.whl"},
+			[]entry{{2, "", urlReq}}},
+		{"comment line after a continued line", []string{`-r \`, "# a comment", "https://example.invalid/pkg.whl"},
+			[]entry{{1, "", fileInclude}, {3, "", urlReq}}},
+		{"backslash on the last line", []string{"cryptography==42.0.0", `-r \`},
+			[]entry{{2, "", fileInclude}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "requirements.txt")
+			if err := os.WriteFile(path, []byte(strings.Join(c.lines, "\n")+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got := unreadLines(path)
+			if len(got) != len(c.want) {
+				t.Fatalf("unreadLines = %+v, want %d entries", got, len(c.want))
+			}
+			for i, w := range c.want {
+				g := got[i]
+				if g.Line != w.line || g.Name != w.name || !strings.HasPrefix(g.Reason, w.reason) {
+					t.Errorf("unreadLines[%d] = %+v, want line %d name %q reason %q...", i, g, w.line, w.name, w.reason)
+				}
+				if strings.Contains(g.Name+g.Reason, "example.invalid") {
+					t.Errorf("unreadLines[%d] copies a URL: %+v", i, g)
+				}
+			}
+		})
+	}
+}
+
 // pyproject.toml and Pipfile also go to the Python parser, which reads them
 // with readers of their own, so a URL in either is not listed as an unread
 // requirements line.

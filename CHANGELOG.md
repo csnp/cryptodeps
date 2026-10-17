@@ -66,6 +66,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not, so a `-r` line that names a URL is listed by its line number and kind
   only. The dependencies they declare are still not analyzed.
 
+- **A requirements.txt `-r` line continued with a backslash was listed as an
+  include named `\`.** pip reads a line that ends in a backslash together with
+  the next line. For a requirements.txt holding `cryptography==42.0.0`, `-r \`
+  and `https://example.invalid/continued.txt` on three lines, which pip reads
+  as one `-r` URL include, the table listed `line 2: \: included requirements
+  files are not followed, so the dependencies it declares are not analyzed`
+  and `line 3: URL requirements are not read, so this dependency is not
+  analyzed`, and the JSON `unreadLines` entry for line 2 had `"name": "\\"`.
+  The unread lines are now read with a continued line joined to the next one
+  as pip joins it, and numbered by its first line, so that file is listed as
+  `line 2: included requirements URLs are not followed, so the dependencies it
+  declares are not analyzed`, with no name. A comment line that ends in a
+  backslash is not joined to the next line. The dependencies, findings and
+  exit code for that file are unchanged.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the
