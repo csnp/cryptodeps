@@ -35,7 +35,6 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 
 	var deps []types.Dependency
 	var inRequireBlock bool
-	var inIndirectBlock bool
 
 	// Regex to match require lines
 	// Examples:
@@ -65,7 +64,6 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 		// Check for block end
 		if line == ")" {
 			inRequireBlock = false
-			inIndirectBlock = false
 			continue
 		}
 
@@ -84,11 +82,6 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 
 		// Inside require block
 		if inRequireBlock {
-			// Check for indirect marker
-			if strings.Contains(line, "// indirect") {
-				inIndirectBlock = true
-			}
-
 			if matches := blockEntry.FindStringSubmatch(line); matches != nil {
 				// Skip module directive and other non-dependency lines
 				if matches[1] == "module" || matches[1] == "go" || matches[1] == "toolchain" {
@@ -99,7 +92,9 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 					Name:      matches[1],
 					Version:   cleanVersion(matches[2]),
 					Ecosystem: types.EcosystemGo,
-					Direct:    !strings.Contains(line, "// indirect") && !inIndirectBlock,
+					// "// indirect" marks only the line it is on; the
+					// entries after it in the same block keep their own state.
+					Direct: !strings.Contains(line, "// indirect"),
 					// The module's own line, not the "require (" that opens
 					// the block: that line names no dependency.
 					Line: lineNo,

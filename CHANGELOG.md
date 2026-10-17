@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `// indirect` entry in a go.mod require block marked the entries after
+  it as indirect.** With `github.com/x/y v1.0.0 // indirect` listed before
+  `github.com/golang-jwt/jwt/v5 v5.2.0` in the same block, the JSON report
+  gave jwt `direct: false` and `directDependencies: 0`. The marker now applies
+  to its own line only, and the same go.mod reports jwt `direct: true` and
+  `directDependencies: 1`. The exit code on that go.mod is 1 before and after
+  the change.
+
 - **The documented GitHub Action reference did not resolve.** The usage
   comment in `action.yml` and both jobs in
   `examples/github-action-workflow.yml` said `uses: csnp/qramm-cryptodeps@v1`.
