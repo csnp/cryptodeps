@@ -721,13 +721,35 @@ func joinContinuedLines(r io.Reader) ([]requirementsLine, error) {
 	return lines, scanner.Err()
 }
 
+// perRequirementOptionPattern finds the first per-requirement option on a
+// requirements.txt line, such as --hash: whitespace followed by "-". pip ends
+// the requirement before the first space-separated token that begins with "-"
+// and reads the rest of the line as options. A tab before such a token ends
+// the requirement here too, where pip splits on spaces only.
+var perRequirementOptionPattern = regexp.MustCompile(`\s-`)
+
 // parseRequirementsTxt parses a requirements.txt file.
+//
+// Lines are read as pip reads them, with a line that ends in a backslash
+// joined to the next one, and a requirement ends at its first per-requirement
+// option. Read one physical line at a time, a pin with its hash on the next
+// line,
+//
+//	cryptography==42.0.0 \
+//	    --hash=sha256:...
+//
+// gave cryptography the version "42.0.0 \".
 func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
+
+	lines, err := joinContinuedLines(file)
+	if err != nil {
+		return nil, err
+	}
 
 	var deps []types.Dependency
 
@@ -738,11 +760,8 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 	// package[extra]==1.0.0
 	requirementPattern := regexp.MustCompile(`^([a-zA-Z0-9_-]+)(?:\[[^\]]+\])?([<>=!~]+)?(.+)?`)
 
-	scanner := bufio.NewScanner(file)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := strings.TrimSpace(scanner.Text())
+	for _, l := range lines {
+		line := strings.TrimSpace(l.text)
 
 		// Skip empty lines and comments
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -765,7 +784,11 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 			continue
 		}
 
-		// Parse requirement line
+		// Parse requirement line, which ends at its first per-requirement
+		// option
+		if loc := perRequirementOptionPattern.FindStringIndex(line); loc != nil {
+			line = line[:loc[0]]
+		}
 		if matches := requirementPattern.FindStringSubmatch(line); matches != nil {
 			name := matches[1]
 			version := ""
@@ -786,13 +809,9 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 				Version:   version,
 				Ecosystem: types.EcosystemPyPI,
 				Direct:    true,
-				Line:      lineNo,
+				Line:      l.number,
 			})
 		}
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, err
 	}
 
 	return deps, nil

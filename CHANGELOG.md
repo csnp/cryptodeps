@@ -95,6 +95,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with `unsupported manifest file: notes.txt` and `unsupported manifest file:
   Cargo.toml`, as before.
 
+- **A requirements.txt pin continued with a backslash kept the backslash in
+  its version.** pip reads a line that ends in a backslash together with the
+  next line, so `cryptography==42.0.0 \` with `--hash=sha256:...` on the next
+  line pins cryptography 42.0.0. The dependency parser read one physical line
+  at a time, so `analyze --offline --format json` reported
+  `"version": "42.0.0 \\"` and the table printed `cryptography@42.0.0 \`.
+  Dependencies are now read with a continued line joined to the next one as
+  pip joins it, and a requirement ends at its first per-requirement option,
+  such as `--hash`, so that file reports cryptography `42.0.0` at line 1. The
+  JSON output for that file differs only in the version and timestamps, and
+  the exit code is 1 before and after. A `--hash` on the requirement's own
+  line, which was reported as part of the version
+  (`42.0.0 --hash=sha256:...`), is left out of it the same way. An `-r` line
+  or a `name @ url` line continued onto the next line is now skipped as a
+  whole: `-r \` followed by `extra.txt` was also read as a dependency named
+  `extra` with the version `.txt`, and `paramiko @ \` followed by a URL as
+  `paramiko` with the version `@ \`. Each is still listed, by its first line,
+  with the lines the scan did not read.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the
