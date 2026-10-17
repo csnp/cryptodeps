@@ -83,6 +83,15 @@ func startConnectionLog(t *testing.T) (string, *connectionLog) {
 
 // runCLI runs cryptodeps with args in an empty directory and a fresh HOME,
 // with every proxy variable pointed at proxy and no GITHUB_TOKEN.
+//
+// Under `go test -coverprofile`, as `make test` and the CI workflow run it,
+// the test binary is built with coverage instrumentation, and run as the
+// command line it writes its counters at exit to the directory named by
+// GOCOVERDIR. Without one it prints "warning: GOCOVERDIR not set, no
+// coverage data emitted" on stderr, which a test comparing stderr whole
+// would take for the command line's own output. A directory of its own per
+// run keeps stderr the command line's; a binary built without coverage
+// ignores the variable.
 func runCLI(t *testing.T, proxy string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
@@ -93,6 +102,7 @@ func runCLI(t *testing.T, proxy string, args ...string) (stdout, stderr string, 
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + t.TempDir(),
 		"TMPDIR=" + os.TempDir(),
+		"GOCOVERDIR=" + t.TempDir(),
 		"HTTPS_PROXY=" + proxyURL,
 		"HTTP_PROXY=" + proxyURL,
 		"https_proxy=" + proxyURL,
