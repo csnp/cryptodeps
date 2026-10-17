@@ -50,7 +50,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signal.** Such lines, and `-e` and plain URL lines, are now listed by line
   number with a reason, before the results in the table and markdown reports,
   and under `unreadLines` in JSON. The included file or the package name is
-  shown; a URL from the manifest is not. The dependencies they declare are
+  shown; a URL from the manifest is not, so a `-r` line that names a URL is
+  listed by its line number and kind only. The dependencies they declare are
   still not analyzed.
 
 - **A scan of a GitHub repository reported reachability for source code it
