@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A scan of a GitHub repository reported reachability for source code it
+  never fetched.** A GitHub URL or `owner/repo` argument downloads the
+  repository's manifest files only, and reachability then ran over the
+  temporary directory holding them, where there is no Go source. For
+  `https://github.com/csnp/cryptodeps/tree/main/examples/vulnerable-demo` it
+  labelled all 19 findings AVAILABLE, set `reachabilityAnalyzed` in the JSON
+  summaries, printed `REACHABILITY: 0 confirmed | 0 reachable | 19
+  available-only` in the table, and said on stderr that `11 are in dependencies
+  where no call from your code was found`, while a local scan of the same
+  directory labels 6 of those findings CONFIRMED. Reachability is no longer run
+  for a fetched repository. Its findings carry no reachability label in the
+  table, JSON, SARIF, CBOM or markdown output, `reachabilityAnalyzed` is absent
+  from the JSON summaries, and for a Go project a line on stderr after the
+  report reads `Reachability was not analyzed: only the manifest files were
+  fetched from GitHub, not the source code.` followed by how to analyze it. The
+  19 findings, the vulnerable and partial counts and the exit code are
+  unchanged.
+
 - **A `// indirect` entry in a go.mod require block marked the entries after
   it as indirect.** With `github.com/x/y v1.0.0 // indirect` listed before
   `github.com/golang-jwt/jwt/v5 v5.2.0` in the same block, the JSON report

@@ -37,6 +37,10 @@ subdirectory when the argument named one:
 
 A scan of a local path has none of these.
 
+The source code of a fetched repository is not downloaded, so reachability is
+not analyzed for it, and no format gives its findings a reachability label (see
+[Commands](commands.md#local-paths-and-github-repositories)).
+
 ## Output Formats Explained
 
 ### SARIF (Static Analysis Results Interchange Format)

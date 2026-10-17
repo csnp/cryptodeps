@@ -258,13 +258,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create analyzer
-	a := analyzer.New(db, analyzer.Options{
-		Offline:      offlineFlag,
-		Deep:         deepFlag,
-		Reachability: reachabilityFlag,
-		RiskFilter:   riskFilter,
-		MinSeverity:  minSeverity,
-	})
+	a := analyzer.New(db, analyzerOptions(source != nil))
 
 	// Get formatter
 	formatter, err := newFormatter(format, db)
@@ -320,6 +314,12 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// A local scan of the same project reports reachability, so its absence
+	// from this one is said rather than left unexplained.
+	if line := reachabilityNotice(summary); line != "" {
+		fmt.Fprintln(os.Stderr, line)
+	}
+
 	// The exit code counts findings the report may not show, so say which
 	// findings produced it. stderr only: stdout is the report in every format.
 	if line := exitExplanation(exitCode, failOn, summary, projects); line != "" {
@@ -327,6 +327,31 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// analyzerOptions returns the options a scan runs with. fetched is true for a
+// repository fetched from GitHub, whose manifests are downloaded without its
+// source, so reachability has nothing of the project's own to read.
+func analyzerOptions(fetched bool) analyzer.Options {
+	return analyzer.Options{
+		Offline:       offlineFlag,
+		Deep:          deepFlag,
+		Reachability:  reachabilityFlag,
+		RiskFilter:    riskFilter,
+		MinSeverity:   minSeverity,
+		ManifestsOnly: fetched,
+	}
+}
+
+// reachabilityNotice returns the line printed on stderr after the report when
+// reachability was asked for and not run because only a fetched repository's
+// manifests were read, and "" otherwise.
+func reachabilityNotice(s types.ScanSummary) string {
+	if !s.ReachabilitySkipped {
+		return ""
+	}
+	return "Reachability was not analyzed: only the manifest files were fetched from GitHub, not the source code. " +
+		"To see which of this cryptography the code calls, clone the repository and scan the local copy."
 }
 
 // newFormatter returns the formatter for format, told which database the scan
