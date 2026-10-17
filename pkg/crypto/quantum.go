@@ -150,3 +150,22 @@ func GetRemediation(algorithm string) string {
 	}
 	return info.Remediation
 }
+
+// classicallyBroken names the VULNERABLE algorithms that classical attacks
+// already break, so the reason to replace them is today's attacks rather than
+// a future quantum computer. Their quantum risk and severity are unchanged;
+// the set decides only the heading a report lists them under.
+var classicallyBroken = map[string]bool{
+	"md5":   true,
+	"sha-1": true,
+	"sha1":  true,
+	"des":   true,
+	"3des":  true,
+	"rc4":   true,
+	"rc2":   true,
+}
+
+// IsClassicallyBroken reports whether algorithm is broken by classical attacks.
+func IsClassicallyBroken(algorithm string) bool {
+	return classicallyBroken[strings.ToLower(strings.ReplaceAll(algorithm, "_", "-"))]
+}

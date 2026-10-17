@@ -518,6 +518,83 @@ func normalizePyPIName(name string) string {
 
 var pypiSeparatorPattern = regexp.MustCompile(`[-_.]+`)
 
+// directReferencePattern matches the name of a PEP 508 direct reference such
+// as "paramiko @ https://example.org/paramiko.tar.gz".
+var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*@`)
+
+// unreadLines lists the lines of a requirements.txt that declare dependencies
+// parseRequirementsTxt does not read: "-r" includes, editable installs and URL
+// requirements. It returns nil for every other manifest.
+//
+// parseRequirementsTxt skips these lines, and the scan used to say nothing
+// about them, so a requirements.txt holding "-r extra.txt" was reported as
+// though extra.txt did not exist. A URL is never copied into the result,
+// because one in a manifest can carry credentials.
+func unreadLines(path string) []types.UnreadLine {
+	if strings.ToLower(filepath.Base(path)) != "requirements.txt" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+
+	var unread []types.UnreadLine
+	scanner := bufio.NewScanner(file)
+	lineNo := 0
+	for scanner.Scan() {
+		lineNo++
+		line := strings.TrimSpace(scanner.Text())
+		if idx := strings.Index(line, " #"); idx != -1 {
+			line = strings.TrimSpace(line[:idx])
+		}
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		if include, ok := requirementOption(line, "-r", "--requirement"); ok {
+			unread = append(unread, types.UnreadLine{Line: lineNo, Name: include,
+				Reason: "included requirements files are not followed, so the dependencies it declares are not analyzed"})
+			continue
+		}
+		if _, ok := requirementOption(line, "-e", "--editable"); ok {
+			unread = append(unread, types.UnreadLine{Line: lineNo,
+				Reason: "editable installs (-e) are not read, so this dependency is not analyzed"})
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			// Other options (--index-url, -c, --hash) declare no dependency.
+			continue
+		}
+		if strings.Contains(line, "://") {
+			if m := directReferencePattern.FindStringSubmatch(line); m != nil {
+				unread = append(unread, types.UnreadLine{Line: lineNo, Name: m[1],
+					Reason: "name @ URL references are not read, so this dependency is not analyzed"})
+			} else {
+				unread = append(unread, types.UnreadLine{Line: lineNo,
+					Reason: "URL requirements are not read, so this dependency is not analyzed"})
+			}
+		}
+	}
+	return unread
+}
+
+// requirementOption reports whether line is the option short or long, and
+// returns its value. It accepts "-r file", "-rfile", "--requirement file" and
+// "--requirement=file".
+func requirementOption(line, short, long string) (string, bool) {
+	switch {
+	case strings.HasPrefix(line, long+"="):
+		return strings.TrimSpace(line[len(long)+1:]), true
+	case line == long || strings.HasPrefix(line, long+" ") || strings.HasPrefix(line, long+"\t"):
+		return strings.TrimSpace(line[len(long):]), true
+	case strings.HasPrefix(line, short) && !strings.HasPrefix(line, "--"):
+		return strings.TrimSpace(line[len(short):]), true
+	}
+	return "", false
+}
+
 // parseRequirementsTxt parses a requirements.txt file.
 func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, error) {
 	file, err := os.Open(path)

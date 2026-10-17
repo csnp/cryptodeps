@@ -56,6 +56,11 @@ var (
 	exitCode         int    // Tracks exit code for CI/CD
 )
 
+// deepSkippedOfflineNotice is printed on stderr when --deep and --offline are
+// both given. --offline used to drop --deep without a word, and the report
+// then advised running with --deep.
+const deepSkippedOfflineNotice = "Note: --deep is skipped under --offline: source analysis downloads each package, and --offline makes no network connections."
+
 func main() {
 	// Cobra has already written the error to stderr, and for a flag mistake it
 	// writes the message before the usage block, which is the order a reader
@@ -164,7 +169,7 @@ func init() {
 	// Analyze command flags
 	analyzeCmd.Flags().StringVarP(&formatFlag, "format", "f", "table", "Output format (table, json, cbom, sarif, markdown)")
 	analyzeCmd.Flags().BoolVar(&offlineFlag, "offline", false, "Make no network connections: use the local database and local paths only")
-	analyzeCmd.Flags().BoolVar(&deepFlag, "deep", false, "Force on-demand analysis for unknown packages")
+	analyzeCmd.Flags().BoolVar(&deepFlag, "deep", false, "Analyze the source of packages absent from the database. Downloads each package, so it needs network access and, for Go modules and npm packages, go or npm on PATH; skipped under --offline")
 	analyzeCmd.Flags().BoolVar(&reachabilityFlag, "reachability", true, "Analyze call graph to find actually-used crypto (Go only, use --reachability=false to disable)")
 	analyzeCmd.Flags().BoolVar(&noWorkspacesFlag, "no-workspaces", false, "Disable workspace/monorepo discovery (scan single manifest only)")
 	analyzeCmd.Flags().StringVar(&riskFilter, "risk", "", "Report only this risk level (vulnerable, partial, safe, unknown, all)")
@@ -255,6 +260,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	db, updateFailure := database.NewWithAutoUpdate(!offlineFlag)
 	if updateFailure != nil {
 		fmt.Fprint(os.Stderr, updateFailure.Notice())
+	}
+	if deepFlag && offlineFlag {
+		fmt.Fprintln(os.Stderr, deepSkippedOfflineNotice)
 	}
 
 	// Create analyzer

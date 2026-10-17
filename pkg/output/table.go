@@ -112,6 +112,7 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 		fmt.Fprintf(w, "\nRepository: %s\n", reportSafe(describeSource(result.Source)))
 	}
 	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(manifestForReport(root, result.Manifest)), result.Summary.TotalDependencies)
+	printUnreadLines(w, result.UnreadLines)
 
 	// Check if there are any crypto findings
 	hasCrypto := false
@@ -168,25 +169,18 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 
 	// Summary
 	fmt.Fprintln(w, strings.Repeat("═", 90))
+	fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %s\n",
+		result.Summary.TotalDependencies,
+		result.Summary.WithCrypto,
+		riskCounts(result.Summary),
+	)
 	if hasReachability {
-		fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n",
-			result.Summary.TotalDependencies,
-			result.Summary.WithCrypto,
-			result.Summary.QuantumVulnerable,
-			result.Summary.QuantumPartial,
-		)
 		fmt.Fprintf(w, "REACHABILITY: %d confirmed | %d reachable | %d available-only\n\n",
 			result.Summary.ConfirmedCrypto,
 			result.Summary.ReachableCrypto,
 			result.Summary.AvailableCrypto,
 		)
 	} else {
-		fmt.Fprintf(w, "SUMMARY: %d deps | %d with crypto | %d vulnerable | %d partial\n",
-			result.Summary.TotalDependencies,
-			result.Summary.WithCrypto,
-			result.Summary.QuantumVulnerable,
-			result.Summary.QuantumPartial,
-		)
 		fmt.Fprintln(w)
 	}
 
@@ -236,6 +230,8 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 	if notAnalyzed > 0 {
 		if result.Summary.DeepAttempted {
 			fmt.Fprintf(w, "[!] %d packages could not be read by source analysis (see warnings above)\n", notAnalyzed)
+		} else if result.Summary.DeepSkippedOffline {
+			fmt.Fprintf(w, "[!] %d packages not in database (%s)\n", notAnalyzed, deepSkippedOffline)
 		} else {
 			fmt.Fprintf(w, "[!] %d packages not in database (use --deep to analyze)\n", notAnalyzed)
 		}
@@ -287,7 +283,11 @@ func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanR
 		} else {
 			fmt.Fprintf(w, "[?] Not analyzed. All %d dependencies are absent from the crypto database,\n", total)
 			fmt.Fprintln(w, "    so no conclusion about cryptographic usage can be drawn from this scan.")
-			fmt.Fprintln(w, "    Run with --deep to analyze package source code directly.")
+			if result.Summary.DeepSkippedOffline {
+				fmt.Fprintf(w, "    %s.\n", deepSkippedOffline)
+			} else {
+				fmt.Fprintln(w, "    Run with --deep to analyze package source code directly.")
+			}
 		}
 		// The hints for this case say the same thing in other words. Printing
 		// both reads as three separate problems.
@@ -378,6 +378,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 	// Print CONFIRMED section (most important) - with call traces
 	if len(confirmed) > 0 {
 		fmt.Fprintln(w, "[!] CONFIRMED - Actually used by your code (requires action):")
+		fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", "", "ALGORITHM", "RISK", "TIMELINE", "EFFORT")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range confirmed {
 			icon := riskIcon(c.risk)
@@ -404,6 +405,7 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 	// Print REACHABLE section
 	if len(reachable) > 0 {
 		fmt.Fprintln(w, "REACHABLE - In call graph from your code:")
+		fmt.Fprintf(w, "  %-4s %-14s %-12s  %s\n", "", "ALGORITHM", "RISK", "DEPENDENCY")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range reachable {
 			icon := riskIcon(c.risk)
@@ -457,30 +459,36 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 	partial := filterByRisk(allCrypto, types.RiskPartial)
 	safe := filterByRisk(allCrypto, types.RiskSafe)
 
-	if len(vulnerable) > 0 {
-		fmt.Fprintln(w, "[!] VULNERABLE - Quantum computers will break these:")
-		fmt.Fprintln(w, strings.Repeat("─", 90))
-		for _, c := range vulnerable {
-			timeline := formatTimelineShort(getTimeline(c.algorithm))
-			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s%s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency, inferredMark(c.inferred))
+	// DES, 3DES, MD5, SHA-1, RC2 and RC4 are VULNERABLE too, but classical
+	// attacks break them today. Listed under "Quantum computers will break
+	// these", the heading gave the wrong reason to act on them.
+	var brokenToday, quantumOnly []cryptoDetail
+	for _, c := range vulnerable {
+		if crypto.IsClassicallyBroken(c.algorithm) {
+			brokenToday = append(brokenToday, c)
+		} else {
+			quantumOnly = append(quantumOnly, c)
 		}
-		fmt.Fprintln(w)
+	}
+
+	if len(brokenToday) > 0 {
+		fmt.Fprintln(w, "[!] VULNERABLE - Broken today by classical attacks, quantum computers aside:")
+		printTimelineEffortRows(w, brokenToday)
+	}
+
+	if len(quantumOnly) > 0 {
+		fmt.Fprintln(w, "[!] VULNERABLE - Quantum computers will break these:")
+		printTimelineEffortRows(w, quantumOnly)
 	}
 
 	if len(partial) > 0 {
 		fmt.Fprintln(w, "[~] PARTIAL RISK - Weakened but usable:")
-		fmt.Fprintln(w, strings.Repeat("─", 90))
-		for _, c := range partial {
-			timeline := formatTimelineShort(getTimeline(c.algorithm))
-			effort := formatEffortShort(getEffort(c.algorithm))
-			fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s%s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency, inferredMark(c.inferred))
-		}
-		fmt.Fprintln(w)
+		printTimelineEffortRows(w, partial)
 	}
 
 	if len(safe) > 0 {
 		fmt.Fprintln(w, "[OK] QUANTUM SAFE:")
+		fmt.Fprintf(w, "  %-4s %-14s %s\n", "", "ALGORITHM", "DEPENDENCY")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range safe {
 			fmt.Fprintf(w, "  %-4s %-14s %s%s\n", riskIcon(c.risk), c.algorithm, c.dependency, inferredMark(c.inferred))
@@ -492,6 +500,7 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 	unknown := filterByRisk(allCrypto, types.RiskUnknown)
 	if len(unknown) > 0 {
 		fmt.Fprintln(w, "[?] UNKNOWN RISK:")
+		fmt.Fprintf(w, "  %-4s %-14s %s\n", "", "ALGORITHM", "DEPENDENCY")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range unknown {
 			fmt.Fprintf(w, "  %-4s %-14s %s%s\n", riskIcon(c.risk), c.algorithm, c.dependency, inferredMark(c.inferred))
@@ -500,10 +509,56 @@ func (f *TableFormatter) printSimpleBreakdown(w io.Writer, allCrypto []cryptoDet
 	}
 
 	listed := make([]cryptoDetail, 0, len(vulnerable)+len(partial)+len(safe)+len(unknown))
-	listed = append(listed, vulnerable...)
+	listed = append(listed, brokenToday...)
+	listed = append(listed, quantumOnly...)
 	listed = append(listed, partial...)
 	listed = append(listed, safe...)
 	return append(listed, unknown...)
+}
+
+// printUnreadLines names the manifest lines whose dependencies the scan did
+// not read, before any result, so the report is not read as complete.
+func printUnreadLines(w io.Writer, unread []types.UnreadLine) {
+	if len(unread) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "[!] %d manifest line(s) declare dependencies this scan did not read:\n", len(unread))
+	for _, u := range unread {
+		if u.Name != "" {
+			fmt.Fprintf(w, "    line %d: %s: %s\n", u.Line, reportSafe(u.Name), u.Reason)
+		} else {
+			fmt.Fprintf(w, "    line %d: %s\n", u.Line, u.Reason)
+		}
+	}
+	fmt.Fprintln(w, "    Those dependencies are missing from the results below.")
+	fmt.Fprintln(w)
+}
+
+// riskCounts is the finding counts by quantum risk for the SUMMARY and TOTAL
+// lines. Safe findings are counted beside vulnerable and partial ones, and
+// unknown ones when there are any, so the counts sum to the findings listed.
+func riskCounts(s types.ScanSummary) string {
+	counts := fmt.Sprintf("%d vulnerable | %d partial | %d safe", s.QuantumVulnerable, s.QuantumPartial, s.QuantumSafe)
+	if s.QuantumUnknown > 0 {
+		counts += fmt.Sprintf(" | %d unknown", s.QuantumUnknown)
+	}
+	return counts
+}
+
+// printTimelineEffortRows prints rows of algorithm, migration timeline,
+// migration effort and dependency under a header that names each column.
+// Without the header the effort column read as a severity: a row
+// "[!]  MD5  NOW  low  node-forge@1.3.1" was taken to rate MD5 low, while
+// the other formats rate it CRITICAL.
+func printTimelineEffortRows(w io.Writer, rows []cryptoDetail) {
+	fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", "", "ALGORITHM", "TIMELINE", "EFFORT", "DEPENDENCY")
+	fmt.Fprintln(w, strings.Repeat("─", 90))
+	for _, c := range rows {
+		timeline := formatTimelineShort(getTimeline(c.algorithm))
+		effort := formatEffortShort(getEffort(c.algorithm))
+		fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s%s\n", riskIcon(c.risk), c.algorithm, timeline, effort, c.dependency, inferredMark(c.inferred))
+	}
+	fmt.Fprintln(w)
 }
 
 // declarationScope is what a remediation block needs to say where its
@@ -908,12 +963,11 @@ func (f *TableFormatter) FormatMulti(result *types.MultiProjectResult, w io.Writ
 
 	// Total summary across all projects
 	fmt.Fprintln(w, strings.Repeat("═", 90))
-	fmt.Fprintf(w, "TOTAL: %d projects | %d deps | %d with crypto | %d vulnerable | %d partial\n",
+	fmt.Fprintf(w, "TOTAL: %d projects | %d deps | %d with crypto | %s\n",
 		len(result.Projects),
 		result.TotalSummary.TotalDependencies,
 		result.TotalSummary.WithCrypto,
-		result.TotalSummary.QuantumVulnerable,
-		result.TotalSummary.QuantumPartial,
+		riskCounts(result.TotalSummary),
 	)
 	// The aggregate is the line a reader takes away, so it carries the filter
 	// annotation too. Printing it only under each project left the TOTAL row

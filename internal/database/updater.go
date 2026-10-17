@@ -201,7 +201,7 @@ func (u *Updater) findDatabaseURL() (string, error) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := u.client.Do(req)
+	resp, err := githubapi.Do(u.client, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch releases: %w", err)
 	}

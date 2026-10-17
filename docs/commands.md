@@ -17,7 +17,9 @@ Analyze Flags:
   -f, --format string       Output format: table, json, cbom, sarif, markdown (default "table")
       --fail-on string      Fail threshold: vulnerable, partial, any, none (default "vulnerable")
       --reachability        Analyze call graph for actual crypto usage (default true, Go only)
-      --deep                Force AST analysis for packages not in database
+      --deep                Analyze the source of packages not in the database (downloads each
+                            package: needs network access, and go or npm on PATH for Go modules
+                            and npm packages; skipped under --offline)
       --offline             Make no network connections: local database and local paths only
       --no-workspaces       Disable workspace discovery (scan single manifest only)
       --risk string         Report only this risk level: vulnerable, partial, safe, unknown, all

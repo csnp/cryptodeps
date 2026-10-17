@@ -230,6 +230,7 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath, scanRoot s
 		ScanDate:     time.Now(),
 		Dependencies: make([]types.DependencyResult, 0, len(m.Dependencies)),
 		Summary:      types.ScanSummary{},
+		UnreadLines:  m.Unread,
 	}
 
 	// Analyze each dependency
@@ -289,6 +290,10 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath, scanRoot s
 					result.Summary.QuantumVulnerable++
 				case types.RiskPartial:
 					result.Summary.QuantumPartial++
+				case types.RiskSafe:
+					result.Summary.QuantumSafe++
+				default:
+					result.Summary.QuantumUnknown++
 				}
 			}
 		}
@@ -313,6 +318,7 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath, scanRoot s
 	// --deep with --offline sets the option without giving the analyzer any way
 	// to fetch, so the option alone would overstate what was attempted.
 	result.Summary.DeepAttempted = a.ondemand != nil
+	result.Summary.DeepSkippedOffline = a.options.Deep && a.options.Offline
 
 	// Perform reachability analysis if enabled and ecosystem supports it.
 	//
@@ -401,8 +407,9 @@ func (a *Analyzer) generateHints(result *types.ScanResult) []string {
 	// Guarded on source analysis not having run, which the hint above it was
 	// already guarded on and this one was not. Without the guard a --deep scan
 	// that read every package and found no cryptography ended with advice to
-	// run --deep.
-	if result.Summary.WithCrypto == 0 && result.Summary.TotalDependencies > 0 && !result.Summary.DeepAttempted {
+	// run --deep. --deep with --offline is also excluded: the flag was given,
+	// and the report says why it did not run.
+	if result.Summary.WithCrypto == 0 && result.Summary.TotalDependencies > 0 && !result.Summary.DeepAttempted && !a.options.Deep {
 		if result.Summary.NotExamined == result.Summary.TotalDependencies {
 			hints = append(hints, "No crypto findings. All packages are unknown - try --deep to analyze source code.")
 		}

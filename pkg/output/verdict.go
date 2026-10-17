@@ -82,6 +82,9 @@ func examinedCount(s types.ScanSummary) int {
 	return n
 }
 
+// deepSkippedOffline says why --deep did not run under --offline.
+const deepSkippedOffline = "--deep was skipped because --offline makes no network connections and source analysis downloads each package"
+
 // unexaminedAdvice is the next step for dependencies nothing reached, worded
 // for what the user has already done.
 //
@@ -89,8 +92,13 @@ func examinedCount(s types.ScanSummary) int {
 // dead end. The two states need different sentences because they need different
 // actions.
 func unexaminedAdvice(s types.ScanSummary) string {
+	// --deep with --offline is a third state: the flag was given and could
+	// not run, so advising it is the same dead end.
 	if s.DeepAttempted {
 		return "source analysis could not read them; see the warnings printed during the scan"
+	}
+	if s.DeepSkippedOffline {
+		return "not in the crypto database, and " + deepSkippedOffline
 	}
 	return "not in the crypto database (use --deep to analyze them)"
 }
