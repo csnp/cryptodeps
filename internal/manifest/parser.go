@@ -54,8 +54,11 @@ func DetectAndParse(path string) (*Manifest, error) {
 		manifestPath = path
 	}
 
-	// Detect ecosystem from filename
-	parser, err := getParser(filepath.Base(manifestPath))
+	// Detect the ecosystem from the path, with the lookup DetectAndParseAll
+	// uses. Looked up by filename alone, requirements/dev.txt was refused as
+	// "unsupported manifest file: dev.txt", though a scan of its directory
+	// reads it as a requirements file.
+	parser, err := getParserForPath(manifestPath)
 	if err != nil {
 		if lockErr := lockFileError(manifestPath); lockErr != nil {
 			return nil, lockErr
@@ -128,15 +131,18 @@ func getParser(filename string) (Parser, error) {
 // getParserForPath selects a parser using the whole path, so that layouts whose
 // meaning depends on the parent directory resolve correctly. A pip requirements
 // file at requirements/base.txt is named base.txt and is indistinguishable from
-// any other text file by name alone.
+// any other text file by name alone. When no parser matches, it returns
+// getParser's error, which names the file without its directory, as in
+// "unsupported manifest file: Cargo.toml" for x/Cargo.toml.
 func getParserForPath(path string) (Parser, error) {
-	if parser, err := getParser(filepath.Base(path)); err == nil {
+	parser, err := getParser(filepath.Base(path))
+	if err == nil {
 		return parser, nil
 	}
 	if isManifestPath(path) && strings.EqualFold(filepath.Ext(path), ".txt") {
 		return &PythonParser{}, nil
 	}
-	return nil, fmt.Errorf("unsupported manifest file: %s", path)
+	return nil, err
 }
 
 // lockFileManifests maps a lock file, by its lower-case name, to the manifest

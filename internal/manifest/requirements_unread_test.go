@@ -127,8 +127,7 @@ func TestRequirementsUnreadLocalPathLines(t *testing.T) {
 // as requirements.txt, but listed unread lines only for a file named
 // requirements.txt, so the same lines in the others were dropped with no
 // signal. Each now lists what requirements.txt lists for the same content, in
-// a scan of its directory and, for a file the scan accepts as its argument, in
-// a scan of the file itself.
+// a scan of its directory and in a scan of the file itself.
 func TestUnreadLinesForEveryRequirementsFile(t *testing.T) {
 	content := strings.Join([]string{
 		"cryptography==42.0.0", // 1 read
@@ -149,19 +148,14 @@ func TestUnreadLinesForEveryRequirementsFile(t *testing.T) {
 		t.Fatalf("requirements.txt: Unread = %+v, want lines 2 to 6", reference.Unread)
 	}
 
-	for _, tc := range []struct {
-		name string
-		// argument is whether the scan accepts the file as its argument. A
-		// requirements/*.txt file is read in a scan of a directory only.
-		argument bool
-	}{
-		{"requirements-dev.txt", true},
-		{"requirements_test.txt", true},
-		{"requirements.prod.txt", true},
-		{filepath.Join("requirements", "dev.txt"), false},
+	for _, name := range []string{
+		"requirements-dev.txt",
+		"requirements_test.txt",
+		"requirements.prod.txt",
+		filepath.Join("requirements", "dev.txt"),
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			dir := writeFiles(t, map[string]string{tc.name: content})
+		t.Run(name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{name: content})
 			manifests, skipped, err := DetectAndParseAll(dir)
 			if err != nil || len(skipped) != 0 || len(manifests) != 1 {
 				t.Fatalf("DetectAndParseAll = %d manifests, skipped %+v, error %v; want 1 manifest", len(manifests), skipped, err)
@@ -170,10 +164,7 @@ func TestUnreadLinesForEveryRequirementsFile(t *testing.T) {
 				t.Errorf("scan of the directory: Unread = %+v, want %+v", manifests[0].Unread, reference.Unread)
 			}
 
-			if !tc.argument {
-				return
-			}
-			m, err := DetectAndParse(filepath.Join(dir, tc.name))
+			m, err := DetectAndParse(filepath.Join(dir, name))
 			if err != nil {
 				t.Fatal(err)
 			}
