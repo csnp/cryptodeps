@@ -95,7 +95,7 @@ func ResolveTarget(arg string) (*GitHubRepo, error) {
 			// current directory were missing.
 			return nil, errors.New("The path argument is empty.")
 		}
-		msg := fmt.Sprintf("No file or directory named %s.", quoteIfUnclear(arg))
+		msg := fmt.Sprintf("No file or directory named %s.", QuoteIfUnclear(arg))
 		if IsGitHubURL(arg) {
 			msg += " --offline does not fetch repositories."
 		}
@@ -107,10 +107,10 @@ func ResolveTarget(arg string) (*GitHubRepo, error) {
 	return ParseGitHubURL(arg)
 }
 
-// quoteIfUnclear returns arg as a message prints it. An argument that is
+// QuoteIfUnclear returns arg as a message prints it. An argument that is
 // empty, starts or ends with white space, or holds a character that does not
 // print is quoted with %q, so the reader sees where it starts and ends.
-func quoteIfUnclear(arg string) string {
+func QuoteIfUnclear(arg string) string {
 	unclear := arg == "" || strings.TrimSpace(arg) != arg ||
 		strings.IndexFunc(arg, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0
 	if unclear {
@@ -202,7 +202,16 @@ func FetchGitHubManifests(repo *GitHubRepo) (dir string, branch string, err erro
 	found := false
 	for _, manifest := range manifests {
 		remotePath := basePath + manifest
-		content, err := fetchRawFile(repo.Owner, repo.Repo, branch, remotePath)
+		req, err := rawFileRequest(repo.Owner, repo.Repo, branch, remotePath)
+		if err != nil {
+			// The URL cannot be built, from a control character in the
+			// argument for example. Every manifest's URL carries the same
+			// owner, repository, branch and path, so trying the next one
+			// cannot help.
+			os.RemoveAll(tempDir)
+			return "", "", err
+		}
+		content, err := fetchRawFile(req, remotePath)
 		if err != nil {
 			continue // File doesn't exist, try next
 		}
@@ -232,7 +241,13 @@ var githubAPI = "https://api.github.com"
 func getDefaultBranch(owner, repo string) (string, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s", githubAPI, owner, repo)
 
-	req, _ := http.NewRequest("GET", url, nil)
+	// net/url refuses a URL that holds a control character, which an
+	// argument such as "https://github.com/a/b\tx" puts here. The error was
+	// discarded, and the header below was then set on a nil request.
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", err
+	}
 	req.Header.Set("Accept", "application/vnd.github.v3+json")
 	req.Header.Set("User-Agent", "CryptoDeps/1.0")
 
@@ -264,13 +279,22 @@ func getDefaultBranch(owner, repo string) (string, error) {
 	return repoInfo.DefaultBranch, nil
 }
 
-// fetchRawFile downloads a raw file from GitHub.
-func fetchRawFile(owner, repo, branch, path string) ([]byte, error) {
+// rawFileRequest builds the request for a raw file on GitHub. It returns the
+// error net/url gives for a URL it refuses, such as one holding a control
+// character.
+func rawFileRequest(owner, repo, branch, path string) (*http.Request, error) {
 	url := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, path)
 
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("User-Agent", "CryptoDeps/1.0")
+	return req, nil
+}
 
+// fetchRawFile downloads the raw file req asks for, at path in the repository.
+func fetchRawFile(req *http.Request, path string) ([]byte, error) {
 	resp, err := githubClient.Do(req)
 	if err != nil {
 		return nil, err
