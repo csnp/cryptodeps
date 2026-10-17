@@ -10,10 +10,16 @@
 // shaped like owner/repo was sent to api.github.com with --offline set. The
 // module's HTTP clients and downloading subprocesses are now built here, so the
 // check runs where a connection is made rather than at each call site.
-// TestNetworkUseGoesThroughNetguard fails when a non-test file elsewhere in the
-// module builds an HTTP client, transport or dialer, calls a connecting
-// function of net/http, net or crypto/tls, or starts a program other than tar
-// or unzip, without going through this package.
+//
+// TestNetworkUseGoesThroughNetguard type-checks the non-test files elsewhere in
+// the module and fails when one of them builds or holds an http.Client,
+// http.Transport, net.Dialer, net.Resolver, tls.Dialer or exec.Cmd other than
+// behind a pointer; uses a function or value the test lists from net/http, net,
+// crypto/tls, os or syscall that connects, looks up a name or starts a program;
+// or refers to exec.Command or exec.CommandContext anywhere but in a call that
+// names tar or unzip by a constant. It reads this module's source only, so a
+// client or program handed out by code in another module, or by a standard
+// library function the test does not list, is not seen.
 package netguard
 
 import (
