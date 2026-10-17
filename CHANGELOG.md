@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-10-17
+
 ### Fixed
 
 - **`analyze` panicked on a GitHub URL argument that held a control
@@ -142,6 +144,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with a space, or holds a tab or another character that does not print, is
   shown in double quotes, for example `Error: No file or directory named " ".`
   Other arguments are printed as before, and the exit code is still 2.
+
+### Security
+
+- The GitHub Action's inputs now reach its scripts as environment variables
+  instead of being expanded into the script text, and users of the GitHub
+  Action should update to v1.3.1.
 
 ### Changed
 
@@ -1202,6 +1210,8 @@ This entry previously also said the release "Maps findings to CNSA 2.0
 compliance requirements". No release has implemented a CNSA 2.0 mapping, so
 that line was removed.
 
+[Unreleased]: https://github.com/csnp/cryptodeps/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/csnp/cryptodeps/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/csnp/cryptodeps/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/csnp/cryptodeps/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/csnp/cryptodeps/compare/v1.2.0...v1.2.1
