@@ -30,6 +30,7 @@ Database: downloaded 1.1.0 (2026-10-12), 860 packages
 [*] Scanning ./go.mod... found 2 dependencies
 
 [!] CONFIRMED - Actually used by your code (requires action):
+       ALGORITHM      RISK          TIMELINE      EFFORT
 ──────────────────────────────────────────────────────────────────────────────────────────
   [!]  Ed25519        VULNERABLE    1-2yr         low
      └─ golang.org/x/crypto@v0.31.0
@@ -50,7 +51,7 @@ Database: downloaded 1.1.0 (2026-10-12), 860 packages
      └─ [!] X25519, [OK] Argon2, [OK] ChaCha20-Poly1305
 
 ══════════════════════════════════════════════════════════════════════════════════════════
-SUMMARY: 2 deps | 2 with crypto | 8 vulnerable | 2 partial
+SUMMARY: 2 deps | 2 with crypto | 8 vulnerable | 2 partial | 4 safe
 REACHABILITY: 3 confirmed | 0 reachable | 11 available-only
 
 REMEDIATION GUIDANCE:

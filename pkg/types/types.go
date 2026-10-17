@@ -316,6 +316,23 @@ type ScanResult struct {
 	Dependencies []DependencyResult `json:"dependencies" yaml:"dependencies"`
 	Summary      ScanSummary        `json:"summary" yaml:"summary"`
 	Hints        []string           `json:"hints,omitempty" yaml:"hints,omitempty"`
+	// UnreadLines lists manifest lines that declare dependencies the scan did
+	// not read, such as a requirements.txt "-r other.txt" include. They used
+	// to be dropped with no signal, so a report read as complete while some of
+	// the project's dependencies were absent from it.
+	UnreadLines []UnreadLine `json:"unreadLines,omitempty" yaml:"unreadLines,omitempty"`
+}
+
+// UnreadLine is one manifest line whose dependencies the scan did not read.
+type UnreadLine struct {
+	// Line is the 1-based line number in the manifest.
+	Line int `json:"line" yaml:"line"`
+	// Name is what the line names: the included file of a "-r" line, or the
+	// package of a "name @ url" line. Empty when the line is reported by kind
+	// only, which keeps a URL that may carry credentials out of the report.
+	Name string `json:"name,omitempty" yaml:"name,omitempty"`
+	// Reason says why the line was not read.
+	Reason string `json:"reason" yaml:"reason"`
 }
 
 // ScanSummary provides aggregate statistics for a scan.
@@ -325,7 +342,12 @@ type ScanSummary struct {
 	WithCrypto         int `json:"withCrypto" yaml:"withCrypto"`
 	QuantumVulnerable  int `json:"quantumVulnerable" yaml:"quantumVulnerable"`
 	QuantumPartial     int `json:"quantumPartial" yaml:"quantumPartial"`
-	NotInDatabase      int `json:"notInDatabase" yaml:"notInDatabase"`
+	// QuantumSafe and QuantumUnknown count the remaining findings, so the four
+	// risk counters sum to the findings listed. Without them a scan of 13
+	// findings reported 9 vulnerable and 2 partial and no line for the rest.
+	QuantumSafe    int `json:"quantumSafe" yaml:"quantumSafe"`
+	QuantumUnknown int `json:"quantumUnknown,omitempty" yaml:"quantumUnknown,omitempty"`
+	NotInDatabase  int `json:"notInDatabase" yaml:"notInDatabase"`
 	// NotExamined counts dependencies that no means of examination reached:
 	// absent from the crypto database, and not read by source analysis either.
 	//
@@ -341,6 +363,10 @@ type ScanSummary struct {
 	// --deep, from "not examined because source analysis could not fetch the
 	// package", where suggesting --deep is a dead end.
 	DeepAttempted bool `json:"deepAttempted,omitempty" yaml:"deepAttempted,omitempty"`
+	// DeepSkippedOffline records that --deep was given with --offline, which
+	// leaves source analysis no way to fetch a package. Reports use it to say
+	// so instead of advising the --deep the user already passed.
+	DeepSkippedOffline bool `json:"deepSkippedOffline,omitempty" yaml:"deepSkippedOffline,omitempty"`
 	// FilteredOut counts findings that were detected and then withheld by
 	// --risk or --min-severity. Without it, a filter that matches nothing is
 	// indistinguishable from a project with no cryptography, and the report
@@ -478,12 +504,17 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		multi.TotalSummary.WithCrypto += r.Summary.WithCrypto
 		multi.TotalSummary.QuantumVulnerable += r.Summary.QuantumVulnerable
 		multi.TotalSummary.QuantumPartial += r.Summary.QuantumPartial
+		multi.TotalSummary.QuantumSafe += r.Summary.QuantumSafe
+		multi.TotalSummary.QuantumUnknown += r.Summary.QuantumUnknown
 		multi.TotalSummary.NotInDatabase += r.Summary.NotInDatabase
 		// The aggregate answers the same coverage question as each project's
 		// own summary and must not answer it from a different field.
 		multi.TotalSummary.NotExamined += r.Summary.NotExamined
 		if r.Summary.DeepAttempted {
 			multi.TotalSummary.DeepAttempted = true
+		}
+		if r.Summary.DeepSkippedOffline {
+			multi.TotalSummary.DeepSkippedOffline = true
 		}
 		// Without this the aggregate reported zero withheld findings while the
 		// per-project summaries reported dozens, so the totals a reader

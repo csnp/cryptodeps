@@ -258,7 +258,7 @@ func getDefaultBranch(owner, repo string) (string, error) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
-	resp, err := githubClient.Do(req)
+	resp, err := githubapi.Do(githubClient, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch repo info: %w", err)
 	}

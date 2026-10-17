@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A `GITHUB_TOKEN` that GitHub refused turned the database download into an
+  unexplained `HTTP 401`.** The release lookup behind `cryptodeps update` and
+  the automatic update, and the repository lookup of a GitHub URL scan, sent
+  the token and reported the 401 as `GitHub API error: HTTP 401`. Both read
+  public data, so when GitHub answers 401 to a request carrying the token,
+  the request is now sent once more without it, and a note on stderr says
+  that GitHub refused the token in `GITHUB_TOKEN`.
+
+- **Table output had no column headers.** The third column of a VULNERABLE or
+  PARTIAL row is the migration effort, and without a label a row such as
+  `[!]  MD5  NOW  low  node-forge@1.3.1` read as rating MD5 low. Each section
+  now starts with a header row (`ALGORITHM TIMELINE EFFORT DEPENDENCY`, and
+  `ALGORITHM RISK TIMELINE EFFORT` in the CONFIRMED section of a reachability
+  scan).
+
+- **Algorithms that classical attacks break were listed under `VULNERABLE -
+  Quantum computers will break these`.** For `node-forge@1.3.1`, 3DES, DES,
+  MD5 and SHA-1 are now listed under `VULNERABLE - Broken today by classical
+  attacks, quantum computers aside`, and RSA stays under the quantum heading.
+  RC2 and RC4 go under the same heading. Their risk, severity and the exit
+  code are unchanged.
+
+- **SAFE findings were counted in no summary.** The JSON `summary` and
+  `totalSummary` now carry `quantumSafe` (and `quantumUnknown` when there are
+  unknown-risk findings), the table's SUMMARY and TOTAL lines end with a safe
+  count, and the markdown summary and overview have a `Quantum Safe` row. For
+  a requirements.txt naming `cryptography==42.0.0` and `PyJWT==2.8.0`, the
+  table reads `5 vulnerable | 2 partial | 1 safe`, which sums to the 8 findings
+  listed.
+
+- **`--deep --offline` dropped `--deep` silently and then advised `--deep`.**
+  A line on stderr now says that `--deep` is skipped under `--offline`, and
+  the table and markdown reports say why source analysis did not run in place
+  of `Run with --deep`. The JSON summary carries `deepSkippedOffline`. The
+  `--deep` help says it downloads each package and needs network access, and
+  `go` or `npm` on PATH for Go modules and npm packages.
+
+- **requirements.txt `-r` includes and `name @ url` lines were dropped with no
+  signal.** Such lines, and `-e` and plain URL lines, are now listed by line
+  number with a reason, before the results in the table and markdown reports,
+  and under `unreadLines` in JSON. The included file or the package name is
+  shown; a URL from the manifest is not. The dependencies they declare are
+  still not analyzed.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the

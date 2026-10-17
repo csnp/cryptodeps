@@ -28,6 +28,9 @@ type Manifest struct {
 	Path         string
 	Ecosystem    types.Ecosystem
 	Dependencies []types.Dependency
+	// Unread lists the lines that declare dependencies the parser did not
+	// read. Only requirements.txt fills it today.
+	Unread []types.UnreadLine
 }
 
 // DetectAndParse detects the manifest type and parses it.
@@ -68,6 +71,7 @@ func DetectAndParse(path string) (*Manifest, error) {
 		Path:         manifestPath,
 		Ecosystem:    parser.Ecosystem(),
 		Dependencies: deps,
+		Unread:       unreadLines(manifestPath),
 	}, nil
 }
 
@@ -235,6 +239,7 @@ func DetectAndParseAll(path string) ([]*Manifest, []types.SkippedManifest, error
 			Path:         manifestPath,
 			Ecosystem:    parser.Ecosystem(),
 			Dependencies: deps,
+			Unread:       unreadLines(manifestPath),
 		})
 	}
 

@@ -49,12 +49,26 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.Summary.WithCrypto)
 	fmt.Fprintf(w, "| **Quantum Vulnerable** | %d |\n", result.Summary.QuantumVulnerable)
 	fmt.Fprintf(w, "| **Quantum Partial** | %d |\n", result.Summary.QuantumPartial)
+	writeMarkdownSafeRows(w, result.Summary)
 	fmt.Fprintf(w, "| **Not in Database** | %d |\n", result.Summary.NotInDatabase)
 	// Not the same number once --deep is in play, and the difference is the
 	// part a reader needs in order to know how much of the tree this report
 	// actually covers.
 	fmt.Fprintf(w, "| **Not Examined** | %d |\n", result.Summary.NotExamined)
 	fmt.Fprintf(w, "\n")
+
+	if len(result.UnreadLines) > 0 {
+		fmt.Fprintf(w, "> **%d manifest line(s) declare dependencies this scan did not read.** "+
+			"Those dependencies are missing from this report.\n>\n", len(result.UnreadLines))
+		for _, u := range result.UnreadLines {
+			if u.Name != "" {
+				fmt.Fprintf(w, "> - line %d: `%s`: %s\n", u.Line, markdownCell(u.Name), u.Reason)
+			} else {
+				fmt.Fprintf(w, "> - line %d: %s\n", u.Line, u.Reason)
+			}
+		}
+		fmt.Fprintf(w, "\n")
+	}
 
 	if !hasAnyCrypto(result.Dependencies) {
 		writeMarkdownNoFindingsVerdict(w, result.Summary)
@@ -230,6 +244,8 @@ func (f *MarkdownFormatter) formatProject(result *types.ScanResult, root string,
 		fmt.Fprintf(w, "> **%d packages (%.0f%%) were not examined.**\n", result.Summary.NotExamined, pct)
 		if result.Summary.DeepAttempted {
 			fmt.Fprintf(w, "> Source analysis could not read them; see the warnings printed during the scan.\n\n")
+		} else if result.Summary.DeepSkippedOffline {
+			fmt.Fprintf(w, "> %s.\n\n", deepSkippedOffline)
 		} else {
 			fmt.Fprintf(w, "> Run with `--deep` flag to analyze these packages via source code inspection.\n\n")
 		}
@@ -265,6 +281,10 @@ func writeMarkdownNoFindingsVerdict(w io.Writer, s types.ScanSummary) {
 			fmt.Fprintf(w, "**Not analyzed.** None of the %d dependencies could be examined: they are absent "+
 				"from the crypto database, and source analysis could not read any of them. "+
 				"See the warnings printed during the scan.\n", s.TotalDependencies)
+		} else if s.DeepSkippedOffline {
+			fmt.Fprintf(w, "**Not analyzed.** All %d dependencies are absent from the crypto database, "+
+				"so no conclusion about cryptographic usage can be drawn from this scan. "+
+				"%s.\n", s.TotalDependencies, deepSkippedOffline)
 		} else {
 			fmt.Fprintf(w, "**Not analyzed.** All %d dependencies are absent from the crypto database, "+
 				"so no conclusion about cryptographic usage can be drawn from this scan. "+
@@ -289,6 +309,15 @@ func writeMarkdownNoFindingsVerdict(w io.Writer, s types.ScanSummary) {
 // writeMarkdownSourceRows names a fetched repository in a summary table, and
 // writes nothing for a local scan. In code spans, like every path in these
 // reports, because the values come from the command line and the GitHub API.
+// writeMarkdownSafeRows writes the counts of the findings that are neither
+// vulnerable nor partial, so the risk rows sum to the findings listed.
+func writeMarkdownSafeRows(w io.Writer, s types.ScanSummary) {
+	fmt.Fprintf(w, "| **Quantum Safe** | %d |\n", s.QuantumSafe)
+	if s.QuantumUnknown > 0 {
+		fmt.Fprintf(w, "| **Unknown Risk** | %d |\n", s.QuantumUnknown)
+	}
+}
+
 func writeMarkdownSourceRows(w io.Writer, s *types.ScanSource) {
 	if s == nil {
 		return
@@ -362,6 +391,7 @@ func (f *MarkdownFormatter) FormatMulti(result *types.MultiProjectResult, w io.W
 	fmt.Fprintf(w, "| **Using Crypto** | %d |\n", result.TotalSummary.WithCrypto)
 	fmt.Fprintf(w, "| **Quantum Vulnerable** | %d |\n", result.TotalSummary.QuantumVulnerable)
 	fmt.Fprintf(w, "| **Quantum Partial** | %d |\n", result.TotalSummary.QuantumPartial)
+	writeMarkdownSafeRows(w, result.TotalSummary)
 	if result.TotalSummary.FilteredOut > 0 {
 		fmt.Fprintf(w, "| **Withheld by filter** | %d |\n", result.TotalSummary.FilteredOut)
 	}
