@@ -60,3 +60,33 @@ func TestGitHubURLWithAControlCharacterIsAnError(t *testing.T) {
 		})
 	}
 }
+
+// The fetch notice printed the argument and the repository raw, so the
+// newline in `analyze "https://github.com/a/b<NL>x"` split it over three lines
+// and a tab was printed as is. The notice is now one line that quotes them
+// the way the error after it quotes the argument.
+func TestGitHubURLWithAControlCharacterIsQuotedInTheFetchNotice(t *testing.T) {
+	proxy, _ := startConnectionLog(t)
+
+	for arg, repo := range map[string]string{
+		"https://github.com/a/b\nx":             `"a/b\nx"`,
+		"https://github.com/a/b\tx":             `"a/b\tx"`,
+		"https://github.com/a/b/tree/main/x\ty": "a/b",
+	} {
+		t.Run(strconv.Quote(arg), func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+
+			_, stderr, _ := runCLI(t, proxy, "analyze", arg)
+
+			lines := strings.Split(stderr, "\n")
+			want := "No file or directory named " + strconv.Quote(arg) +
+				" was found, so fetching the GitHub repository " + repo + " instead..."
+			if lines[0] != want {
+				t.Errorf("first line of stderr is %q, want %q", lines[0], want)
+			}
+			if len(lines) < 2 || !strings.HasPrefix(lines[1], "Error: failed to fetch "+strconv.Quote(arg)) {
+				t.Errorf("the error does not follow the notice on the second line:\n%s", stderr)
+			}
+		})
+	}
+}
