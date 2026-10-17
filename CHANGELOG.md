@@ -9,14 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The `analyze` help described exit codes 0, 2 and 3 only for the default
-  `--fail-on`.** It said 0 meant no quantum-vulnerable findings and 3 meant
-  partial-risk findings with `--fail-on=partial`. Under `--fail-on none` a scan
-  with quantum-vulnerable findings exits 0, and under `--fail-on any` a project
-  whose cryptography is all quantum-safe exits 3. The help now describes codes
-  0, 1 and 3 relative to `--fail-on`, and says that code 2 includes an argument
-  that is not a local path under `--offline`, as `docs/commands.md` does. The
-  exit codes themselves are unchanged.
+- **The `analyze` help did not say how `--fail-on` changes exit codes 0, 1 and
+  3, and left out the `--offline` case of code 2.** It said 0 meant no
+  quantum-vulnerable findings and 3 meant partial-risk findings with
+  `--fail-on=partial`. Under `--fail-on none` a scan with quantum-vulnerable
+  findings exits 0, and under `--fail-on any` a project whose cryptography is
+  all quantum-safe exits 3. The help now describes codes 0, 1 and 3 relative to
+  `--fail-on`, and says that code 2 includes an argument that is not a local
+  path under `--offline`, as `docs/commands.md` does. The exit codes themselves
+  are unchanged.
 
 - **The `analyze` help and the README said the filters decide the exit code.**
   They said the summary and the exit code are computed from what `--risk` and
