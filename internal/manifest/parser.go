@@ -154,10 +154,12 @@ func lockFileError(path string) error {
 }
 
 // shellQuote returns s as a single shell word, quoting it only when it holds a
-// character the shell would split on or expand.
+// character the shell would split on or expand. "~" and "=" are not left bare:
+// bash and zsh expand a "~" at the start of a word, and zsh reads a word
+// starting with "=", such as =eq/go.mod, as a lookup of the command eq/go.mod.
 func shellQuote(s string) string {
 	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:+,=@%", r)) {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:+,@%", r)) {
 			return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 		}
 	}

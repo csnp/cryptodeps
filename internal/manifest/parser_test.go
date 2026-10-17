@@ -417,6 +417,10 @@ func TestDetectAndParseLockFileSuggestsManifest(t *testing.T) {
 		{"x", "package-lock.json", "package.json", "cryptodeps analyze x/package.json"},
 		{".", "go.sum", "go.mod", "cryptodeps analyze go.mod"},
 		{"my project", "package-lock.json", "package.json", "cryptodeps analyze 'my project/package.json'"},
+		// zsh reads a bare word starting with "=" as a command lookup and
+		// "~" as a home directory, so both have to arrive quoted.
+		{"=eq", "go.sum", "go.mod", "cryptodeps analyze '=eq/go.mod'"},
+		{"~eq", "go.sum", "go.mod", "cryptodeps analyze '~eq/go.mod'"},
 	}
 
 	for _, tt := range tests {

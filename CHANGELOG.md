@@ -67,6 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not read. Passing `go.sum` or `package-lock.json` now says it is a lock
   file and prints the command that scans the manifest beside it, for example
   `cryptodeps analyze x/go.mod` for `x/go.sum`. The exit code is unchanged.
+  A path that holds a space or starts with `=` or `~` is printed in single
+  quotes, for example `cryptodeps analyze '=eq/go.mod'`, because zsh reads a
+  bare word starting with `=` as a command lookup.
+
+- **A failed `cryptodeps update` printed the whole flag list after its
+  error.** The usage block pushed the error and its next step, such as the
+  rate-limit guidance, up the screen. A failed download now prints the error
+  without the usage block and still exits 2. A mistyped flag is still followed
+  by the usage block, as it is for `analyze`.
+
+- **The CBOM example showed `"specVersion": "1.5"`.** The example in
+  `docs/output-formats.md`, and in the README before it, gave CycloneDX 1.5,
+  while `--format cbom` writes `"specVersion": "1.6"`. The example now shows
+  1.6.
 
 - **A failed automatic database update was silent.** Before a scan without
   `--offline`, cryptodeps downloads the latest database when the local copy is

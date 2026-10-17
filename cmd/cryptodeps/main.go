@@ -446,6 +446,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
+	// A failed download is a runtime failure, so its error and next step are
+	// printed without the flag list after them, as in runAnalyze.
+	cmd.SilenceUsage = true
+
 	fmt.Println("Updating database...")
 
 	// Configure updater
