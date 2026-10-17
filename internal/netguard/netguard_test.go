@@ -7,18 +7,19 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -156,16 +157,23 @@ func TestCommandIsRefusedWhenOffline(t *testing.T) {
 // Command.
 var localPrograms = map[string]bool{"tar": true, "unzip": true}
 
-// constructed are the types whose construction outside this package would
-// make a connection that Check never sees.
-var constructed = map[string]bool{
-	"net/http.Client":    true,
-	"net/http.Transport": true,
-	"net.Dialer":         true,
+// guardedTypes are the types whose values connect, or start a program, where
+// Check never sees it. Client and Command hand them out as pointers, so the
+// scan flags the type where it is named other than behind a pointer (in a
+// composite literal, new(), a variable, field, parameter or result, a type
+// alias or definition, or a type argument), a literal of it nested in another
+// literal with its type left out, and a generic call that infers it.
+var guardedTypes = []string{
+	"net/http.Client",
+	"net/http.Transport",
+	"net.Dialer",
+	"net.Resolver",
+	"crypto/tls.Dialer",
+	"os/exec.Cmd",
 }
 
-// referenced are the functions and values that connect without a client built
-// here.
+// referenced are the package-level functions and values that connect, look up
+// a name, or start a program, without a client or command built here.
 var referenced = map[string]bool{
 	"net/http.Get":              true,
 	"net/http.Post":             true,
@@ -179,96 +187,256 @@ var referenced = map[string]bool{
 	"net.DialUDP":               true,
 	"net.DialIP":                true,
 	"net.DialUnix":              true,
+	"net.LookupAddr":            true,
+	"net.LookupCNAME":           true,
+	"net.LookupHost":            true,
+	"net.LookupIP":              true,
+	"net.LookupMX":              true,
+	"net.LookupNS":              true,
+	"net.LookupPort":            true,
+	"net.LookupSRV":             true,
+	"net.LookupTXT":             true,
+	"net.ResolveIPAddr":         true,
+	"net.ResolveTCPAddr":        true,
+	"net.ResolveUDPAddr":        true,
+	"net.DefaultResolver":       true,
 	"crypto/tls.Dial":           true,
 	"crypto/tls.DialWithDialer": true,
+	"os.StartProcess":           true,
+	"syscall.Exec":              true,
+	"syscall.ForkExec":          true,
+	"syscall.StartProcess":      true,
 }
 
-// directNetworkUse lists the places in one file that make a connection or
-// start a downloading program without going through this package.
-func directNetworkUse(fset *token.FileSet, file *ast.File) []string {
-	imports := map[string]string{} // local name -> import path
-	for _, imp := range file.Imports {
-		p, err := strconv.Unquote(imp.Path.Value)
-		if err != nil {
-			continue
-		}
-		name := path.Base(p)
-		if imp.Name != nil {
-			name = imp.Name.Name
-		}
-		imports[name] = p
-	}
-	qualified := func(e ast.Expr) (string, bool) {
-		sel, ok := e.(*ast.SelectorExpr)
-		if !ok {
-			return "", false
-		}
-		id, ok := sel.X.(*ast.Ident)
-		if !ok {
-			return "", false
-		}
-		p, ok := imports[id.Name]
-		if !ok {
-			return "", false
-		}
-		return p + "." + sel.Sel.Name, true
-	}
-
-	var found []string
-	report := func(n ast.Node, what string) {
-		found = append(found, fmt.Sprintf("%s: %s", fset.Position(n.Pos()), what))
-	}
-	ast.Inspect(file, func(n ast.Node) bool {
-		switch n := n.(type) {
-		case *ast.CompositeLit:
-			if name, ok := qualified(n.Type); ok && constructed[name] {
-				report(n, name+" constructed directly")
-			}
-		case *ast.CallExpr:
-			if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "new" && len(n.Args) == 1 {
-				if name, ok := qualified(n.Args[0]); ok && constructed[name] {
-					report(n, name+" constructed directly")
-				}
-			}
-			name, ok := qualified(n.Fun)
-			if !ok || (name != "os/exec.Command" && name != "os/exec.CommandContext") {
-				break
-			}
-			arg := 0
-			if name == "os/exec.CommandContext" {
-				arg = 1
-			}
-			if len(n.Args) > arg {
-				if lit, ok := n.Args[arg].(*ast.BasicLit); ok && lit.Kind == token.STRING {
-					if prog, err := strconv.Unquote(lit.Value); err == nil && localPrograms[prog] {
-						break
-					}
-				}
-			}
-			report(n, name+" for a program not known to be local; start it with netguard.Command")
-		case *ast.SelectorExpr:
-			if name, ok := qualified(n); ok && referenced[name] {
-				report(n, name+" used directly")
-			}
-		}
-		return true
-	})
-	return found
+// netScanner type-checks source against the standard library, so a guarded
+// type or function is recognised when the source reaches it through an import
+// name, a dot import, a type alias, a variable holding a function, or a zero
+// value that no literal spells out.
+type netScanner struct {
+	fset    *token.FileSet
+	std     types.Importer
+	guarded map[string]types.Type
 }
 
-func parseSource(t *testing.T, src string) (*token.FileSet, *ast.File) {
+func newNetScanner(t *testing.T) *netScanner {
 	t.Helper()
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "case.go", src, 0)
-	if err != nil {
-		t.Fatalf("parse: %v", err)
+	s := &netScanner{fset: fset, std: importer.ForCompiler(fset, "gc", nil), guarded: map[string]types.Type{}}
+
+	// Every package the scan matches against is loaded here, so a standard
+	// library the scanner cannot read fails the test instead of passing it:
+	// the checker would put an empty package in its place and find nothing.
+	paths := map[string]bool{}
+	for name := range referenced {
+		paths[name[:strings.LastIndex(name, ".")]] = true
 	}
-	return fset, file
+	for _, name := range guardedTypes {
+		paths[name[:strings.LastIndex(name, ".")]] = true
+	}
+	pkgs := map[string]*types.Package{}
+	for p := range paths {
+		pkg, err := s.std.Import(p)
+		if err != nil {
+			t.Fatalf("load %s: %v", p, err)
+		}
+		pkgs[p] = pkg
+	}
+	for _, name := range guardedTypes {
+		dot := strings.LastIndex(name, ".")
+		tn, ok := pkgs[name[:dot]].Scope().Lookup(name[dot+1:]).(*types.TypeName)
+		if !ok {
+			t.Fatalf("%s is not a type", name)
+		}
+		s.guarded[name] = tn.Type()
+	}
+	return s
+}
+
+// Import loads standard library packages and refuses any other path. The
+// checker puts an empty package in place of a refused one and carries on, so
+// third-party modules need not be downloaded, and a type or function defined
+// in another package of this module is matched in that package, where it is
+// written.
+func (s *netScanner) Import(path string) (*types.Package, error) {
+	if first, _, _ := strings.Cut(path, "/"); strings.Contains(first, ".") {
+		return nil, fmt.Errorf("%s is not in the standard library", path)
+	}
+	return s.std.Import(path)
+}
+
+// byValue reports which guarded type t is, when t is one, or an alias of one,
+// or a type defined from one, rather than a pointer to it.
+func (s *netScanner) byValue(t types.Type) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	for _, name := range guardedTypes {
+		if types.Identical(t.Underlying(), s.guarded[name].Underlying()) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// scan type-checks files as one package and lists the guarded types,
+// referenced functions and values, and os/exec commands in them that do not go
+// through this package.
+func (s *netScanner) scan(files []*ast.File) []string {
+	info := &types.Info{
+		Types:     map[ast.Expr]types.TypeAndValue{},
+		Uses:      map[*ast.Ident]types.Object{},
+		Instances: map[*ast.Ident]types.Instance{},
+	}
+	// Type errors are expected, since packages outside the standard library
+	// are left empty. With Error set, the checker carries on past them.
+	conf := types.Config{Importer: s, FakeImportC: true, Error: func(error) {}}
+	_, _ = conf.Check("scanned/"+files[0].Name.Name, s.fset, files, info)
+
+	type finding struct {
+		pos  token.Pos
+		what string
+	}
+	var found []finding
+	report := func(pos token.Pos, what string) {
+		found = append(found, finding{pos, what})
+	}
+
+	// pointees are the type expressions written behind a *, and callees the
+	// calls each called identifier belongs to.
+	pointees := map[ast.Expr]bool{}
+	callees := map[*ast.Ident]*ast.CallExpr{}
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.StarExpr:
+				pointees[unparen(n.X)] = true
+			case *ast.CallExpr:
+				switch fun := unparen(n.Fun).(type) {
+				case *ast.Ident:
+					callees[fun] = n
+				case *ast.SelectorExpr:
+					callees[fun.Sel] = n
+				}
+			}
+			return true
+		})
+	}
+
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			e, ok := n.(ast.Expr)
+			if !ok {
+				return true
+			}
+			if _, ok := e.(*ast.ParenExpr); ok {
+				return true
+			}
+			tv, ok := info.Types[e]
+			if !ok {
+				return true
+			}
+			if tv.IsType() {
+				if name, ok := s.byValue(tv.Type); ok && !pointees[e] {
+					report(e.Pos(), name+" built or held by value, not through netguard")
+				}
+			} else if lit, ok := e.(*ast.CompositeLit); ok && lit.Type == nil {
+				// A literal elided from []*T{{}} has the type *T.
+				t := tv.Type
+				if p, ok := t.Underlying().(*types.Pointer); ok {
+					t = p.Elem()
+				}
+				if name, ok := s.byValue(t); ok {
+					report(e.Pos(), name+" constructed directly")
+				}
+			}
+			return true
+		})
+	}
+
+	for id, obj := range info.Uses {
+		pkg := obj.Pkg()
+		if pkg == nil || pkg.Scope().Lookup(obj.Name()) != obj {
+			continue
+		}
+		name := pkg.Path() + "." + obj.Name()
+		switch {
+		case referenced[name]:
+			report(id.Pos(), name+" used directly")
+		case name == "os/exec.Command" || name == "os/exec.CommandContext":
+			prog := 0
+			if name == "os/exec.CommandContext" {
+				prog = 1
+			}
+			if !localProgram(info, callees[id], prog) {
+				report(id.Pos(), name+" for a program not known to be local; start it with netguard.Command")
+			}
+		}
+	}
+
+	for id, inst := range info.Instances {
+		for i := 0; i < inst.TypeArgs.Len(); i++ {
+			if name, ok := s.byValue(inst.TypeArgs.At(i)); ok {
+				report(id.Pos(), id.Name+" instantiated with "+name+" by value, not through netguard")
+			}
+		}
+	}
+
+	sort.Slice(found, func(i, j int) bool {
+		if found[i].pos != found[j].pos {
+			return found[i].pos < found[j].pos
+		}
+		return found[i].what < found[j].what
+	})
+	var out []string
+	for _, f := range found {
+		line := fmt.Sprintf("%s: %s", s.fset.Position(f.pos), f.what)
+		if len(out) == 0 || out[len(out)-1] != line {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// localProgram reports whether call starts tar or unzip, named by a constant
+// in argument prog. A nil call is a reference to the function that is not a
+// call, so the program it will start is unknown.
+func localProgram(info *types.Info, call *ast.CallExpr, prog int) bool {
+	if call == nil || len(call.Args) <= prog {
+		return false
+	}
+	v := info.Types[call.Args[prog]].Value
+	return v != nil && v.Kind() == constant.String && localPrograms[constant.StringVal(v)]
+}
+
+func unparen(e ast.Expr) ast.Expr {
+	for {
+		p, ok := e.(*ast.ParenExpr)
+		if !ok {
+			return e
+		}
+		e = p.X
+	}
+}
+
+// scanSource parses each source as one file of the same package and scans
+// them together.
+func scanSource(t *testing.T, s *netScanner, srcs ...string) []string {
+	t.Helper()
+	var files []*ast.File
+	for i, src := range srcs {
+		file, err := parser.ParseFile(s.fset, fmt.Sprintf("case%d.go", i), src, 0)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		files = append(files, file)
+	}
+	return s.scan(files)
 }
 
 // The scan below is only as good as its detector, so the detector is held to
 // cases on both sides of the line.
 func TestDirectNetworkUseDetector(t *testing.T) {
+	s := newNetScanner(t)
 	flagged := map[string]string{
 		"client literal":    `package p; import "net/http"; var c = &http.Client{}`,
 		"transport literal": `package p; import "net/http"; var tr = http.Transport{}`,
@@ -281,30 +449,70 @@ func TestDirectNetworkUseDetector(t *testing.T) {
 		"downloader":        `package p; import "os/exec"; func f() { exec.Command("curl", "u") }`,
 		"variable program":  `package p; import "os/exec"; func f(n string) { exec.Command(n) }`,
 		"command context":   `package p; import ("context"; "os/exec"); func f() { exec.CommandContext(context.TODO(), "npm") }`,
+		"zero-value client": `package p; import "net/http"; func f(u string) { var c http.Client; c.Get(u) }`,
+		"zero-value dialer": `package p; import "net"; func f(a string) { var d net.Dialer; d.Dial("tcp", a) }`,
+		"tls dialer":        `package p; import "crypto/tls"; var d = &tls.Dialer{}`,
+		"net.LookupHost":    `package p; import "net"; func f(h string) { net.LookupHost(h) }`,
+		"default resolver":  `package p; import ("context"; "net"); func f(ctx context.Context, h string) { net.DefaultResolver.LookupHost(ctx, h) }`,
+		"cmd literal":       `package p; import "os/exec"; var c = &exec.Cmd{Path: "/usr/bin/curl"}`,
+		"command as value":  `package p; import "os/exec"; func f(u string) { run := exec.Command; run("curl", u) }`,
+		"os.StartProcess":   `package p; import "os"; func f() { os.StartProcess("/usr/bin/curl", nil, nil) }`,
+		"dot import":        `package p; import . "net/http"; func f(u string) { Get(u) }`,
+		"client field":      `package p; import "net/http"; type T struct{ c http.Client }; func (t *T) f(u string) { t.c.Get(u) }`,
+		"type alias":        `package p; import "net/http"; type C = http.Client; var c = &C{}`,
+		"defined type":      `package p; import "net/http"; type C http.Client; var c = &C{}`,
+		"resolver literal":  `package p; import "net"; var r = &net.Resolver{PreferGo: true}`,
+		"net.ResolveTCP":    `package p; import "net"; func f(a string) { net.ResolveTCPAddr("tcp", a) }`,
+		"syscall process":   `package p; import "syscall"; func f() { syscall.StartProcess("/usr/bin/curl", nil, nil) }`,
+		"client slice":      `package p; import "net/http"; var cs = make([]http.Client, 1)`,
+		"elided literal":    `package p; import "net/http"; var cs = []*http.Client{{}}`,
+		"inferred generic":  `package p; import "net/http"; func zero[T any](*T) T { var t T; return t }; func f(c *http.Client) { z := zero(c); z.Get("u") }`,
+		"parenthesised":     `package p; import "net/http"; var c (http.Client)`,
+		"third-party call":  `package p; import ("example.com/cli"; "net/http"); var c = cli.Command{Run: func() { http.Get("u") }}`,
+		"parameter":         `package p; import "net/http"; func f(c http.Client, u string) { c.Get(u) }`,
+		"result":            `package p; import "net/http"; func f() (tr http.Transport) { return }`,
+		"type argument":     `package p; import "net"; func zero[T any]() T { var t T; return t }; var d = zero[net.Dialer]()`,
 	}
 	for name, src := range flagged {
 		t.Run("flags "+name, func(t *testing.T) {
-			fset, file := parseSource(t, src)
-			if got := directNetworkUse(fset, file); len(got) == 0 {
+			if got := scanSource(t, s, src); len(got) == 0 {
 				t.Errorf("not flagged: %s", src)
 			}
 		})
 	}
 
 	allowed := map[string]string{
-		"client type":   `package p; import "net/http"; type T struct{ c *http.Client }; func f(r *http.Request) {}`,
-		"request":       `package p; import "net/http"; func f() { http.NewRequest("GET", "u", nil) }`,
-		"local program": `package p; import "os/exec"; func f() { exec.Command("tar", "-xzf", "a") }`,
-		"other package": `package p; import "example.com/http"; var c = http.Get`,
+		"client type":      `package p; import "net/http"; type T struct{ c *http.Client }; func f(r *http.Request) {}`,
+		"request":          `package p; import "net/http"; func f() { http.NewRequest("GET", "u", nil) }`,
+		"local program":    `package p; import "os/exec"; func f() { exec.Command("tar", "-xzf", "a") }`,
+		"other package":    `package p; import "example.com/http"; var c = http.Get`,
+		"client pointer":   `package p; import "net/http"; func f(c *http.Client, u string) { c.Get(u) }`,
+		"command pointer":  `package p; import "os/exec"; func f(c *exec.Cmd) error { return c.Run() }`,
+		"type assertion":   `package p; import "net/http"; func f(rt http.RoundTripper) { _ = rt.(*http.Transport) }`,
+		"local constant":   `package p; import "os/exec"; const prog = "unzip"; func f() { exec.Command(prog, "a") }`,
+		"parsing only":     `package p; import "net"; var ip = net.ParseIP("127.0.0.1")`,
+		"other dot import": `package p; import . "example.com/http"; func f() { Get("u") }`,
+		"own Dial":         `package p; func Dial() {}; func f() { Dial() }`,
+		"pointer (parens)": `package p; import "net/http"; var c *(http.Client)`,
 	}
 	for name, src := range allowed {
 		t.Run("allows "+name, func(t *testing.T) {
-			fset, file := parseSource(t, src)
-			if got := directNetworkUse(fset, file); len(got) != 0 {
+			if got := scanSource(t, s, src); len(got) != 0 {
 				t.Errorf("flagged %v in: %s", got, src)
 			}
 		})
 	}
+
+	// The files of a package are checked together, so a constant from one
+	// file is known in another.
+	t.Run("allows a local program named in another file", func(t *testing.T) {
+		got := scanSource(t, s,
+			`package p; const prog = "tar"`,
+			`package p; import "os/exec"; func f() { exec.Command(prog, "-xzf", "a") }`)
+		if len(got) != 0 {
+			t.Errorf("flagged %v", got)
+		}
+	})
 }
 
 // moduleRoot is the directory holding this module's go.mod.
@@ -326,10 +534,11 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// TestNetworkUseGoesThroughNetguard is what makes netguard the one check: a
-// new HTTP client, dialer or downloading subprocess in a non-test file of this
-// module fails here until it is built through Client or Command, so a fetch
-// added later cannot skip --offline.
+// TestNetworkUseGoesThroughNetguard is what makes netguard the one check: in a
+// non-test file of this module, a guarded type held or built by value, a
+// function or value listed in referenced, or an os/exec command for a program
+// other than tar or unzip fails here until it goes through this package, so a
+// fetch added later in one of those forms cannot skip --offline.
 func TestNetworkUseGoesThroughNetguard(t *testing.T) {
 	root := moduleRoot(t)
 	self, err := os.Getwd()
@@ -337,7 +546,9 @@ func TestNetworkUseGoesThroughNetguard(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var scanned, violations []string
+	s := newNetScanner(t)
+	var scanned []string
+	packages := map[string][]*ast.File{} // directory and package name -> files
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -361,18 +572,30 @@ func TestNetworkUseGoesThroughNetguard(t *testing.T) {
 		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
 			return nil
 		}
-		fset := token.NewFileSet()
-		file, err := parser.ParseFile(fset, p, nil, 0)
+		file, err := parser.ParseFile(s.fset, p, nil, 0)
 		if err != nil {
 			return err
 		}
 		rel, _ := filepath.Rel(root, p)
 		scanned = append(scanned, filepath.ToSlash(rel))
-		violations = append(violations, directNetworkUse(fset, file)...)
+		// Files are checked in packages, so a name defined in one file is
+		// known in the others.
+		key := filepath.Dir(p) + " " + file.Name.Name
+		packages[key] = append(packages[key], file)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	keys := make([]string, 0, len(packages))
+	for k := range packages {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var violations []string
+	for _, k := range keys {
+		violations = append(violations, s.scan(packages[k])...)
 	}
 
 	// Guard the walk: the files that make network connections today have to be
