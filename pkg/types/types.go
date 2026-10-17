@@ -376,6 +376,14 @@ type ScanSummary struct {
 	ConfirmedCrypto      int  `json:"confirmedCrypto,omitempty" yaml:"confirmedCrypto,omitempty"` // Direct calls from user code
 	ReachableCrypto      int  `json:"reachableCrypto,omitempty" yaml:"reachableCrypto,omitempty"` // In call graph
 	AvailableCrypto      int  `json:"availableCrypto,omitempty" yaml:"availableCrypto,omitempty"` // In deps but not called
+
+	// ReachabilitySkipped records that reachability was asked for, on a project
+	// in an ecosystem it covers, and was not run because the scan read the
+	// project's manifests without its source, as the scan of a repository
+	// fetched from GitHub does. Not serialized: no format carries a
+	// reachability label for such a scan, and this exists so that the command
+	// line can say why.
+	ReachabilitySkipped bool `json:"-" yaml:"-"`
 }
 
 // SkippedManifest records a file that was recognised as a manifest but could not
@@ -493,6 +501,9 @@ func AggregateResults(rootPath string, results []*ScanResult) *MultiProjectResul
 		multi.TotalSummary.AvailableCrypto += r.Summary.AvailableCrypto
 		if r.Summary.ReachabilityAnalyzed {
 			multi.TotalSummary.ReachabilityAnalyzed = true
+		}
+		if r.Summary.ReachabilitySkipped {
+			multi.TotalSummary.ReachabilitySkipped = true
 		}
 	}
 

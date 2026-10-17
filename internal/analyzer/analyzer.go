@@ -33,6 +33,11 @@ type Options struct {
 	Reachability bool   // Perform reachability analysis to determine actual crypto usage
 	RiskFilter   string // Filter by risk level (vulnerable, partial, safe, unknown, all)
 	MinSeverity  string // Minimum severity to report (info, low, medium, high, critical)
+
+	// ManifestsOnly says the path holds manifest files and none of the
+	// project's source, as the directory a repository fetched from GitHub is
+	// scanned from does. Reachability reads that source, so it is not run.
+	ManifestsOnly bool
 }
 
 // Risk filter values accepted by --risk.
@@ -309,9 +314,20 @@ func (a *Analyzer) analyzeManifest(m *manifest.Manifest, projectPath, scanRoot s
 	// to fetch, so the option alone would overstate what was attempted.
 	result.Summary.DeepAttempted = a.ondemand != nil
 
-	// Perform reachability analysis if enabled and ecosystem supports it
+	// Perform reachability analysis if enabled and ecosystem supports it.
+	//
+	// Not over a path holding only manifests. Reachability traces calls in the
+	// project's own source, and run over a fetched repository's manifests it
+	// found no Go file, labelled every finding AVAILABLE and marked the scan as
+	// reachability-analyzed: a result about code that was never read. The skip
+	// is recorded instead, so that the command line can say why reachability
+	// is missing.
 	if a.options.Reachability && m.Ecosystem == types.EcosystemGo {
-		a.performReachabilityAnalysis(result, projectPath)
+		if a.options.ManifestsOnly {
+			result.Summary.ReachabilitySkipped = true
+		} else {
+			a.performReachabilityAnalysis(result, projectPath)
+		}
 	}
 
 	// Generate hints based on results

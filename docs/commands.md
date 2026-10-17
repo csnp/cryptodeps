@@ -41,10 +41,10 @@ quantum-vulnerable findings, scanned with `--risk partial`, the summary reads
 Exit code 1 (--fail-on vulnerable): the scan found 6 quantum-vulnerable findings. None of them is in the report: --risk or --min-severity hid them, and hidden findings still count toward the exit code. Run the same command without --risk and --min-severity to list them.
 ```
 
-For a Go project, where reachability analysis runs, the line also splits the
-findings in the report by reachability: called from your code, reached from
-your code through other calls, or in dependencies where no call from your code
-was found.
+For a Go project scanned from a local path, where reachability analysis runs,
+the line also splits the findings in the report by reachability: called from
+your code, reached from your code through other calls, or in dependencies where
+no call from your code was found.
 
 The line goes to stderr only, so JSON, SARIF and CBOM output on stdout is
 unchanged.
@@ -62,6 +62,16 @@ No file or directory named servics/api was found, so fetching the GitHub reposit
 
 A report of a fetched repository names the repository and branch in every
 output format (see [Output formats](output-formats.md)).
+
+Only the repository's manifest files are fetched, not its source code, so
+reachability is not analyzed for a fetched repository: no finding carries a
+CONFIRMED, REACHABLE or AVAILABLE label, and the JSON summaries have no
+`reachabilityAnalyzed` field. For a Go project, a line on stderr after the
+report says so:
+
+```
+Reachability was not analyzed: only the manifest files were fetched from GitHub, not the source code. To see which of this cryptography the code calls, clone the repository and scan the local copy.
+```
 
 With `--offline`, nothing is fetched. An argument that is not a local path is
 reported before anything else runs, and the command exits 2:
