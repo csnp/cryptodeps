@@ -202,3 +202,46 @@ func TestFetchGitHubManifestsRefusesWhenOffline(t *testing.T) {
 		t.Fatalf("FetchGitHubManifests = %q, %q, %v; want an error wrapping netguard.ErrOffline", dir, branch, err)
 	}
 }
+
+// A repository or path holding a control character gives a URL that net/url
+// refuses. Both requests discarded that error and set a header on the nil
+// request, so `analyze "https://github.com/a/b<TAB>x"` panicked in the
+// repository lookup and a /tree/ URL with a tab in its path panicked in the
+// raw file download, each leaving its temporary directory behind. The request
+// error is now returned and the directory removed.
+func TestFetchGitHubManifestsReturnsARefusedURL(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the repository lookup reached the API: %s %s", r.Method, r.URL)
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+	useGitHubAPI(t, server.URL)
+
+	for name, repo := range map[string]*GitHubRepo{
+		"repository lookup": {Owner: "a", Repo: "b\tx"},
+		"raw file":          {Owner: "a", Repo: "b", Branch: "main", Path: "x\ty"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tmp := t.TempDir()
+			t.Setenv("TMPDIR", tmp)
+
+			dir, branch, err := FetchGitHubManifests(repo)
+			if err == nil {
+				t.Fatalf("FetchGitHubManifests(%+v) = %q, %q; want an error", repo, dir, branch)
+			}
+			if !strings.Contains(err.Error(), "invalid control character in URL") {
+				t.Errorf("error does not carry the request error: %v", err)
+			}
+			if dir != "" {
+				t.Errorf("dir = %q alongside an error, want empty", dir)
+			}
+			left, globErr := filepath.Glob(filepath.Join(tmp, "cryptodeps-github-*"))
+			if globErr != nil {
+				t.Fatal(globErr)
+			}
+			if len(left) != 0 {
+				t.Errorf("temporary directory left behind: %q", left)
+			}
+		})
+	}
+}

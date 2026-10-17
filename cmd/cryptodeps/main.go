@@ -212,7 +212,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stderr, analyzer.FetchNotice(path, repo))
 		tempDir, branch, err := analyzer.FetchGitHubManifests(repo)
 		if err != nil {
-			return fmt.Errorf("failed to fetch from GitHub: %w", err)
+			// Named as ResolveTarget names it under --offline: quoted when
+			// it is empty, has white space at either end, or holds a
+			// character that does not print.
+			return fmt.Errorf("failed to fetch %s from GitHub: %w", analyzer.QuoteIfUnclear(path), err)
 		}
 		defer analyzer.CleanupTempDir(tempDir)
 		path = tempDir

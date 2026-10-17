@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`analyze` panicked on a GitHub URL argument that held a control
+  character.** Given `https://github.com/a/b` with a tab and `x` after it, or a
+  `/tree/` URL with a tab in its path, it printed the fetch notice and then a
+  nil pointer dereference, exited 2, and left an empty `cryptodeps-github-*`
+  directory in the temporary directory. The error from building the request was
+  discarded, and a header was then set on the missing request. That error is
+  now returned: the command prints
+  `Error: failed to fetch "https://github.com/a/b\tx" from GitHub:` followed by
+  the reason, exits 2 without opening a connection, and removes the temporary
+  directory. A failed fetch now names the argument, quoted the way the
+  `--offline` message quotes it: when it is empty, starts or ends with white
+  space, or holds a character that does not print.
+
 - **A package.json that starts with a UTF-8 byte order mark was rejected.**
   The JSON decoder does not skip the mark (bytes EF BB BF), so
   `cryptodeps analyze` on such a file failed with `invalid character 'ï'
