@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **requirements.txt lines that name a local path, such as
+  `./vendor/foo-1.0.tar.gz` or `../lib`, were dropped with no signal.** Such
+  a line was neither analyzed nor listed with the other lines the scan did not
+  read, so that block read as complete while the line was missing from it. A
+  line that begins with a dot or a path separator is now listed by line number
+  with its path under `unreadLines` in JSON, and in the block before the
+  results in the table and markdown reports, with the reason `local path
+  requirements are not read, so this dependency is not analyzed`. The
+  dependency it declares is still not analyzed.
+
 - **A `GITHUB_TOKEN` that GitHub refused turned the database download into an
   unexplained `HTTP 401`.** The release lookup behind `cryptodeps update` and
   the automatic update, and the repository lookup of a GitHub URL scan, sent

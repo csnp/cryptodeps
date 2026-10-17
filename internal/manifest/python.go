@@ -523,8 +523,9 @@ var pypiSeparatorPattern = regexp.MustCompile(`[-_.]+`)
 var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s*(?:\[[^\]]*\])?\s*@`)
 
 // unreadLines lists the lines of a requirements.txt that declare dependencies
-// parseRequirementsTxt does not read: "-r" includes, editable installs and URL
-// requirements. It returns nil for every other manifest.
+// parseRequirementsTxt does not read: "-r" includes, editable installs, URL
+// requirements and local path requirements. It returns nil for every other
+// manifest.
 //
 // parseRequirementsTxt skips these lines, and the scan used to say nothing
 // about them, so a requirements.txt holding "-r extra.txt" was reported as
@@ -532,6 +533,8 @@ var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s
 // because one in a manifest can carry credentials. That holds for an "-r"
 // include as well: pip fetches "-r https://host/reqs.txt", so such a line is
 // listed by its kind and line number only, while "-r extra.txt" names the file.
+// A local path such as "./vendor/foo-1.0.tar.gz" is shown, as the file of an
+// "-r" include is.
 func unreadLines(path string) []types.UnreadLine {
 	if strings.ToLower(filepath.Base(path)) != "requirements.txt" {
 		return nil
@@ -582,9 +585,41 @@ func unreadLines(path string) []types.UnreadLine {
 				unread = append(unread, types.UnreadLine{Line: lineNo,
 					Reason: "URL requirements are not read, so this dependency is not analyzed"})
 			}
+			continue
+		}
+		if isLocalPathRequirement(line) {
+			unread = append(unread, types.UnreadLine{Line: lineNo, Name: localPathRequirementName(line),
+				Reason: "local path requirements are not read, so this dependency is not analyzed"})
 		}
 	}
 	return unread
+}
+
+// isLocalPathRequirement reports whether line names a local project directory
+// or archive rather than a package: it begins with a dot or a path separator,
+// as in "./vendor/foo-1.0.tar.gz", "../lib" or "/opt/wheels/foo.whl". The
+// requirement pattern in parseRequirementsTxt never matched such a line, so it
+// was dropped, and unreadLines did not list it either.
+func isLocalPathRequirement(line string) bool {
+	return strings.HasPrefix(line, ".") || strings.HasPrefix(line, "/") || strings.HasPrefix(line, `\`)
+}
+
+// localPathRequirementName returns the path a local path requirement line
+// names: the line up to its first per-requirement option (a token beginning
+// with "-", such as --hash) and before any environment marker, which is how
+// pip splits such a line.
+func localPathRequirementName(line string) string {
+	if idx := strings.Index(line, ";"); idx != -1 {
+		line = line[:idx]
+	}
+	var path []string
+	for _, tok := range strings.Fields(line) {
+		if strings.HasPrefix(tok, "-") {
+			break
+		}
+		path = append(path, tok)
+	}
+	return strings.Join(path, " ")
 }
 
 // requirementOption reports whether line is the option short or long, and
@@ -637,6 +672,12 @@ func (p *PythonParser) parseRequirementsTxt(path string) ([]types.Dependency, er
 
 		// Skip URLs
 		if strings.Contains(line, "://") {
+			continue
+		}
+
+		// Skip local path requirements such as ./vendor/foo-1.0.tar.gz, which
+		// unreadLines lists.
+		if isLocalPathRequirement(line) {
 			continue
 		}
 

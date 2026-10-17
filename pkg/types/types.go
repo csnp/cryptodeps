@@ -327,9 +327,10 @@ type ScanResult struct {
 type UnreadLine struct {
 	// Line is the 1-based line number in the manifest.
 	Line int `json:"line" yaml:"line"`
-	// Name is what the line names: the included file of a "-r" line, or the
-	// package of a "name @ url" line. Empty when the line is reported by kind
-	// only, which keeps a URL that may carry credentials out of the report.
+	// Name is what the line names: the included file of a "-r" line, the
+	// package of a "name @ url" line, or the path of a local path line. Empty
+	// when the line is reported by kind only, which keeps a URL that may carry
+	// credentials out of the report.
 	Name string `json:"name,omitempty" yaml:"name,omitempty"`
 	// Reason says why the line was not read.
 	Reason string `json:"reason" yaml:"reason"`

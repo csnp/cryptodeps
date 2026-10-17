@@ -64,6 +64,64 @@ func TestRequirementsUnreadLines(t *testing.T) {
 	}
 }
 
+// A requirements.txt line that names a local path, such as
+// "./vendor/foo-1.0.tar.gz" or "../lib", declares a dependency the parser does
+// not read. It was dropped without an entry, so the unread block read as
+// complete while such lines were missing from it. Each is now listed by line
+// with the path it names, without any per-requirement option, environment
+// marker or inline comment, and the parser still reads none of them.
+func TestRequirementsUnreadLocalPathLines(t *testing.T) {
+	dir := t.TempDir()
+	content := strings.Join([]string{
+		"cryptography==42.0.0",                        // 1 read
+		"./vendor/foo-1.0.tar.gz",                     // 2
+		"../lib",                                      // 3
+		"/opt/wheels/bar-2.0-py3-none-any.whl",        // 4
+		`\\build\wheels\baz-3.0.tar.gz`,               // 5
+		"./vendor/qux[ssh] --hash=sha256:FAKE",        // 6 per-requirement option
+		`../lib2 ; python_version < "3.12"`,           // 7 environment marker
+		"./vendor/quux-1.0.tar.gz  # a vendored copy", // 8 inline comment
+		"-e ./editable",                               // 9 editable, listed by kind
+		"",
+	}, "\n")
+	path := filepath.Join(dir, "requirements.txt")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := DetectAndParse(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Dependencies) != 1 || m.Dependencies[0].Name != "cryptography" {
+		t.Errorf("dependencies = %+v, want cryptography only", m.Dependencies)
+	}
+
+	want := []struct {
+		line   int
+		name   string
+		reason string
+	}{
+		{2, "./vendor/foo-1.0.tar.gz", "local path"},
+		{3, "../lib", "local path"},
+		{4, "/opt/wheels/bar-2.0-py3-none-any.whl", "local path"},
+		{5, `\\build\wheels\baz-3.0.tar.gz`, "local path"},
+		{6, "./vendor/qux[ssh]", "local path"},
+		{7, "../lib2", "local path"},
+		{8, "./vendor/quux-1.0.tar.gz", "local path"},
+		{9, "", "editable"},
+	}
+	if len(m.Unread) != len(want) {
+		t.Fatalf("Unread = %+v, want %d entries", m.Unread, len(want))
+	}
+	for i, w := range want {
+		got := m.Unread[i]
+		if got.Line != w.line || got.Name != w.name || !strings.Contains(got.Reason, w.reason) {
+			t.Errorf("Unread[%d] = %+v, want line %d name %q and a reason naming %q", i, got, w.line, w.name, w.reason)
+		}
+	}
+}
+
 // Other manifests report no unread lines.
 func TestUnreadLinesOnlyForRequirementsTxt(t *testing.T) {
 	dir := t.TempDir()
