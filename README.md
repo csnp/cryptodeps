@@ -5,7 +5,6 @@
 Find the cryptography your dependencies bring in, see which of it quantum computers will break, and tell apart what your code actually calls from what is merely available to it.
 
 [![CI](https://github.com/csnp/qramm-cryptodeps/actions/workflows/ci.yml/badge.svg)](https://github.com/csnp/qramm-cryptodeps/actions/workflows/ci.yml)
-[![Go Report Card](https://img.shields.io/badge/go%20report-A-brightgreen)](https://goreportcard.com/report/github.com/csnp/qramm-cryptodeps)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/csnp/qramm-cryptodeps)](go.mod)
 

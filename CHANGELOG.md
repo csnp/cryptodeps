@@ -227,6 +227,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no cached database the command no longer tries to download one from GitHub
   first. The exit code is still 2.
 
+- **The README showed a `go report: A` badge that nothing measured.** It was a
+  shields.io static badge, which draws the value written into its URL, and it
+  linked to a goreportcard.com report. The goreportcard.com badge for the
+  module read `go report: retired` on 2026-10-17. The badge is removed.
+
 ## [1.3.1] - 2026-10-17
 
 ### Fixed
