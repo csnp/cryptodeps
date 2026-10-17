@@ -21,10 +21,10 @@ import (
 
 // Exit codes for CI/CD integration
 const (
-	ExitSuccess    = 0 // No issues found
-	ExitVulnerable = 1 // Quantum-vulnerable findings detected
-	ExitError      = 2 // Analysis error occurred
-	ExitPartial    = 3 // Partial-risk findings detected (when --fail-on=partial)
+	ExitSuccess    = 0 // No finding reached the --fail-on threshold
+	ExitVulnerable = 1 // Quantum-vulnerable findings detected (not under --fail-on none)
+	ExitError      = 2 // Analysis error occurred, whatever --fail-on is
+	ExitPartial    = 3 // --fail-on partial or any reached, no quantum-vulnerable finding
 )
 
 // Build identity. GoReleaser injects these via -X main.version and friends, so
@@ -113,11 +113,16 @@ The path can be:
 
 With --offline nothing is fetched: an argument that is not a local path exits 2.
 
-Exit codes (for CI/CD):
-  0 - No quantum-vulnerable findings
-  1 - Quantum-vulnerable findings detected
-  2 - Analysis error, including any manifest that was found but could not be read
-  3 - Partial-risk findings detected (with --fail-on=partial)
+Exit codes (for CI/CD). Codes 0, 1 and 3 depend on --fail-on; code 2 does not.
+  0 - No finding reached the --fail-on threshold. Under --fail-on none a scan
+      exits 0 whatever it finds.
+  1 - Quantum-vulnerable findings detected, under every --fail-on threshold
+      except none
+  2 - Analysis error, including any manifest that was found but could not be
+      read, and an argument that is not a local path under --offline
+  3 - Findings reached the --fail-on partial or --fail-on any threshold and
+      the scan found no quantum-vulnerable finding. Under --fail-on any that
+      includes a project whose cryptography is all quantum-safe.
 
 --risk and --min-severity choose which findings the report shows, and the
 summary counts what is shown. The exit code counts every finding the scan made,
