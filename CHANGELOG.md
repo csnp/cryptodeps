@@ -127,6 +127,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and exits 1. A pin with its hashes on the same line and a comment line, each
   longer than 64 KiB, are read the same way.
 
+- **A go.mod line longer than 64 KiB made the scan fail.** The go.mod reader
+  used `bufio.Scanner` with its default token limit of 64 KiB, so a longer
+  line stopped it with `bufio.Scanner: token too long` and the whole file was
+  refused: a directory whose go.mod had a comment line of 70,003 characters
+  before `require golang.org/x/crypto v0.17.0` failed `analyze --offline` with
+  `found 1 manifest file(s) but none could be read` and exit code 2, where
+  `go mod edit -json` from Go 1.26.3 reads the file and its require line. The
+  reader's token limit is now the largest int, as the requirements.txt
+  reader's is. That scan now analyzes `golang.org/x/crypto@v0.17.0` at
+  `go.mod:7` and exits 1. A comment line inside a `require` block and a
+  comment at the end of a `require` entry, each longer than 64 KiB, are read
+  the same way.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the
