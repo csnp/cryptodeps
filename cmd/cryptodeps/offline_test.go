@@ -168,6 +168,22 @@ func TestOfflineMakesNoConnectionForAnyArgument(t *testing.T) {
 		}
 	})
 
+	// An empty argument, as `analyze "$SCAN_PATH" --offline` gives when the
+	// variable is unset, is named as empty rather than printed as "named .".
+	t.Run("empty", func(t *testing.T) {
+		before := len(log.snapshot())
+		_, stderr, code := runCLI(t, proxy, "analyze", "", "--offline")
+		if got := log.snapshot()[before:]; len(got) != 0 {
+			t.Errorf("%d connection(s) with --offline set, want 0: %q", len(got), got)
+		}
+		if code != ExitError {
+			t.Errorf("exit code %d, want %d", code, ExitError)
+		}
+		if want := "Error: The path argument is empty."; !strings.Contains(stderr, want) {
+			t.Errorf("stderr does not say %q:\n%s", want, stderr)
+		}
+	})
+
 	// A local project still scans under --offline, with --deep asking for
 	// source downloads, and opens nothing.
 	t.Run("local project", func(t *testing.T) {

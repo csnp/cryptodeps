@@ -70,6 +70,12 @@ reported before anything else runs, and the command exits 2:
 Error: No file or directory named servics/api. --offline does not fetch repositories.
 ```
 
+An empty argument, which `cryptodeps analyze "$SCAN_PATH" --offline` passes
+when `SCAN_PATH` is empty, is reported as `Error: The path argument is empty.`
+An argument that starts or ends with a space, or holds a tab or another
+character that does not print, is shown in double quotes, for example
+`Error: No file or directory named " ".`
+
 ## Exit codes
 
 | Code | Meaning |

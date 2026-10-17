@@ -101,6 +101,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [releases page](https://github.com/csnp/cryptodeps/releases). Other refusals
   still name their status code.
 
+- **An empty path argument under `--offline` read as a missing current
+  directory.** `cryptodeps analyze "" --offline`, which is what
+  `cryptodeps analyze "$SCAN_PATH" --offline` runs when the variable is empty,
+  printed `Error: No file or directory named .`, and an argument of one space
+  printed `named  .`. An empty argument is now reported as
+  `Error: The path argument is empty.`, and an argument that starts or ends
+  with a space, or holds a tab or another character that does not print, is
+  shown in double quotes, for example `Error: No file or directory named " ".`
+  Other arguments are printed as before, and the exit code is still 2.
+
 ### Added
 
 - **A non-zero exit code now says what produced it.** When findings set the

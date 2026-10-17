@@ -13,8 +13,10 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/csnp/qramm-cryptodeps/internal/githubapi"
 	"github.com/csnp/qramm-cryptodeps/internal/netguard"
@@ -87,7 +89,13 @@ func ResolveTarget(arg string) (*GitHubRepo, error) {
 		return nil, nil
 	}
 	if netguard.Offline() {
-		msg := fmt.Sprintf("No file or directory named %s.", arg)
+		if arg == "" {
+			// An empty variable in `cryptodeps analyze "$SCAN_PATH"` arrives
+			// here. Printed bare, the message read "named ." as if the
+			// current directory were missing.
+			return nil, errors.New("The path argument is empty.")
+		}
+		msg := fmt.Sprintf("No file or directory named %s.", quoteIfUnclear(arg))
 		if IsGitHubURL(arg) {
 			msg += " --offline does not fetch repositories."
 		}
@@ -97,6 +105,18 @@ func ResolveTarget(arg string) (*GitHubRepo, error) {
 		return nil, nil
 	}
 	return ParseGitHubURL(arg)
+}
+
+// quoteIfUnclear returns arg as a message prints it. An argument that is
+// empty, starts or ends with white space, or holds a character that does not
+// print is quoted with %q, so the reader sees where it starts and ends.
+func quoteIfUnclear(arg string) string {
+	unclear := arg == "" || strings.TrimSpace(arg) != arg ||
+		strings.IndexFunc(arg, func(r rune) bool { return !unicode.IsPrint(r) }) >= 0
+	if unclear {
+		return strconv.Quote(arg)
+	}
+	return arg
 }
 
 // FetchNotice is the first line printed when an argument is fetched from
