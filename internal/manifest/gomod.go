@@ -5,6 +5,7 @@ package manifest
 
 import (
 	"bufio"
+	"math"
 	"os"
 	"regexp"
 	"strings"
@@ -44,7 +45,13 @@ func (p *GoModParser) Parse(path string) ([]types.Dependency, error) {
 	singleRequire := regexp.MustCompile(`^require\s+(\S+)\s+(\S+)`)
 	blockEntry := regexp.MustCompile(`^\s*(\S+)\s+(\S+)(?:\s+//\s*indirect)?`)
 
+	// The scanner's token limit is raised to the largest int. bufio.Scanner's
+	// default limit is 64 KiB, and a longer line stopped it with "bufio.Scanner:
+	// token too long", which Parse returned: a go.mod holding a comment line of
+	// 70,003 characters was refused as a whole and the scan exited 2, where the
+	// go command reads the file and its require line.
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(nil, math.MaxInt)
 	lineNo := 0
 	for scanner.Scan() {
 		lineNo++
