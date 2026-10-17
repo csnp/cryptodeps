@@ -11,7 +11,7 @@ Commands:
   analyze     Analyze project dependencies for cryptographic usage
   update      Download latest crypto knowledge database
   status      Show database statistics and cache info
-  version     Print version information
+  version     Print version information (also cryptodeps --version or -v)
 
 Analyze Flags:
   -f, --format string       Output format: table, json, cbom, sarif, markdown (default "table")

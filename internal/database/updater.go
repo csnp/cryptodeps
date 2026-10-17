@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	// DefaultRepoAPI is the GitHub API endpoint for the releases.
-	DefaultRepoAPI = "https://api.github.com/repos/csnp/qramm-cryptodeps/releases"
+	// DefaultRepoAPI is the GitHub API endpoint for the releases, under the
+	// repository's current name. The old name, qramm-cryptodeps, redirects.
+	DefaultRepoAPI = "https://api.github.com/repos/csnp/cryptodeps/releases"
 
 	// DatabaseFileName is the name of the locally cached database file.
 	DatabaseFileName = "crypto-database.json"

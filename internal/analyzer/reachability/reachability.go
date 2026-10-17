@@ -339,11 +339,22 @@ func (a *Analyzer) processJWTSigningMethod(sel *ast.SelectorExpr, callerName str
 	// Check if this is a signing method constant
 	if algorithm, ok := jwtSigningMethods[sel.Sel.Name]; ok {
 		// Record this as a crypto call for the specific algorithm
-		if a.graph.CryptoCalls[algorithm] == nil {
-			a.graph.CryptoCalls[algorithm] = make([]string, 0)
-		}
-		a.graph.CryptoCalls[algorithm] = append(a.graph.CryptoCalls[algorithm], callerName)
+		a.recordCryptoCall(algorithm, callerName)
 	}
+}
+
+// recordCryptoCall notes that the function callerName uses algorithm. A
+// function is noted once per algorithm, however many calls it makes: noted
+// once per call, a function calling ed25519.GenerateKey, Sign and Verify gave
+// three identical traces, and the report printed the same "Called from" line
+// three times.
+func (a *Analyzer) recordCryptoCall(algorithm, callerName string) {
+	for _, noted := range a.graph.CryptoCalls[algorithm] {
+		if noted == callerName {
+			return
+		}
+	}
+	a.graph.CryptoCalls[algorithm] = append(a.graph.CryptoCalls[algorithm], callerName)
 }
 
 // processCall processes a function call expression.
@@ -380,13 +391,7 @@ func (a *Analyzer) processCall(call *ast.CallExpr, caller *CallNode, callerName 
 	for _, target := range knownCryptoTargets {
 		if strings.HasPrefix(calledPkg, target.Package) {
 			// This is a crypto call!
-			if a.graph.CryptoCalls[target.Algorithm] == nil {
-				a.graph.CryptoCalls[target.Algorithm] = make([]string, 0)
-			}
-			a.graph.CryptoCalls[target.Algorithm] = append(
-				a.graph.CryptoCalls[target.Algorithm],
-				callerName,
-			)
+			a.recordCryptoCall(target.Algorithm, callerName)
 		}
 	}
 }

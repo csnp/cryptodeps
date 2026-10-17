@@ -129,7 +129,7 @@ cryptodeps analyze .
 
 # Analyze a GitHub repository directly
 cryptodeps analyze hashicorp/vault
-cryptodeps analyze https://github.com/golang-jwt/jwt
+cryptodeps analyze https://github.com/csnp/cryptodeps/tree/main/examples/vulnerable-demo
 
 # Output to JSON for automation
 cryptodeps analyze . --format json > findings.json

@@ -5,6 +5,7 @@
 package manifest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,7 +98,7 @@ func findManifest(dir string) (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("no supported manifest file found in %s", dir)
+	return "", noManifestError(dir, "file")
 }
 
 // getParser returns the appropriate parser for a manifest filename.
@@ -137,11 +138,66 @@ func getParserForPath(path string) (Parser, error) {
 	return nil, fmt.Errorf("unsupported manifest file: %s", path)
 }
 
-// lockFileManifests maps a lock file to the manifest CryptoDeps reads in its
-// place. No lock file is parsed in any ecosystem.
+// lockFileManifests maps a lock file, by its lower-case name, to the manifest
+// CryptoDeps reads in its place. No lock file is parsed in any ecosystem.
 var lockFileManifests = map[string]string{
-	"go.sum":            "go.mod",
-	"package-lock.json": "package.json",
+	"go.sum":              "go.mod",
+	"package-lock.json":   "package.json",
+	"npm-shrinkwrap.json": "package.json",
+	"yarn.lock":           "package.json",
+	"pnpm-lock.yaml":      "package.json",
+	"pipfile.lock":        "Pipfile",
+	"poetry.lock":         "pyproject.toml",
+}
+
+// noManifestError is the error for a directory that holds no manifest
+// CryptoDeps reads. When the directory holds a lock file the error names it,
+// as the error for a lock file passed as the argument does: a directory
+// holding only yarn.lock got the same bare message as an empty one.
+func noManifestError(dir, files string) error {
+	msg := fmt.Sprintf("no supported manifest %s found in %s", files, dir)
+	locks, manifests := lockFilesIn(dir)
+	switch len(locks) {
+	case 0:
+		return errors.New(msg)
+	case 1:
+		return fmt.Errorf("%s: %s is a lock file, and CryptoDeps reads %s instead, which this directory does not hold",
+			msg, locks[0], manifests[0])
+	default:
+		return fmt.Errorf("%s: %s are lock files, and CryptoDeps reads %s instead, which this directory does not hold",
+			msg, joinWithAnd(locks), joinWithAnd(manifests))
+	}
+}
+
+// lockFilesIn returns the lock files directly in dir, in name order, and the
+// manifests CryptoDeps reads in their place, each named once.
+func lockFilesIn(dir string) (locks, manifests []string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil
+	}
+	seen := make(map[string]bool)
+	for _, e := range entries {
+		manifest, ok := lockFileManifests[strings.ToLower(e.Name())]
+		if !ok || !e.Type().IsRegular() {
+			continue
+		}
+		locks = append(locks, e.Name())
+		if !seen[manifest] {
+			seen[manifest] = true
+			manifests = append(manifests, manifest)
+		}
+	}
+	return locks, manifests
+}
+
+// joinWithAnd joins names as a sentence lists them: "a", "a and b",
+// "a, b and c".
+func joinWithAnd(names []string) string {
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // lockFileError returns the error for a lock file passed as the manifest, or
@@ -211,7 +267,7 @@ func DetectAndParseAll(path string) ([]*Manifest, []types.SkippedManifest, error
 	}
 
 	if len(manifestPaths) == 0 && len(skipped) == 0 {
-		return nil, nil, fmt.Errorf("no supported manifest files found in %s", path)
+		return nil, nil, noManifestError(path, "files")
 	}
 
 	var manifests []*Manifest

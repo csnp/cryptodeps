@@ -59,6 +59,15 @@ func inferredNote(inferred, listed int) string {
 	}
 }
 
+// countOf is n followed by the noun in the number n takes: "1 package",
+// "2 packages". A count of one printed "1 packages" and "1 dependencies".
+func countOf(n int, singular, plural string) string {
+	if n == 1 {
+		return "1 " + singular
+	}
+	return fmt.Sprintf("%d %s", n, plural)
+}
+
 func countInferred(listed []cryptoDetail) int {
 	n := 0
 	for _, c := range listed {
@@ -111,7 +120,8 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 	if result.Source != nil {
 		fmt.Fprintf(w, "\nRepository: %s\n", reportSafe(describeSource(result.Source)))
 	}
-	fmt.Fprintf(w, "\n[*] Scanning %s... found %d dependencies\n\n", reportSafe(manifestForReport(root, result.Manifest)), result.Summary.TotalDependencies)
+	fmt.Fprintf(w, "\n[*] Scanning %s... found %s\n\n", reportSafe(manifestForReport(root, result.Manifest)),
+		countOf(result.Summary.TotalDependencies, "dependency", "dependencies"))
 	printUnreadLines(w, result.UnreadLines)
 
 	// Check if there are any crypto findings
@@ -222,30 +232,39 @@ func (f *TableFormatter) formatProject(result *types.ScanResult, root string, w 
 
 	// Info for deep-analyzed packages
 	if deepAnalyzed > 0 {
-		fmt.Fprintf(w, "[*] %d packages analyzed via AST (--deep)\n", deepAnalyzed)
+		fmt.Fprintf(w, "[*] %s analyzed via AST (--deep)\n", countOf(deepAnalyzed, "package", "packages"))
 	}
 
 	// Warning for packages nothing examined. The wording follows what the user
 	// already did: telling someone who ran --deep to run --deep is a dead end.
+	// A package --deep could not read is a failure and keeps [!]; one the
+	// database does not carry is a notice, and [!] is the mark of a
+	// quantum-vulnerable finding.
 	if notAnalyzed > 0 {
+		packages := countOf(notAnalyzed, "package", "packages")
 		if result.Summary.DeepAttempted {
-			fmt.Fprintf(w, "[!] %d packages could not be read by source analysis (see warnings above)\n", notAnalyzed)
+			fmt.Fprintf(w, "[!] %s could not be read by source analysis (see warnings above)\n", packages)
 		} else if result.Summary.DeepSkippedOffline {
-			fmt.Fprintf(w, "[!] %d packages not in database (%s)\n", notAnalyzed, deepSkippedOffline)
+			fmt.Fprintf(w, "[?] %s not in database (%s)\n", packages, deepSkippedOffline)
 		} else {
-			fmt.Fprintf(w, "[!] %d packages not in database (use --deep to analyze)\n", notAnalyzed)
+			fmt.Fprintf(w, "[?] %s not in database (use --deep to analyze)\n", packages)
 		}
 	}
 
 	// A package that was read incompletely is counted as read, so it is absent
 	// from notAnalyzed above and needs saying separately.
 	if result.Summary.SourceFilesUnreadable > 0 {
-		fmt.Fprintf(w, "[!] %d source files could not be read in packages that were examined,\n",
-			result.Summary.SourceFilesUnreadable)
+		fmt.Fprintf(w, "[!] %s could not be read in packages that were examined,\n",
+			countOf(result.Summary.SourceFilesUnreadable, "source file", "source files"))
 		fmt.Fprintln(w, "    so their cryptography may be under-reported (see warnings above)")
 	}
 
-	f.printHints(w, result)
+	// The analyzer's hints point the packages nothing examined at --deep, which
+	// the line above has just done, so printing them after it gave the same
+	// advice twice in a row.
+	if notAnalyzed == 0 {
+		f.printHints(w, result)
+	}
 
 	if deepAnalyzed > 0 || notAnalyzed > 0 || len(result.Hints) > 0 {
 		fmt.Fprintln(w)
@@ -295,19 +314,28 @@ func (f *TableFormatter) printNoFindingsVerdict(w io.Writer, result *types.ScanR
 	default:
 		fmt.Fprintf(w, "[OK] No cryptographic usage detected in the %d of %d dependencies that were examined.\n",
 			examinedCount(result.Summary), total)
+		// [!] for the packages --deep could not read, [?] for the ones the
+		// database does not carry, as in the report with findings.
 		if unexamined > 0 {
-			fmt.Fprintf(w, "[!] %d could not be examined: %s.\n", unexamined, unexaminedAdvice(result.Summary))
+			mark := "[?]"
+			if result.Summary.DeepAttempted {
+				mark = "[!]"
+			}
+			fmt.Fprintf(w, "%s %d could not be examined: %s.\n", mark, unexamined, unexaminedAdvice(result.Summary))
 		}
 		// This is the sentence a partial reading most damages, because it is the
 		// one that says nothing was found. A dependency holding its only
 		// cryptography in a file the analyzer refused reached exactly here, and
 		// said it had been examined and was clean.
 		if result.Summary.SourceFilesUnreadable > 0 {
-			fmt.Fprintf(w, "[!] %d source files in those dependencies could not be read, so this is not a\n",
-				result.Summary.SourceFilesUnreadable)
+			fmt.Fprintf(w, "[!] %s in those dependencies could not be read, so this is not a\n",
+				countOf(result.Summary.SourceFilesUnreadable, "source file", "source files"))
 			fmt.Fprintln(w, "    complete reading of them. See the warnings printed during the scan.")
 		}
-		f.printHints(w, result)
+		// The hints repeat the advice on the "could not be examined" line.
+		if unexamined == 0 {
+			f.printHints(w, result)
+		}
 	}
 
 	fmt.Fprintln(w)
@@ -375,9 +403,17 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 	sortByRisk(reachable)
 	sortByRisk(available)
 
-	// Print CONFIRMED section (most important) - with call traces
+	// Print CONFIRMED section (most important) - with call traces. It requires
+	// action when a row in it is quantum-vulnerable or partial-risk, which are
+	// the confirmed findings the remediation guidance below lists. Over a
+	// section holding only a quantum-safe row, the heading asked for action
+	// that nothing in it needed.
 	if len(confirmed) > 0 {
-		fmt.Fprintln(w, "[!] CONFIRMED - Actually used by your code (requires action):")
+		if needsAction(confirmed) {
+			fmt.Fprintln(w, "[!] CONFIRMED - Actually used by your code (requires action):")
+		} else {
+			fmt.Fprintln(w, "CONFIRMED - Actually used by your code:")
+		}
 		fmt.Fprintf(w, "  %-4s %-14s %-12s  %-12s  %s\n", "", "ALGORITHM", "RISK", "TIMELINE", "EFFORT")
 		fmt.Fprintln(w, strings.Repeat("─", 90))
 		for _, c := range confirmed {
@@ -388,15 +424,21 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 				icon, c.algorithm, formatRisk(c.risk), timeline, effort, inferredMark(c.inferred))
 			fmt.Fprintf(w, "     └─ %s\n", c.dependency)
 
-			// Show call traces (where in user code)
-			if len(c.traces) > 0 {
-				for _, trace := range c.traces {
-					if len(trace.Path) > 0 {
-						// Show entry point (user's function)
-						entryFunc := shortenFuncName(trace.EntryPoint)
-						fmt.Fprintf(w, "        > Called from: %s\n", entryFunc)
-					}
+			// Show call traces (where in user code), one line per entry
+			// point: two traces that start at the same function printed the
+			// same line twice.
+			printed := make(map[string]bool)
+			for _, trace := range c.traces {
+				if len(trace.Path) == 0 {
+					continue
 				}
+				// Show entry point (user's function)
+				entryFunc := shortenFuncName(trace.EntryPoint)
+				if printed[entryFunc] {
+					continue
+				}
+				printed[entryFunc] = true
+				fmt.Fprintf(w, "        > Called from: %s\n", entryFunc)
 			}
 		}
 		fmt.Fprintln(w)
@@ -447,6 +489,17 @@ func (f *TableFormatter) printReachabilityBreakdown(w io.Writer, allCrypto []cry
 	listed = append(listed, confirmed...)
 	listed = append(listed, reachable...)
 	return append(listed, available...)
+}
+
+// needsAction reports whether any of the findings is quantum-vulnerable or
+// partial-risk.
+func needsAction(findings []cryptoDetail) bool {
+	for _, c := range findings {
+		if c.risk == types.RiskVulnerable || c.risk == types.RiskPartial {
+			return true
+		}
+	}
+	return false
 }
 
 // printSimpleBreakdown prints crypto without reachability grouping, and returns
