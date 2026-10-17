@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A package.json that starts with a UTF-8 byte order mark was rejected.**
+  The JSON decoder does not skip the mark (bytes EF BB BF), so
+  `cryptodeps analyze` on such a file failed with `invalid character 'ï'
+  looking for beginning of value` and exit code 2, and a directory scan
+  skipped the file as not valid JSON. The mark is now dropped before the npm
+  parser, the discovery check and the `workspaces` reader decode the file, so
+  its dependencies are analyzed and each one is reported at the line that
+  declares it.
+
 - **The `analyze` help did not say how `--fail-on` changes exit codes 0, 1 and
   3, and left out the `--offline` case of code 2.** It said 0 meant no
   quantum-vulnerable findings and 3 meant partial-risk findings with
