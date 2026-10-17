@@ -26,8 +26,8 @@ Analyze Flags:
 ```
 
 `--risk` and `--min-severity` filter the report. The report and its summary
-are computed from what the filters leave, so every number in them describes
-the same set of findings. The exit code still counts the findings the filters
+count the findings the filters leave, and say how many they withheld.
+The exit code still counts the findings the filters
 withheld: a filter changes what the report shows, not the `--fail-on` result.
 When a filter removes everything, the tool says so rather than reporting a
 clean scan.
