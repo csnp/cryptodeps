@@ -6,6 +6,7 @@ package manifest
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -535,6 +536,11 @@ var directReferencePattern = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)\s
 // listed by its kind and line number only, while "-r extra.txt" names the file.
 // A local path such as "./vendor/foo-1.0.tar.gz" is shown, as the file of an
 // "-r" include is.
+//
+// Lines are read as pip reads them, with a line that ends in a backslash joined
+// to the next one. Read one physical line at a time, "-r \" followed by a URL
+// on the next line was listed as an include named "\" and then as a URL
+// requirement, where pip reads one URL include.
 func unreadLines(path string) []types.UnreadLine {
 	if !readAsRequirements(path) {
 		return nil
@@ -546,11 +552,11 @@ func unreadLines(path string) []types.UnreadLine {
 	defer file.Close()
 
 	var unread []types.UnreadLine
-	scanner := bufio.NewScanner(file)
-	lineNo := 0
-	for scanner.Scan() {
-		lineNo++
-		line := strings.TrimSpace(scanner.Text())
+	// On a read error the lines read before it are still listed.
+	lines, _ := joinContinuedLines(file)
+	for _, l := range lines {
+		lineNo := l.number
+		line := strings.TrimSpace(l.text)
 		if idx := strings.Index(line, " #"); idx != -1 {
 			line = strings.TrimSpace(line[:idx])
 		}
@@ -662,6 +668,58 @@ func requirementOption(line, short, long string) (string, bool) {
 		return strings.TrimSpace(line[len(short):]), true
 	}
 	return "", false
+}
+
+// requirementsLine is one line of a requirements.txt as pip reads it, which
+// can span several lines of the file. number is the first of them.
+type requirementsLine struct {
+	number int
+	text   string
+}
+
+// joinContinuedLines splits a requirements.txt into lines as pip does before it
+// reads them. A line that ends in a backslash is joined to the next one without
+// the backslash, and the joined line is numbered by its first line, so
+//
+//	-r \
+//	https://host/reqs.txt
+//
+// is the one line "-r https://host/reqs.txt", numbered 1. A comment line is not
+// continued, even when it ends in a backslash, and a comment line after a
+// continued line ends it and adds nothing to it. Comments are otherwise left
+// in place for the caller to remove.
+func joinContinuedLines(r io.Reader) ([]requirementsLine, error) {
+	var lines []requirementsLine
+	var joined strings.Builder
+	first := 0 // the number of the line being joined, 0 when there is none
+	scanner := bufio.NewScanner(r)
+	number := 0
+	for scanner.Scan() {
+		number++
+		text := scanner.Text()
+		comment := strings.HasPrefix(strings.TrimSpace(text), "#")
+		switch {
+		case strings.HasSuffix(text, `\`) && !comment:
+			if first == 0 {
+				first = number
+			}
+			joined.WriteString(strings.Trim(text, `\`))
+		case first == 0:
+			lines = append(lines, requirementsLine{number: number, text: text})
+		default:
+			if !comment {
+				joined.WriteString(text)
+			}
+			lines = append(lines, requirementsLine{number: first, text: joined.String()})
+			joined.Reset()
+			first = 0
+		}
+	}
+	if first != 0 {
+		// The file ended on a backslash.
+		lines = append(lines, requirementsLine{number: first, text: joined.String()})
+	}
+	return lines, scanner.Err()
 }
 
 // parseRequirementsTxt parses a requirements.txt file.
