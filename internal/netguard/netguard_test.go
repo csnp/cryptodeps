@@ -162,7 +162,9 @@ var localPrograms = map[string]bool{"tar": true, "unzip": true}
 // scan flags the type where it is named other than behind a pointer (in a
 // composite literal, new(), a variable, field, parameter or result, a type
 // alias or definition, or a type argument), a literal of it nested in another
-// literal with its type left out, and a generic call that infers it.
+// literal with its type left out, a generic call that infers it, and a value
+// of it used other than as the operand of & or the left side of a selector,
+// such as the *p in c := *p.
 var guardedTypes = []string{
 	"net/http.Client",
 	"net/http.Transport",
@@ -301,15 +303,24 @@ func (s *netScanner) scan(files []*ast.File) []string {
 		found = append(found, finding{pos, what})
 	}
 
-	// pointees are the type expressions written behind a *, and callees the
-	// calls each called identifier belongs to.
+	// pointees are the type expressions written behind a *, inPlace the
+	// operands of & and the left sides of selectors, which are used where they
+	// are without being copied, and callees the calls each called identifier
+	// belongs to.
 	pointees := map[ast.Expr]bool{}
+	inPlace := map[ast.Expr]bool{}
 	callees := map[*ast.Ident]*ast.CallExpr{}
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.StarExpr:
 				pointees[unparen(n.X)] = true
+			case *ast.UnaryExpr:
+				if n.Op == token.AND {
+					inPlace[unparen(n.X)] = true
+				}
+			case *ast.SelectorExpr:
+				inPlace[unparen(n.X)] = true
 			case *ast.CallExpr:
 				switch fun := unparen(n.Fun).(type) {
 				case *ast.Ident:
@@ -339,7 +350,11 @@ func (s *netScanner) scan(files []*ast.File) []string {
 				if name, ok := s.byValue(tv.Type); ok && !pointees[e] {
 					report(e.Pos(), name+" built or held by value, not through netguard")
 				}
-			} else if lit, ok := e.(*ast.CompositeLit); ok && lit.Type == nil {
+			} else if lit, ok := e.(*ast.CompositeLit); ok {
+				// A literal with its type written is flagged at the type.
+				if lit.Type != nil {
+					return true
+				}
 				// A literal elided from []*T{{}} has the type *T.
 				t := tv.Type
 				if p, ok := t.Underlying().(*types.Pointer); ok {
@@ -347,6 +362,11 @@ func (s *netScanner) scan(files []*ast.File) []string {
 				}
 				if name, ok := s.byValue(t); ok {
 					report(e.Pos(), name+" constructed directly")
+				}
+			} else if tv.IsValue() && !inPlace[e] {
+				// A value copied out of a pointer, as in c := *p, names no type.
+				if name, ok := s.byValue(tv.Type); ok {
+					report(e.Pos(), name+" copied by value, not through netguard")
 				}
 			}
 			return true
@@ -472,6 +492,7 @@ func TestDirectNetworkUseDetector(t *testing.T) {
 		"parameter":         `package p; import "net/http"; func f(c http.Client, u string) { c.Get(u) }`,
 		"result":            `package p; import "net/http"; func f() (tr http.Transport) { return }`,
 		"type argument":     `package p; import "net"; func zero[T any]() T { var t T; return t }; var d = zero[net.Dialer]()`,
+		"dereferenced copy": `package p; import "net/http"; func f(p *http.Client, u string) { c := *p; c.Get(u) }`,
 	}
 	for name, src := range flagged {
 		t.Run("flags "+name, func(t *testing.T) {
@@ -482,18 +503,20 @@ func TestDirectNetworkUseDetector(t *testing.T) {
 	}
 
 	allowed := map[string]string{
-		"client type":      `package p; import "net/http"; type T struct{ c *http.Client }; func f(r *http.Request) {}`,
-		"request":          `package p; import "net/http"; func f() { http.NewRequest("GET", "u", nil) }`,
-		"local program":    `package p; import "os/exec"; func f() { exec.Command("tar", "-xzf", "a") }`,
-		"other package":    `package p; import "example.com/http"; var c = http.Get`,
-		"client pointer":   `package p; import "net/http"; func f(c *http.Client, u string) { c.Get(u) }`,
-		"command pointer":  `package p; import "os/exec"; func f(c *exec.Cmd) error { return c.Run() }`,
-		"type assertion":   `package p; import "net/http"; func f(rt http.RoundTripper) { _ = rt.(*http.Transport) }`,
-		"local constant":   `package p; import "os/exec"; const prog = "unzip"; func f() { exec.Command(prog, "a") }`,
-		"parsing only":     `package p; import "net"; var ip = net.ParseIP("127.0.0.1")`,
-		"other dot import": `package p; import . "example.com/http"; func f() { Get("u") }`,
-		"own Dial":         `package p; func Dial() {}; func f() { Dial() }`,
-		"pointer (parens)": `package p; import "net/http"; var c *(http.Client)`,
+		"client type":          `package p; import "net/http"; type T struct{ c *http.Client }; func f(r *http.Request) {}`,
+		"request":              `package p; import "net/http"; func f() { http.NewRequest("GET", "u", nil) }`,
+		"local program":        `package p; import "os/exec"; func f() { exec.Command("tar", "-xzf", "a") }`,
+		"other package":        `package p; import "example.com/http"; var c = http.Get`,
+		"client pointer":       `package p; import "net/http"; func f(c *http.Client, u string) { c.Get(u) }`,
+		"command pointer":      `package p; import "os/exec"; func f(c *exec.Cmd) error { return c.Run() }`,
+		"type assertion":       `package p; import "net/http"; func f(rt http.RoundTripper) { _ = rt.(*http.Transport) }`,
+		"local constant":       `package p; import "os/exec"; const prog = "unzip"; func f() { exec.Command(prog, "a") }`,
+		"parsing only":         `package p; import "net"; var ip = net.ParseIP("127.0.0.1")`,
+		"other dot import":     `package p; import . "example.com/http"; func f() { Get("u") }`,
+		"own Dial":             `package p; func Dial() {}; func f() { Dial() }`,
+		"pointer (parens)":     `package p; import "net/http"; var c *(http.Client)`,
+		"dereferenced call":    `package p; import "net/http"; func f(p *http.Client, u string) { (*p).Get(u) }`,
+		"dereferenced address": `package p; import "net/http"; func f(p *http.Client) *http.Client { return &*p }`,
 	}
 	for name, src := range allowed {
 		t.Run("allows "+name, func(t *testing.T) {
