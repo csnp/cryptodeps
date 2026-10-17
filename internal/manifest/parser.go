@@ -30,7 +30,8 @@ type Manifest struct {
 	Ecosystem    types.Ecosystem
 	Dependencies []types.Dependency
 	// Unread lists the lines that declare dependencies the parser did not
-	// read. Only requirements.txt fills it today.
+	// read. Only requirements files fill it today: requirements.txt, the
+	// requirements-*.txt family and the requirements/*.txt layout.
 	Unread []types.UnreadLine
 }
 

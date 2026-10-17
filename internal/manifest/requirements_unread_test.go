@@ -6,6 +6,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -120,6 +121,99 @@ func TestRequirementsUnreadLocalPathLines(t *testing.T) {
 			t.Errorf("Unread[%d] = %+v, want line %d name %q and a reason naming %q", i, got, w.line, w.name, w.reason)
 		}
 	}
+}
+
+// The scan reads the requirements-*.txt family and requirements/*.txt as well
+// as requirements.txt, but listed unread lines only for a file named
+// requirements.txt, so the same lines in the others were dropped with no
+// signal. Each now lists what requirements.txt lists for the same content, in
+// a scan of its directory and, for a file the scan accepts as its argument, in
+// a scan of the file itself.
+func TestUnreadLinesForEveryRequirementsFile(t *testing.T) {
+	content := strings.Join([]string{
+		"cryptography==42.0.0", // 1 read
+		"-r base.txt",          // 2
+		"-r https://example.invalid/private-reqs.txt",   // 3 a URL include
+		"-e git+https://example.invalid/repo.git#egg=x", // 4
+		"paramiko @ https://example.invalid/p",          // 5
+		"https://example.invalid/pkg.whl",               // 6
+		"--index-url https://example.invalid/simple",    // 7 not a dependency
+		"",
+	}, "\n")
+
+	reference, err := DetectAndParse(writeFiles(t, map[string]string{"requirements.txt": content}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reference.Unread) != 5 {
+		t.Fatalf("requirements.txt: Unread = %+v, want lines 2 to 6", reference.Unread)
+	}
+
+	for _, tc := range []struct {
+		name string
+		// argument is whether the scan accepts the file as its argument. A
+		// requirements/*.txt file is read in a scan of a directory only.
+		argument bool
+	}{
+		{"requirements-dev.txt", true},
+		{"requirements_test.txt", true},
+		{"requirements.prod.txt", true},
+		{filepath.Join("requirements", "dev.txt"), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := writeFiles(t, map[string]string{tc.name: content})
+			manifests, skipped, err := DetectAndParseAll(dir)
+			if err != nil || len(skipped) != 0 || len(manifests) != 1 {
+				t.Fatalf("DetectAndParseAll = %d manifests, skipped %+v, error %v; want 1 manifest", len(manifests), skipped, err)
+			}
+			if !reflect.DeepEqual(manifests[0].Unread, reference.Unread) {
+				t.Errorf("scan of the directory: Unread = %+v, want %+v", manifests[0].Unread, reference.Unread)
+			}
+
+			if !tc.argument {
+				return
+			}
+			m, err := DetectAndParse(filepath.Join(dir, tc.name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(m.Unread, reference.Unread) {
+				t.Errorf("scan of the file: Unread = %+v, want %+v", m.Unread, reference.Unread)
+			}
+		})
+	}
+}
+
+// pyproject.toml and Pipfile also go to the Python parser, which reads them
+// with readers of their own, so a URL in either is not listed as an unread
+// requirements line.
+func TestUnreadLinesNotForPyprojectOrPipfile(t *testing.T) {
+	dir := writeFiles(t, map[string]string{
+		"pyproject.toml": "[project]\nname = \"x\"\ndependencies = [\"paramiko @ https://example.invalid/p.tar.gz\"]\n",
+		"Pipfile":        "[packages]\nparamiko = {file = \"https://example.invalid/p.tar.gz\"}\n",
+	})
+	for _, name := range []string{"pyproject.toml", "Pipfile"} {
+		if got := unreadLines(filepath.Join(dir, name)); got != nil {
+			t.Errorf("unreadLines(%s) = %+v, want nil", name, got)
+		}
+	}
+}
+
+// writeFiles writes files, named relative to a new directory, and returns the
+// directory.
+func writeFiles(t *testing.T, files map[string]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 // Other manifests report no unread lines.
