@@ -1,8 +1,9 @@
 # GitHub Action for CryptoDeps
 # Analyzes dependencies for quantum-vulnerable cryptographic algorithms
 #
-# Usage in your workflow:
-#   - uses: csnp/qramm-cryptodeps@v1
+# Usage in your workflow, pinned to a release tag from
+# https://github.com/csnp/cryptodeps/releases:
+#   - uses: csnp/cryptodeps@v1.3.1
 #     with:
 #       path: '.'
 #       fail-on: 'vulnerable'

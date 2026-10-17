@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The documented GitHub Action reference did not resolve.** The usage
+  comment in `action.yml` and both jobs in
+  `examples/github-action-workflow.yml` said `uses: csnp/qramm-cryptodeps@v1`.
+  The repository had release tags such as `v1.3.1` but no `v1` tag or branch.
+  It had also been renamed to `csnp/cryptodeps`, and GitHub documents that it
+  does not redirect an action reference to a renamed repository. Both places
+  now say `uses: csnp/cryptodeps@v1.3.1` and point to the releases page for
+  the tag to pin.
+
 ## [1.3.1] - 2026-10-17
 
 ### Fixed

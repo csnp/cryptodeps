@@ -30,9 +30,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # Option 1: Use the CryptoDeps action (recommended)
+      # Option 1: Use the CryptoDeps action (recommended). Pin a release tag
+      # from https://github.com/csnp/cryptodeps/releases. GitHub does not
+      # redirect an action reference to a renamed repository, so the action
+      # uses the current name, csnp/cryptodeps, while the Go module path in
+      # Option 2 keeps its original name, csnp/qramm-cryptodeps.
       - name: Run CryptoDeps
-        uses: csnp/qramm-cryptodeps@v1
+        uses: csnp/cryptodeps@v1.3.1
         with:
           path: '.'
           fail-on: 'vulnerable'
@@ -60,7 +64,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Strict CryptoDeps Scan
-        uses: csnp/qramm-cryptodeps@v1
+        uses: csnp/cryptodeps@v1.3.1
         with:
           path: '.'
           fail-on: 'partial'  # Stricter: also fail on partial-risk
