@@ -114,6 +114,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `paramiko` with the version `@ \`. Each is still listed, by its first line,
   with the lines the scan did not read.
 
+- **A requirements.txt line longer than 64 KiB made the scan fail.** The
+  requirements.txt reader used `bufio.Scanner` with its default token limit
+  of 64 KiB, so a longer line stopped it with `bufio.Scanner: token too long`
+  and the whole file was refused: a directory whose requirements.txt had a
+  first line of `cryptography==42.0.0 ` followed by 70,000 characters failed
+  `analyze --offline` with `found 1 manifest file(s) but none could be read`
+  and exit code 2, where pip 26.0 reads that line and the ones after it. The
+  reader's token limit is now the largest int. With `pycryptodome==3.20.0`
+  and `-r extra.txt` on the lines after the long one, that scan now analyzes
+  both dependencies, lists the `-r` line with the lines the scan did not read,
+  and exits 1. A pin with its hashes on the same line and a comment line, each
+  longer than 64 KiB, are read the same way.
+
 - **A scan of a GitHub repository reported reachability for source code it
   never fetched.** A GitHub URL or `owner/repo` argument downloads the
   repository's manifest files only, and reachability then ran over the

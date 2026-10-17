@@ -7,6 +7,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -687,11 +688,19 @@ type requirementsLine struct {
 // continued, even when it ends in a backslash, and a comment line after a
 // continued line ends it and adds nothing to it. Comments are otherwise left
 // in place for the caller to remove.
+//
+// The scanner's token limit is raised to the largest int. bufio.Scanner's
+// default limit is 64 KiB, and a longer line stopped it with "bufio.Scanner:
+// token too long", which parseRequirementsTxt returned: a requirements.txt
+// whose first line was "cryptography==42.0.0 " followed by 70,000 characters
+// was refused as a whole and the scan exited 2, where pip reads that line and
+// the ones after it.
 func joinContinuedLines(r io.Reader) ([]requirementsLine, error) {
 	var lines []requirementsLine
 	var joined strings.Builder
 	first := 0 // the number of the line being joined, 0 when there is none
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(nil, math.MaxInt)
 	number := 0
 	for scanner.Scan() {
 		number++
