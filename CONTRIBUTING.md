@@ -43,7 +43,13 @@ go fmt ./...
 gofumpt -w .
 
 # Run linter
-golangci-lint run
+make lint
+```
+
+`.golangci.yml` is in the golangci-lint v1 configuration format, which golangci-lint 2.x releases do not load: 2.12.2 stops with `can't load config: unsupported version of the configuration` and exits 3 without linting. `make lint` uses `go run` to build and run the golangci-lint release the CI lint job installs (`GOLANGCI_LINT_VERSION` in the Makefile), so the golangci-lint on your PATH is not used. Without make, run the same release:
+
+```bash
+go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run ./...
 ```
 
 ## Contributing Code
@@ -52,7 +58,7 @@ golangci-lint run
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make your changes
 4. Run tests: `go test -race ./...`
-5. Run linter: `golangci-lint run`
+5. Run linter: `make lint`
 6. Commit with a descriptive message
 7. Push and open a Pull Request
 
@@ -162,7 +168,7 @@ For security issues, please email security@csnp.org instead of opening a public 
 ### Before Submitting
 
 - [ ] Tests pass: `go test -race ./...`
-- [ ] Linter passes: `golangci-lint run`
+- [ ] Linter passes: `make lint`
 - [ ] Code is formatted: `go fmt ./...`
 - [ ] Documentation updated if needed
 - [ ] Commit messages follow conventional commits
