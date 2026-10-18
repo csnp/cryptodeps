@@ -25,6 +25,12 @@ func NewAnalyzer(cacheDir string) *Analyzer {
 	}
 }
 
+// Close removes the source cache when it was made for this run alone; see
+// source.Fetcher.Close.
+func (a *Analyzer) Close() error {
+	return a.fetcher.Close()
+}
+
 // Analyze downloads and analyzes a package for cryptographic usage.
 func (a *Analyzer) Analyze(dep types.Dependency) (*types.PackageAnalysis, error) {
 	// Fetch the source code

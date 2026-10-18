@@ -63,8 +63,9 @@ func mavenDeepFixture(t *testing.T, tmpDir string, files map[string]string) stri
 	}
 
 	// cacheSegment maps the ':' in a Maven coordinate to '_' and leaves the
-	// version alone; "extracted" is where the fetcher unzips a JAR.
-	extracted := filepath.Join(tmpDir, "cryptodeps-cache", "maven",
+	// version alone; "extracted" is where the fetcher unzips a JAR. The cache
+	// is the per-user one, in a home inside tmpDir; see sourceCacheFor.
+	extracted := filepath.Join(sourceCacheFor(t, filepath.Join(tmpDir, "home")), "maven",
 		unreadableGroupID+"_"+unreadableArtifactID, unreadableVersion, "extracted")
 	for name, content := range files {
 		path := filepath.Join(extracted, filepath.FromSlash(name))
@@ -134,7 +135,6 @@ func runDeepScan(t *testing.T, project string) (*types.ScanResult, types.Depende
 // the count of files an analyzer parsed.
 func TestDeepScanOfClassOnlyArchiveIsNotReportedAsExamined(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 	t.Setenv("PATH", t.TempDir())
 
 	project := mavenDeepFixture(t, tmpDir, map[string]string{
@@ -186,7 +186,6 @@ func TestDeepScanOfClassOnlyArchiveIsNotReportedAsExamined(t *testing.T) {
 // what a user reads.
 func TestDeepScanReadsSourceInASingleByteEncoding(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 	t.Setenv("PATH", t.TempDir())
 
 	// 0xe9 is 'e' with an acute accent in Latin-1.
@@ -245,7 +244,6 @@ public class Hashing {
 // have been.
 func TestDeepScanSaysWhichFilesItCouldNotRead(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 	t.Setenv("PATH", t.TempDir())
 
 	project := mavenDeepFixture(t, tmpDir, map[string]string{
@@ -323,7 +321,6 @@ public class Plain { public int add(int a, int b) { return a + b; } }
 // archive, and the finding in it has to survive.
 func TestDeepScanOfReadableArchiveIsStillReportedAsExamined(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 	t.Setenv("PATH", t.TempDir())
 
 	project := mavenDeepFixture(t, tmpDir, map[string]string{
@@ -363,7 +360,6 @@ public class Hashing {
 // told apart from one inferred from the package's description.
 func TestDeepScanFindingsSayTheyWereReadFromSource(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 	t.Setenv("PATH", t.TempDir())
 
 	project := mavenDeepFixture(t, tmpDir, map[string]string{
