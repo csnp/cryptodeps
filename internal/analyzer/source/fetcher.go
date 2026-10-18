@@ -32,6 +32,11 @@ type Fetcher struct {
 	// then a directory of this run's own, made on first use and removed by
 	// Close, never a fixed path that every user of the machine shares.
 	perRun bool
+	// rootLock is the lock this fetcher holds on the cache root while it may
+	// stage a download there (see claimRoot), or nil where none was taken.
+	// claimed is set once a fetch has tried to take it.
+	rootLock *os.File
+	claimed  bool
 }
 
 // Where the source cache lives. See defaultCacheDir and stagingDir.
@@ -543,6 +548,11 @@ func (f *Fetcher) cacheRoot() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Taken once the root is settled and before this fetcher stages anything
+	// in it, so that what claimRoot removes cannot be this fetcher's own.
+	if !f.claimed {
+		f.rootLock, f.claimed = claimRoot(f.cacheDir, f.perRun), true
+	}
 	return f.cacheDir, nil
 }
 
@@ -580,6 +590,8 @@ func (f *Fetcher) entryDir(ecosystem, name, version string) (string, error) {
 // is inside the cache root, so renaming it into place never crosses a file
 // system, and MkdirTemp makes it 0700 under a name nobody can choose in
 // advance. The caller removes it, which after a rename into place is a no-op.
+// One whose scan ended before the caller could is removed by a later scan; see
+// claimRoot.
 func (f *Fetcher) stagingDir() (string, error) {
 	root, err := f.cacheRoot()
 	if err != nil {
@@ -647,10 +659,13 @@ func NewFetcher(cacheDir string) *Fetcher {
 
 // Close removes the cache when it is a directory of this run's own, made
 // because there was no per-user cache directory. A per-user cache, or one the
-// caller named, is a cache and is kept for the next scan.
+// caller named, is a cache and is kept for the next scan. Either way the lock
+// on the cache root is let go, after a cache of the run's own is removed, so
+// that another scan does not find that cache unlocked while it is removed.
 func (f *Fetcher) Close() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	defer f.releaseRootLocked()
 
 	if !f.perRun || f.cacheDir == "" {
 		return nil
@@ -1007,5 +1022,18 @@ func (f *Fetcher) CacheDir() string {
 func (f *Fetcher) CleanCache() error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// The lock is on the directory removed here, so the next fetch takes one
+	// on the directory made in its place.
+	defer f.releaseRootLocked()
 	return os.RemoveAll(f.cacheDir)
+}
+
+// releaseRootLocked lets go of the lock on the cache root, so that the next
+// fetch takes it again. The caller holds f.mu.
+func (f *Fetcher) releaseRootLocked() {
+	if f.rootLock != nil {
+		f.rootLock.Close()
+		f.rootLock = nil
+	}
+	f.claimed = false
 }
