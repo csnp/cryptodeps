@@ -553,7 +553,7 @@ func TestNewFetcherDefaultCacheDir(t *testing.T) {
 		t.Error("Expected non-empty default cache dir")
 	}
 
-	// Should be in temp directory
+	// Should be in the per-user cache directory, which is absolute
 	if !filepath.IsAbs(f.cacheDir) {
 		t.Error("Cache dir should be absolute path")
 	}

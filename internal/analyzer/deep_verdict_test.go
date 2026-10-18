@@ -23,11 +23,13 @@ import (
 // the network, so the whole chain from manifest to rendered verdict runs
 // exactly as it does for a user, in a unit test.
 //
-// It returns the project directory. The caller must have redirected TMPDIR
-// before calling New, because that is where the fetcher puts its cache.
+// It returns the project directory. The cache is the per-user one, in a home
+// inside tmpDir that the environment points at for the rest of the test,
+// because that is where the fetcher keeps its cache.
 func deepScanFixture(t *testing.T, tmpDir string, source map[string]string) string {
 	t.Helper()
 
+	cache := sourceCacheFor(t, filepath.Join(tmpDir, "home"))
 	project := filepath.Join(tmpDir, "project")
 	if err := os.MkdirAll(project, 0755); err != nil {
 		t.Fatalf("create project dir: %v", err)
@@ -46,7 +48,7 @@ func deepScanFixture(t *testing.T, tmpDir string, source map[string]string) stri
 	for name, code := range source {
 		// The layout npm pack plus tar produces, which is what the fetcher
 		// looks for on a cache hit.
-		dir := filepath.Join(tmpDir, "cryptodeps-cache", "npm", name, "1.0.0", "package")
+		dir := filepath.Join(cache, "npm", name, "1.0.0", "package")
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatalf("create cache entry for %s: %v", name, err)
 		}
@@ -56,6 +58,32 @@ func deepScanFixture(t *testing.T, tmpDir string, source map[string]string) stri
 	}
 
 	return project
+}
+
+// sourceCacheFor points the per-user cache directory at home for the rest of
+// the test and returns the source cache the fetcher keeps there.
+//
+// os.UserCacheDir reads a different variable on each platform, so all three
+// are set, and the answer is checked to be inside home: a fixture that wrote
+// into the cache of the user running the tests would be reading and changing
+// state the test does not own. The path below it is spelled out rather than
+// asked of the fetcher, as the entry paths are: if the fetcher's location
+// changes, the scan misses this cache and the fixture guards fail loudly.
+func sourceCacheFor(t *testing.T, home string) string {
+	t.Helper()
+
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	t.Setenv("LocalAppData", filepath.Join(home, "AppData", "Local"))
+	userCache, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatalf("no user cache directory under %s: %v", home, err)
+	}
+	if !strings.HasPrefix(userCache, home+string(filepath.Separator)) {
+		t.Fatalf("the user cache directory %s is not inside %s, so the fixture would write "+
+			"into a real cache", userCache, home)
+	}
+	return filepath.Join(userCache, "cryptodeps")
 }
 
 // TestDeepScanOfCleanTreeReportsClean is the end-to-end regression test for the
@@ -75,7 +103,6 @@ func deepScanFixture(t *testing.T, tmpDir string, source map[string]string) stri
 // order to answer whether anything had been examined.
 func TestDeepScanOfCleanTreeReportsClean(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 
 	project := deepScanFixture(t, tmpDir, map[string]string{
 		"chalk":     "module.exports = s => s;\n",
@@ -135,7 +162,6 @@ func TestDeepScanOfCleanTreeReportsClean(t *testing.T) {
 // broken hash.
 func TestDeepScanStillReportsFindings(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 
 	project := deepScanFixture(t, tmpDir, map[string]string{
 		"clean-pkg": "module.exports = s => s;\n",
@@ -175,7 +201,6 @@ func TestDeepScanStillReportsFindings(t *testing.T) {
 // what the user already ran.
 func TestDeepScanReportsPackagesItCouldNotRead(t *testing.T) {
 	tmpDir := t.TempDir()
-	t.Setenv("TMPDIR", tmpDir)
 	// No downloader on PATH, so the dependency without a cache entry cannot be
 	// fetched and the run produces one examined and one unexamined package.
 	t.Setenv("PATH", t.TempDir())

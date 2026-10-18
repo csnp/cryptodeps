@@ -174,6 +174,16 @@ func New(db *database.Database, opts Options) *Analyzer {
 	return a
 }
 
+// Close releases what a scan holds once it is over. Deep analysis keeps the
+// source it fetches in the per-user cache directory; where there is none it
+// uses a directory of this run's own, which Close removes.
+func (a *Analyzer) Close() error {
+	if a.ondemand == nil {
+		return nil
+	}
+	return a.ondemand.Close()
+}
+
 // Analyze analyzes dependencies in a manifest file.
 func (a *Analyzer) Analyze(path string) (*types.ScanResult, error) {
 	// Parse the manifest

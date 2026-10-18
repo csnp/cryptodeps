@@ -9,11 +9,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
@@ -21,8 +23,23 @@ import (
 
 // Fetcher downloads package source code for analysis.
 type Fetcher struct {
+	mu       sync.Mutex
 	cacheDir string
+	// perUser is set while cacheDir is the per-user cache directory, which
+	// gives way to a cache of the run's own if it cannot be created.
+	perUser bool
+	// perRun is set when there is no per-user cache directory. The cache is
+	// then a directory of this run's own, made on first use and removed by
+	// Close, never a fixed path that every user of the machine shares.
+	perRun bool
 }
+
+// Where the source cache lives. See defaultCacheDir and stagingDir.
+const (
+	cacheDirName  = "cryptodeps"         // under the per-user cache directory
+	perRunPrefix  = "cryptodeps-source-" // a run's own cache, in the temporary directory
+	stagingPrefix = ".fetch-"            // one fetch's download, inside the cache root
+)
 
 // Directory names that a fetched archive is expected to unpack to, when the
 // ecosystem has a convention. Anything else is resolved by inspection.
@@ -367,7 +384,7 @@ const cacheEntryDepth = 3
 
 // checkCacheEntry rejects a path that is not exactly one package's cache entry.
 //
-// This is the only destructive operation in the fetcher and its argument is
+// This is the only destructive operation in the fetcher whose argument is
 // built from manifest-supplied text, so its scope is checked rather than
 // assumed. The check is what makes the scope testable: four separate mutations
 // of the removal, up to and including RemoveAll of the entire cache root,
@@ -417,14 +434,28 @@ func (f *Fetcher) resetCacheEntry(packageDir string) error {
 //
 // It returns the source root on a hit. On a miss it clears the unusable entry
 // and returns an empty root, which tells the caller to fetch. It returns an
-// error only when the entry must be left alone, which is the ambiguous case:
-// the entry may hold the package, and deleting a tree because it could not be
-// identified is a worse answer than refusing to guess.
+// error only when the entry must be left alone: when it is not a private
+// directory (see checkPrivateDir), and in the ambiguous case, where the entry
+// may hold the package, and deleting a tree because it could not be identified
+// is a worse answer than refusing to guess.
 //
 // The three fetchers previously each discarded this error and fell through to a
 // refetch, so the diagnostics written for it were unreachable and the user was
 // shown whatever the refetch failed with instead.
 func (f *Fetcher) cachedSourceRoot(packageDir string, preferred ...string) (string, error) {
+	// The entry is checked before anything in it is read, as every directory
+	// above it was by entryDir. Nothing there at all is a miss.
+	info, err := os.Lstat(packageDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("cannot inspect the cache entry %s: %w", packageDir, err)
+	}
+	if err := checkPrivateDir(packageDir, info); err != nil {
+		return "", err
+	}
+
 	root, err := extractedSourceRoot(packageDir, preferred...)
 	if err == nil {
 		return root, nil
@@ -438,22 +469,198 @@ func (f *Fetcher) cachedSourceRoot(packageDir string, preferred ...string) (stri
 	return "", f.resetCacheEntry(packageDir)
 }
 
-// discardPartialFetch clears what a failed download left behind and returns the
-// error to report for it.
-func (f *Fetcher) discardPartialFetch(packageDir string, cause error, what string) error {
-	if err := f.resetCacheEntry(packageDir); err != nil {
-		return fmt.Errorf("%s: %w (the partial cache entry was also left in place: %v)",
-			what, cause, err)
-	}
-	return fmt.Errorf("%s: %w", what, cause)
+// refusedCacheDirError is checkPrivateDir's refusal of a source cache
+// directory. It is a type of its own because the answer to it differs from the
+// answer to a cache directory that cannot be created: a directory that is
+// there and is not private is reported, never worked around.
+type refusedCacheDirError struct {
+	path    string
+	problem string
 }
 
-// NewFetcher creates a new source fetcher with the given cache directory.
-func NewFetcher(cacheDir string) *Fetcher {
-	if cacheDir == "" {
-		cacheDir = filepath.Join(os.TempDir(), "cryptodeps-cache")
+func (e *refusedCacheDirError) Error() string {
+	return fmt.Sprintf("refusing to use %s for the source cache: %s; remove it, and deep "+
+		"analysis creates it again as a private directory", e.path, e.problem)
+}
+
+// checkPrivateDir refuses a source cache directory that anyone but the user
+// running the scan could have put there or can change, given what Lstat
+// reported for it. Whoever can write to a cache directory decides what is read
+// from it as a package's source, and a link decides where the cache is.
+//
+// The ownership and mode half is Unix only (see ownerAndModeProblem). Windows
+// relies on the per-user location to keep the cache to one user.
+func checkPrivateDir(path string, info fs.FileInfo) error {
+	var problem string
+	switch {
+	case info.Mode()&fs.ModeSymlink != 0:
+		problem = "it is a symbolic link"
+	case info.Mode().Type() != fs.ModeDir:
+		problem = "it is not a directory"
+	default:
+		problem = ownerAndModeProblem(info)
 	}
-	return &Fetcher{cacheDir: cacheDir}
+	if problem == "" {
+		return nil
+	}
+	return &refusedCacheDirError{path: path, problem: problem}
+}
+
+// ensurePrivateDir checks the source cache directory at path, creating it 0700
+// with mkdir first if nothing is there. What is found is checked either way, so
+// a directory that appears between the two calls is held to the same terms as
+// one that was there before.
+func ensurePrivateDir(path string, mkdir func(string, fs.FileMode) error) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err := mkdir(path, 0o700); err != nil && !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("failed to create the source cache directory %s: %w", path, err)
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return fmt.Errorf("cannot inspect the source cache directory %s: %w", path, err)
+	}
+	return checkPrivateDir(path, info)
+}
+
+// cacheRoot returns the cache root once it has been checked, creating it as a
+// private directory if it does not exist yet. A per-run root is made here, on
+// first use, so a scan that fetches nothing leaves nothing behind.
+func (f *Fetcher) cacheRoot() (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	err := f.ensureRootLocked()
+	var refused *refusedCacheDirError
+	if err != nil && f.perUser && !errors.As(err, &refused) {
+		// A per-user cache directory that cannot be created, as under a home
+		// directory this account cannot write to, is no per-user cache
+		// directory at all, so the run gets one of its own instead.
+		f.cacheDir, f.perUser, f.perRun = "", false, true
+		err = f.ensureRootLocked()
+	}
+	if err != nil {
+		return "", err
+	}
+	return f.cacheDir, nil
+}
+
+// ensureRootLocked makes and checks the cache root. The caller holds f.mu.
+func (f *Fetcher) ensureRootLocked() error {
+	if f.cacheDir == "" && f.perRun {
+		dir, err := os.MkdirTemp("", perRunPrefix)
+		if err != nil {
+			return fmt.Errorf("failed to create a source cache for this run: %w", err)
+		}
+		f.cacheDir = dir
+	}
+	return ensurePrivateDir(f.cacheDir, os.MkdirAll)
+}
+
+// entryDir returns the cache entry for one version of a package, after
+// checking the root and the ecosystem and package directories above it and
+// creating any of them that are missing. The entry itself is not created here:
+// a fetch downloads into a staging directory and renames it into place.
+func (f *Fetcher) entryDir(ecosystem, name, version string) (string, error) {
+	dir, err := f.cacheRoot()
+	if err != nil {
+		return "", err
+	}
+	for _, part := range []string{ecosystem, cacheSegment(name)} {
+		dir = filepath.Join(dir, part)
+		if err := ensurePrivateDir(dir, os.Mkdir); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, cacheSegment(version)), nil
+}
+
+// stagingDir creates the directory one fetch downloads and extracts into. It
+// is inside the cache root, so renaming it into place never crosses a file
+// system, and MkdirTemp makes it 0700 under a name nobody can choose in
+// advance. The caller removes it, which after a rename into place is a no-op.
+func (f *Fetcher) stagingDir() (string, error) {
+	root, err := f.cacheRoot()
+	if err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(root, stagingPrefix)
+	if err != nil {
+		return "", fmt.Errorf("failed to create a staging directory in the source cache %s: %w", root, err)
+	}
+	return dir, nil
+}
+
+// install renames a staging directory into place as the cache entry once the
+// extractor has finished with it, and resolves the source root from there. An
+// entry therefore appears whole or not at all: a failed extraction stays in the
+// staging directory, which its fetch removes, and an interrupted one never
+// becomes an entry.
+func (f *Fetcher) install(staging, packageDir string, preferred ...string) (string, error) {
+	if err := os.Rename(staging, packageDir); err != nil {
+		// Another scan can install the same entry first. That is not a failure
+		// to fetch it, as long as what it installed resolves.
+		if root, hitErr := f.cachedSourceRoot(packageDir, preferred...); hitErr == nil && root != "" {
+			return root, nil
+		}
+		return "", fmt.Errorf("failed to move the fetched source into the cache entry %s: %w", packageDir, err)
+	}
+	return extractedSourceRoot(packageDir, preferred...)
+}
+
+// defaultCacheDir returns the source cache in the per-user cache directory:
+// ~/Library/Caches/cryptodeps on macOS, $XDG_CACHE_HOME/cryptodeps or
+// ~/.cache/cryptodeps on other Unix systems, and %LocalAppData%\cryptodeps on
+// Windows.
+//
+// It used to be one fixed directory in the system temporary directory, which
+// on most Unix systems every user of the machine shares and can write to. A
+// relative answer is not used either: it would resolve against the working
+// directory, which during a scan is usually the project being scanned.
+func defaultCacheDir() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(dir) {
+		return "", fmt.Errorf("the user cache directory %q is not an absolute path", dir)
+	}
+	return filepath.Join(dir, cacheDirName), nil
+}
+
+// NewFetcher creates a source fetcher that keeps its cache in cacheDir.
+//
+// An empty cacheDir means the per-user cache directory (see defaultCacheDir).
+// Where there is none, or it cannot be created, the fetcher makes a directory
+// of its own in the temporary directory on first use, and Close removes it.
+func NewFetcher(cacheDir string) *Fetcher {
+	if cacheDir != "" {
+		return &Fetcher{cacheDir: cacheDir}
+	}
+	dir, err := defaultCacheDir()
+	if err != nil {
+		return &Fetcher{perRun: true}
+	}
+	return &Fetcher{cacheDir: dir, perUser: true}
+}
+
+// Close removes the cache when it is a directory of this run's own, made
+// because there was no per-user cache directory. A per-user cache, or one the
+// caller named, is a cache and is kept for the next scan.
+func (f *Fetcher) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if !f.perRun || f.cacheDir == "" {
+		return nil
+	}
+	dir := f.cacheDir
+	f.cacheDir = ""
+	if err := os.RemoveAll(dir); err != nil {
+		return fmt.Errorf("failed to remove this run's source cache %s: %w", dir, err)
+	}
+	return nil
 }
 
 // Fetch downloads the source code for a package and returns the local path.
@@ -544,8 +751,12 @@ func extractGoModDir(output []byte) string {
 
 // fetchNpmPackage downloads an npm package.
 func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
-	// Create cache directory for this package
-	packageDir := filepath.Join(f.cacheDir, "npm", cacheSegment(dep.Name), cacheSegment(dep.Version))
+	// The cache entry for this package, once every directory above it has
+	// been checked.
+	packageDir, err := f.entryDir("npm", dep.Name, dep.Version)
+	if err != nil {
+		return "", err
+	}
 
 	// Check if already cached. A cache entry counts as a hit only if it holds
 	// extracted source; see extractedSourceRoot. An empty root with no error
@@ -554,10 +765,14 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 		return root, err
 	}
 
-	// Ensure cache directory exists
-	if err := os.MkdirAll(packageDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create cache dir: %w", err)
+	// Download and extract in a directory of this fetch's own, which becomes
+	// the cache entry only once extraction has finished. Whatever a failed
+	// fetch leaves there is removed with it.
+	staging, err := f.stagingDir()
+	if err != nil {
+		return "", err
 	}
+	defer os.RemoveAll(staging)
 
 	// Use npm pack to download the package
 	packageSpec := dep.Name
@@ -582,33 +797,33 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 	// parsing, and ordinary and scoped specs are unaffected by it.
 	cmd, err := netguard.Command("npm", "pack", "--ignore-scripts", "--", packageSpec)
 	if err != nil {
-		return "", f.discardPartialFetch(packageDir, err, "npm pack not run")
+		return "", fmt.Errorf("npm pack not run: %w", err)
 	}
-	cmd.Dir = packageDir
+	cmd.Dir = staging
 	if err := cmd.Run(); err != nil {
-		return "", f.discardPartialFetch(packageDir, err, "npm pack failed")
+		return "", fmt.Errorf("npm pack failed: %w", err)
 	}
 
 	// Find the tarball and extract it
-	entries, err := os.ReadDir(packageDir)
+	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return "", err
 	}
 
 	for _, entry := range entries {
 		if strings.HasSuffix(entry.Name(), ".tgz") {
-			tarball := filepath.Join(packageDir, entry.Name())
+			tarball := filepath.Join(staging, entry.Name())
 			// Extract the tarball
-			extractCmd := exec.Command("tar", "-xzf", tarball, "-C", packageDir)
+			extractCmd := exec.Command("tar", "-xzf", tarball, "-C", staging)
 			if err := extractCmd.Run(); err != nil {
-				return "", f.discardPartialFetch(packageDir, err, "failed to extract tarball")
+				return "", fmt.Errorf("failed to extract tarball: %w", err)
 			}
 			// npm tarballs conventionally unpack to package/, but not all of
 			// them do: ejs 3.1.10 unpacks to ejs-v3.1.10/. Returning the
 			// convention unconditionally made the caller's lstat fail on those,
 			// which is how the same package came to be analyzed from a
 			// different root on the first run than on later ones.
-			return extractedSourceRoot(packageDir, npmExtractedDir)
+			return f.install(staging, packageDir, npmExtractedDir)
 		}
 	}
 
@@ -617,8 +832,12 @@ func (f *Fetcher) fetchNpmPackage(dep types.Dependency) (string, error) {
 
 // fetchPyPIPackage downloads a Python package from PyPI.
 func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
-	// Create cache directory for this package
-	packageDir := filepath.Join(f.cacheDir, "pypi", cacheSegment(dep.Name), cacheSegment(dep.Version))
+	// The cache entry for this package, once every directory above it has
+	// been checked.
+	packageDir, err := f.entryDir("pypi", dep.Name, dep.Version)
+	if err != nil {
+		return "", err
+	}
 
 	// Check if already cached. Same shape as the npm fetcher: the directory
 	// existing is not the same question as it holding extracted source.
@@ -626,10 +845,13 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 		return root, err
 	}
 
-	// Ensure cache directory exists
-	if err := os.MkdirAll(packageDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create cache dir: %w", err)
+	// Download and extract in a directory of this fetch's own, as the npm
+	// fetcher does.
+	staging, err := f.stagingDir()
+	if err != nil {
+		return "", err
 	}
+	defer os.RemoveAll(staging)
 
 	// Use pip download to get the package
 	packageSpec := dep.Name
@@ -649,18 +871,17 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 	// no wheel, which are now reported as not examined with the reason named
 	// rather than analyzed by running them.
 	cmd, err := netguard.Command("pip", "download", "--no-deps", "--only-binary", ":all:",
-		"-d", packageDir, packageSpec)
+		"-d", staging, packageSpec)
 	if err != nil {
-		return "", f.discardPartialFetch(packageDir, err, "pip download not run")
+		return "", fmt.Errorf("pip download not run: %w", err)
 	}
 	if err := cmd.Run(); err != nil {
-		return "", f.discardPartialFetch(packageDir, err,
-			"pip download failed (source distributions are not built, so a package that "+
-				"publishes no wheel is reported as not examined)")
+		return "", fmt.Errorf("pip download failed (source distributions are not built, so a "+
+			"package that publishes no wheel is reported as not examined): %w", err)
 	}
 
 	// Find and extract the wheel or tarball
-	entries, err := os.ReadDir(packageDir)
+	entries, err := os.ReadDir(staging)
 	if err != nil {
 		return "", err
 	}
@@ -669,25 +890,25 @@ func (f *Fetcher) fetchPyPIPackage(dep types.Dependency) (string, error) {
 		name := entry.Name()
 		if strings.HasSuffix(name, ".whl") {
 			// Wheels are just zip files
-			wheelPath := filepath.Join(packageDir, name)
-			extractDir := filepath.Join(packageDir, zipExtractedDir)
+			wheelPath := filepath.Join(staging, name)
+			extractDir := filepath.Join(staging, zipExtractedDir)
 			if err := os.MkdirAll(extractDir, 0755); err != nil {
 				return "", err
 			}
 			cmd := exec.Command("unzip", "-q", wheelPath, "-d", extractDir)
 			if err := cmd.Run(); err != nil {
-				return "", f.discardPartialFetch(packageDir, err, "failed to extract wheel")
+				return "", fmt.Errorf("failed to extract wheel: %w", err)
 			}
-			return extractedSourceRoot(packageDir, zipExtractedDir)
+			return f.install(staging, packageDir, zipExtractedDir)
 		} else if strings.HasSuffix(name, ".tar.gz") {
-			tarball := filepath.Join(packageDir, name)
-			cmd := exec.Command("tar", "-xzf", tarball, "-C", packageDir)
+			tarball := filepath.Join(staging, name)
+			cmd := exec.Command("tar", "-xzf", tarball, "-C", staging)
 			if err := cmd.Run(); err != nil {
-				return "", f.discardPartialFetch(packageDir, err, "failed to extract tarball")
+				return "", fmt.Errorf("failed to extract tarball: %w", err)
 			}
 			// Resolve the same way the cache-hit path does, so run 1 and run 2
 			// analyze the same tree.
-			return extractedSourceRoot(packageDir, zipExtractedDir)
+			return f.install(staging, packageDir, zipExtractedDir)
 		}
 	}
 
@@ -707,20 +928,27 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 		return "", err
 	}
 
-	// Create cache directory for this artifact
-	packageDir := filepath.Join(f.cacheDir, "maven", cacheSegment(dep.Name), cacheSegment(dep.Version))
+	// The cache entry for this artifact, once every directory above it has
+	// been checked.
+	packageDir, err := f.entryDir("maven", dep.Name, dep.Version)
+	if err != nil {
+		return "", err
+	}
 
 	// Check if already cached. An extraction that failed after the directory
 	// was created leaves it empty, which the old existence check accepted.
-	extractDir := filepath.Join(packageDir, zipExtractedDir)
 	if root, err := f.cachedSourceRoot(packageDir, zipExtractedDir); err != nil || root != "" {
 		return root, err
 	}
 
-	// Ensure cache directory exists
-	if err := os.MkdirAll(packageDir, 0755); err != nil {
-		return "", fmt.Errorf("failed to create cache dir: %w", err)
+	// Download and extract in a directory of this fetch's own, as the npm
+	// fetcher does.
+	staging, err := f.stagingDir()
+	if err != nil {
+		return "", err
 	}
+	defer os.RemoveAll(staging)
+	extractDir := filepath.Join(staging, zipExtractedDir)
 
 	// Build Maven Central URL for sources JAR
 	// https://repo1.maven.org/maven2/{groupId path}/{artifactId}/{version}/{artifactId}-{version}-sources.jar
@@ -734,25 +962,24 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	// loosened. The file the process writes should not depend on a second
 	// function staying strict.
 	jarBase := cacheSegment(artifactID) + "-" + cacheSegment(dep.Version)
-	jarPath := filepath.Join(packageDir, jarBase+"-sources.jar")
+	jarPath := filepath.Join(staging, jarBase+"-sources.jar")
 
 	// Use curl to download (available on most systems)
 	cmd, err := netguard.Command("curl", "-sL", "-o", jarPath, "-f", sourcesURL)
 	if err != nil {
-		return "", f.discardPartialFetch(packageDir, err, "Maven artifact not downloaded")
+		return "", fmt.Errorf("Maven artifact not downloaded: %w", err)
 	}
 	if err := cmd.Run(); err != nil {
 		// Try without -sources suffix (main jar) as fallback
 		mainURL := fmt.Sprintf("https://repo1.maven.org/maven2/%s/%s/%s/%s-%s.jar",
 			groupPath, artifactID, dep.Version, artifactID, dep.Version)
-		jarPath = filepath.Join(packageDir, jarBase+".jar")
+		jarPath = filepath.Join(staging, jarBase+".jar")
 		cmd, err = netguard.Command("curl", "-sL", "-o", jarPath, "-f", mainURL)
 		if err != nil {
-			return "", f.discardPartialFetch(packageDir, err, "Maven artifact not downloaded")
+			return "", fmt.Errorf("Maven artifact not downloaded: %w", err)
 		}
 		if err := cmd.Run(); err != nil {
-			return "", f.discardPartialFetch(packageDir, err,
-				"failed to download Maven artifact (tried sources and main JAR)")
+			return "", fmt.Errorf("failed to download Maven artifact (tried sources and main JAR): %w", err)
 		}
 	}
 
@@ -762,18 +989,23 @@ func (f *Fetcher) fetchMavenArtifact(dep types.Dependency) (string, error) {
 	}
 	extractCmd := exec.Command("unzip", "-q", jarPath, "-d", extractDir)
 	if err := extractCmd.Run(); err != nil {
-		return "", f.discardPartialFetch(packageDir, err, "failed to extract JAR")
+		return "", fmt.Errorf("failed to extract JAR: %w", err)
 	}
 
-	return extractedSourceRoot(packageDir, zipExtractedDir)
+	return f.install(staging, packageDir, zipExtractedDir)
 }
 
-// CacheDir returns the cache directory path.
+// CacheDir returns the cache directory path. For a cache of the run's own it
+// is empty until the first fetch creates one, and again after Close.
 func (f *Fetcher) CacheDir() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.cacheDir
 }
 
 // CleanCache removes all cached packages.
 func (f *Fetcher) CleanCache() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return os.RemoveAll(f.cacheDir)
 }

@@ -315,6 +315,13 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Create analyzer
 	a := analyzer.New(db, analyzerOptions(source != nil))
+	// Removes the source cache --deep made for this run, which it does only
+	// where there is no per-user cache directory to keep one in.
+	defer func() {
+		if err := a.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		}
+	}()
 
 	// Get formatter
 	formatter, err := newFormatter(format, db)
