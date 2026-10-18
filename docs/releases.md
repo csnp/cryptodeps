@@ -29,7 +29,18 @@ Correctness of what the tool reports, rather than new surfaces.
 - [x] Stable ordering across runs of the same scan, in all five formats
       (the scan timestamp and the CBOM serial number necessarily differ)
 
-## v1.4 (Next release)
+## v1.4 (Released)
+
+- [x] Requirements lines the scan does not read (includes, editable installs,
+      `name @ url` references, URLs and local paths) are listed with the
+      reason in the table, markdown and JSON reports
+- [x] Quantum-safe findings are counted in the summaries
+- [x] Algorithms that classical attacks break are listed apart from the ones
+      quantum computers will break
+- [x] `--version` and `-v` print the version
+- [x] A `requirements/*.txt` file can be passed as the argument
+
+## v1.5 (Next release)
 
 - [ ] Improved reachability for npm/Python projects
 - [ ] Transitive dependency crypto inheritance

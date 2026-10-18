@@ -7,17 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [1.4.0] - 2026-10-18
 
-- **requirements.txt lines that name a local path, such as
-  `./vendor/foo-1.0.tar.gz` or `../lib`, were dropped with no signal.** Such
-  a line was neither analyzed nor listed with the other lines the scan did not
-  read, so that block read as complete while the line was missing from it. A
-  line that begins with a dot or a path separator is now listed by line number
-  with its path under `unreadLines` in JSON, and in the block before the
-  results in the table and markdown reports, with the reason `local path
-  requirements are not read, so this dependency is not analyzed`. The
-  dependency it declares is still not analyzed.
+### Fixed
 
 - **A `GITHUB_TOKEN` that GitHub refused turned the database download into an
   unexplained `HTTP 401`.** The release lookup behind `cryptodeps update` and
@@ -41,59 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RC2 and RC4 go under the same heading. Their risk, severity and the exit
   code are unchanged.
 
-- **SAFE findings were counted in no summary.** The JSON `summary` and
-  `totalSummary` now carry `quantumSafe` (and `quantumUnknown` when there are
-  unknown-risk findings), the table's SUMMARY and TOTAL lines end with a safe
-  count, and the markdown summary and overview have a `Quantum Safe` row. For
-  a requirements.txt naming `cryptography==42.0.0` and `PyJWT==2.8.0`, the
-  table reads `5 vulnerable | 2 partial | 1 safe`, which sums to the 8 findings
-  listed.
-
 - **`--deep --offline` dropped `--deep` silently and then advised `--deep`.**
   A line on stderr now says that `--deep` is skipped under `--offline`, and
   the table and markdown reports say why source analysis did not run in place
-  of `Run with --deep`. The JSON summary carries `deepSkippedOffline`. The
-  `--deep` help says it downloads each package and needs network access, and
-  `go` or `npm` on PATH for Go modules and npm packages.
-
-- **requirements.txt `-r` includes and `name @ url` lines were dropped with no
-  signal.** Such lines, and `-e` and plain URL lines, are now listed by line
-  number with a reason, before the results in the table and markdown reports,
-  and under `unreadLines` in JSON. They are listed the same way in the other
-  requirements files the scan reads, the `requirements-*.txt` family (such as
-  `requirements-dev.txt` or `requirements_test.txt`) and `requirements/*.txt`.
-  The included file or the package name is shown; a URL from the manifest is
-  not, so a `-r` line that names a URL is listed by its line number and kind
-  only. The dependencies they declare are still not analyzed.
-
-- **A requirements.txt `-r` line continued with a backslash was listed as an
-  include named `\`.** pip reads a line that ends in a backslash together with
-  the next line. For a requirements.txt holding `cryptography==42.0.0`, `-r \`
-  and `https://example.invalid/continued.txt` on three lines, which pip reads
-  as one `-r` URL include, the table listed `line 2: \: included requirements
-  files are not followed, so the dependencies it declares are not analyzed`
-  and `line 3: URL requirements are not read, so this dependency is not
-  analyzed`, and the JSON `unreadLines` entry for line 2 had `"name": "\\"`.
-  The unread lines are now read with a continued line joined to the next one
-  as pip joins it, and numbered by its first line, so that file is listed as
-  `line 2: included requirements URLs are not followed, so the dependencies it
-  declares are not analyzed`, with no name. A comment line that ends in a
-  backslash is not joined to the next line. The dependencies, findings and
-  exit code for that file are unchanged.
-
-- **A `requirements/*.txt` file passed as the argument was refused.** A scan
-  of a directory reads `requirements/dev.txt` as a requirements file, but
-  `cryptodeps analyze requirements/dev.txt --offline` exited 2 with `Error:
-  analysis failed: unsupported manifest file: dev.txt`, with and without
-  `--no-workspaces`, because the parser for a file argument was chosen by the
-  file's name alone. It is now chosen by the file's path, as in a scan of a
-  directory. For a `requirements/dev.txt` holding `-r requirements.txt` and
-  `paramiko>=3.0`, the scan of the file now lists `paramiko` and the unread
-  `-r requirements.txt` line, its JSON report differs from the report for a
-  scan of the directory only in timestamps and paths, and both exit 1. Other
-  files keep their message: `docs/notes.txt` and `x/Cargo.toml` are refused
-  with `unsupported manifest file: notes.txt` and `unsupported manifest file:
-  Cargo.toml`, as before.
+  of `Run with --deep`. The `--deep` help says it downloads each package and
+  needs network access, and `go` or `npm` on PATH for Go modules and npm
+  packages.
 
 - **A requirements.txt pin continued with a backslash kept the backslash in
   its version.** pip reads a line that ends in a backslash together with the
@@ -111,8 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or a `name @ url` line continued onto the next line is now skipped as a
   whole: `-r \` followed by `extra.txt` was also read as a dependency named
   `extra` with the version `.txt`, and `paramiko @ \` followed by a URL as
-  `paramiko` with the version `@ \`. Each is still listed, by its first line,
-  with the lines the scan did not read.
+  `paramiko` with the version `@ \`. Each is listed, by its first line, with
+  the lines the scan did not read.
 
 - **A requirements.txt line longer than 64 KiB made the scan fail.** The
   requirements.txt reader used `bufio.Scanner` with its default token limit
@@ -147,15 +92,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (within version specifier), semicolon (after version specifier) or end`,
   was reported by `analyze --offline --format json` as
   `"version": "42.0.0 xxx"` and printed in the table as
-  `cryptography@42.0.0 xxx`. With 70,000 characters after the version, each
-  table row naming the dependency carried all of them. A requirement now ends
-  where its version specifier ends, as pip reads it: clauses of an operator
-  and a version, joined by commas, with whitespace allowed around each part
-  and the whole optionally in parentheses. That line now reports
-  cryptography `42.0.0`, the JSON output for it differs only in the version
-  and timestamps, and the exit code is 1 before and after. Lines with
-  nothing after their specifier, such as `cryptography>=41.0, <43`,
-  `cryptography (>= 41.0, < 43)` and `zope.interface >= 5.0`, are read as
+  `cryptography@42.0.0 xxx`. A requirement now ends where its version
+  specifier ends, as pip reads it: clauses of an operator and a version,
+  joined by commas, with whitespace allowed around each part and the whole
+  optionally in parentheses. That line now reports cryptography `42.0.0`, the
+  JSON output for it differs only in the version and timestamps, and the exit
+  code is 1 before and after. Lines with nothing after their specifier, such
+  as `cryptography>=41.0, <43` and `cryptography (>= 41.0, < 43)`, are read as
   before.
 
 - **A scan of a GitHub repository reported reachability for source code it
@@ -194,9 +137,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the tag to pin.
 
 - **Findings from the 1.3.1 release walkthrough.**
-  - `cryptodeps --version` and `cryptodeps -v` print what `cryptodeps version`
-    prints, where both were rejected as unknown flags with exit code 2.
-    `update -v` is still `--verbose`.
   - `status`, `version` and `update` reject an argument
     (`Error: unknown command "extra" for "cryptodeps status"`, exit code 2)
     instead of ignoring it, and `help bogus` exits 2 with
@@ -216,12 +156,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `https://github.com/csnp/cryptodeps/tree/main/examples/vulnerable-demo` and
     `FiloSottile/age`, which found 3 and 9 dependencies on 2026-10-17; the
     README example is changed the same way.
-  - Counts of one are singular: `found 1 dependency`,
+  - These counts of one are singular: `found 1 dependency`,
     `1 package not in database`, and in markdown
-    `Packages that were not examined: 1 of 2 (50%).` The table marks the
-    not-in-database notice `[?]` rather than `[!]`, the mark of a
-    quantum-vulnerable finding, and no longer follows it with the hint that
-    repeats it. JSON still carries the hint.
+    `Packages that were not examined: 1 of 2 (50%).`, where 1.3.1 printed
+    `found 1 dependencies`, `1 packages not in database` and
+    `1 packages (50%) were not examined.` Other counts of one are still
+    plural, such as `1 deps` in the table's SUMMARY line and
+    `All 1 dependencies are absent from the crypto database` in the table and
+    markdown reports. The table marks the not-in-database notice `[?]` rather
+    than `[!]`, the mark of a quantum-vulnerable finding, and no longer
+    follows it with the hint that repeats it. JSON still carries the hint.
   - The table heading `CONFIRMED - Actually used by your code` says
     `(requires action)` only when a row under it is quantum-vulnerable or
     partial-risk. It said so above a single `[OK] bcrypt SAFE` row.
@@ -235,8 +179,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     names the tool version, and a report with no findings has one.
   - SARIF `informationUri`, the markdown footer and the release lookup of
     `update` name `https://github.com/csnp/cryptodeps`, the repository's name
-    since it was renamed from `qramm-cryptodeps`. The Go module path is
-    unchanged.
+    since it was renamed from `qramm-cryptodeps`, and so does the exported
+    constant `version.InformationURI`. The Go module path is unchanged.
   - The CBOM example in `docs/output-formats.md` shows the RS256 component the
     tool writes, not an `RSA-2048` component with a `parameterSetIdentifier`
     that no CBOM carries. The release smoke test names `analysis.analysis.date`
@@ -280,6 +224,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v1.64.8, set as `GOLANGCI_LINT_VERSION` in the Makefile, and both pages tell
   contributors to run `make lint`. CONTRIBUTING.md also gives the `go run`
   command for the same release without make.
+
+### Added
+
+- **Lines of a requirements file that the scan does not read are listed.** An
+  `-r` include, an `-e` editable install, a `name @ url` reference, a URL and
+  a local path such as `./vendor/foo-1.0.tar.gz`, `../lib` or
+  `/opt/lib/pkg-1.0.whl` declare dependencies the scan does not analyze, and
+  1.3.1 dropped such lines with no signal. Each is now listed by line number
+  with a reason, before the results in the table and markdown reports, and
+  under `unreadLines` in JSON. A local path on the second line, for example,
+  is listed as `line 2: ./vendor/foo-1.0.tar.gz: local path requirements are
+  not read, so this dependency is not analyzed`. They are listed the same way
+  in the other requirements files the scan reads, the `requirements-*.txt`
+  family (such as `requirements-dev.txt` or `requirements_test.txt`) and
+  `requirements/*.txt`. The included file, the package name or the local path
+  is shown; a URL from the manifest is not, so a `-r` line that names a URL is
+  listed by its line number and kind only. A line that ends in a backslash is
+  read together with the next one, as pip reads it, and listed by its first
+  line: for a requirements.txt holding `cryptography==42.0.0`, `-r \` and
+  `https://example.invalid/continued.txt` on three lines, which pip reads as
+  one `-r` URL include, the scan lists `line 2: included requirements URLs are
+  not followed, so the dependencies it declares are not analyzed`. A comment
+  line that ends in a backslash is not joined to the next line. The
+  dependencies these lines declare are still not analyzed.
+
+- **Quantum-safe findings are counted in the summaries.** 1.3.1 left SAFE
+  findings out of its summaries. The JSON `summary` and `totalSummary` now
+  carry `quantumSafe`, and `quantumUnknown` when there are unknown-risk
+  findings. The table's SUMMARY and TOTAL lines carry a safe count, and the
+  markdown overview, and the summary of each project in a report of several,
+  have a `Quantum Safe` row. For a requirements.txt naming
+  `cryptography==42.0.0` and `PyJWT==2.8.0`, the table reads
+  `5 vulnerable | 2 partial | 1 safe`, which sums to the 8 findings listed.
+
+- **`deepSkippedOffline` in the JSON summaries.** It is `true` when `--deep`
+  was skipped under `--offline`, the case described under Fixed, and is left
+  out otherwise.
+
+- **`cryptodeps --version` and `cryptodeps -v`** print what
+  `cryptodeps version` prints. 1.3.1 rejected both as unknown flags with exit
+  code 2. `update -v` is still `--verbose`.
+
+- **A `requirements/*.txt` file can be passed as the argument.** A scan of a
+  directory reads `requirements/dev.txt` as a requirements file, but in 1.3.1
+  `cryptodeps analyze requirements/dev.txt --offline` exited 2 with `Error:
+  analysis failed: unsupported manifest file: dev.txt`, with and without
+  `--no-workspaces`, because the parser for a file argument was chosen by the
+  file's name alone. It is now chosen by the file's path, as in a scan of a
+  directory. For a `requirements/dev.txt` holding `-r requirements.txt` and
+  `paramiko>=3.0`, the scan of the file lists `paramiko` and the unread
+  `-r requirements.txt` line, its JSON report differs from the report for a
+  scan of the directory only in timestamps and paths, and both exit 1. Other
+  files keep their message: `docs/notes.txt` and `x/Cargo.toml` are refused
+  with `unsupported manifest file: notes.txt` and `unsupported manifest file:
+  Cargo.toml`, as before.
+
+- **Go API.** In the importable packages under `pkg/`:
+  `crypto.IsClassicallyBroken`, `output.FormatNames`, the `types.UnreadLine`
+  type and the `types.ScanResult.UnreadLines` field, and the
+  `types.ScanSummary` fields `QuantumSafe`, `QuantumUnknown`,
+  `DeepSkippedOffline` and `ReachabilitySkipped`.
+
+### Known issues
+
+Each of these is present in 1.3.1 as well, and each is tracked in an open
+issue.
+
+- **Reachability can attribute a call to the wrong dependency.** In
+  `examples/vulnerable-demo`, whose `main.go` calls
+  `golang.org/x/crypto/ed25519` and circl's `mlkem768`, the table lists
+  circl's Ed25519 finding under CONFIRMED with
+  `Called from: vulnerable-demo.main`, and circl's ML-KEM finding under
+  AVAILABLE, as not called. Target: 1.4.1 (#66).
+
+- **A binary installed with `go install` reports its version as `dev`.** The
+  version is set at build time through `-ldflags`, which the release archives
+  are built with and `go install` does not pass. The README's install
+  command, `go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@latest`,
+  builds a binary that prints `cryptodeps dev`, and its JSON `tool.version`,
+  SARIF driver version and markdown footer read `dev`. The GitHub Action
+  installs the tool with `go install` too. Target: 1.4.1 (#66).
+
+- **A requirements.txt that starts with a UTF-8 byte order mark loses its
+  first requirement.** For such a file holding `cryptography==42.0.0` and
+  `PyJWT==2.8.0`, the scan reports `found 1 dependency` and analyzes PyJWT
+  only, with no unread-line entry and no warning. It is the same kind of
+  silent drop that the unread-lines listing under Added ends for other lines.
+  Workaround: save the file without the byte order mark. Target: 1.4.1
+  (#66).
+
+- **The User-Agent sent to GitHub is the literal `CryptoDeps/1.0`, whatever
+  the version.** The release lookup behind the database download, and the
+  repository lookup and manifest file requests of a GitHub URL scan, send it.
+  Target: 1.4.1 (#66).
+
+- **A project whose only dependency is a post-quantum library can fail the
+  default gate and be told to adopt the library it already uses.** The
+  database entries for `github.com/cloudflare/circl` and `@noble/post-quantum`
+  are inferred, and list classical algorithms beside the post-quantum ones. A
+  go.mod that requires only `github.com/cloudflare/circl v1.3.7` exits 1
+  under the default `--fail-on vulnerable` on 3 inferred quantum-vulnerable
+  findings, and the remediation lists `github.com/cloudflare/circl/kem/mlkem`
+  among the libraries to use. Target: 1.5.0 (#35).
 
 ## [1.3.1] - 2026-10-17
 
@@ -1495,7 +1542,8 @@ This entry previously also said the release "Maps findings to CNSA 2.0
 compliance requirements". No release has implemented a CNSA 2.0 mapping, so
 that line was removed.
 
-[Unreleased]: https://github.com/csnp/cryptodeps/compare/v1.3.1...HEAD
+[Unreleased]: https://github.com/csnp/cryptodeps/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/csnp/cryptodeps/compare/v1.3.1...v1.4.0
 [1.3.1]: https://github.com/csnp/cryptodeps/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/csnp/cryptodeps/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/csnp/cryptodeps/compare/v1.2.1...v1.2.2
