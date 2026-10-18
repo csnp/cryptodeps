@@ -263,6 +263,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   linked to a goreportcard.com report. The goreportcard.com badge for the
   module read `go report: retired` on 2026-10-17. The badge is removed.
 
+- **The terms in LICENSE differed from the Apache License 2.0 by one word.**
+  The definition of Contribution read
+  `submitted to the Licensor for inclusion in the Work`, where the license
+  reads `submitted to Licensor`. The word is removed, and the terms in
+  LICENSE, through `END OF TERMS AND CONDITIONS`, match the
+  [license text](https://www.apache.org/licenses/LICENSE-2.0.txt) word for
+  word.
+
 ## [1.3.1] - 2026-10-17
 
 ### Fixed
