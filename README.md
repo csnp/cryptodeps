@@ -24,7 +24,7 @@ cryptodeps analyze .
 ```text
 
 Scanning /home/dev/myproject...
-Database: downloaded 1.1.0 (2026-10-12), 860 packages
+Database: downloaded 1.1.0 (2026-10-17), 861 packages
 
 [*] Scanning ./go.mod... found 2 dependencies
 
