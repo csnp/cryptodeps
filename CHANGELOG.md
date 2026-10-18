@@ -271,6 +271,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [license text](https://www.apache.org/licenses/LICENSE-2.0.txt) word for
   word.
 
+- **`make lint` and the lint command in CONTRIBUTING.md and
+  docs/development.md ran the golangci-lint on PATH, and golangci-lint 2.x
+  does not load the committed `.golangci.yml`.** That file is in the v1
+  configuration format: golangci-lint 2.12.2 stops on it with `can't load
+  config: unsupported version of the configuration` and exit code 3, while the
+  CI lint job installs v1.64.8. `make lint` now uses `go run` to build and run
+  v1.64.8, set as `GOLANGCI_LINT_VERSION` in the Makefile, and both pages tell
+  contributors to run `make lint`. CONTRIBUTING.md also gives the `go run`
+  command for the same release without make.
+
 ## [1.3.1] - 2026-10-17
 
 ### Fixed

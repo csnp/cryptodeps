@@ -23,7 +23,7 @@ go test -race ./...
 go build -o cryptodeps ./cmd/cryptodeps
 
 # Run linter
-golangci-lint run
+make lint
 ```
 
 ## Adding Package Data

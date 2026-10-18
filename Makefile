@@ -9,6 +9,10 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
 DATE    ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
 
+# golangci-lint release that make lint builds and runs. It is the release the
+# CI lint job installs, and .golangci.yml is in its v1 configuration format.
+GOLANGCI_LINT_VERSION := v1.64.8
+
 # Default target
 all: build
 
@@ -35,7 +39,7 @@ coverage: test
 
 ## lint: Run linter
 lint:
-	golangci-lint run ./...
+	go run github.com/golangci/golangci-lint/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) run ./...
 
 ## fmt: Format code
 fmt:
