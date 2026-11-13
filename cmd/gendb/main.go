@@ -8,20 +8,30 @@
 //
 //	go run cmd/gendb/main.go > data/crypto-database.json           # curated only
 //	go run cmd/gendb/main.go --fetch > data/crypto-database.json   # curated + registry
+//
+// Every record names this generator and its version. Run in a git checkout of
+// this repository, the version is what git describe reports for the checkout;
+// elsewhere, pass it with --tool-version. When neither gives a version, the
+// generator exits with an error and writes no database.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/csnp/qramm-cryptodeps/internal/database"
+	"github.com/csnp/qramm-cryptodeps/internal/netguard"
 	"github.com/csnp/qramm-cryptodeps/internal/registry"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	"github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // DatabaseExport is the format for the exported database.
@@ -42,12 +52,25 @@ type DatabaseStats struct {
 }
 
 var (
-	fetchFlag   = flag.Bool("fetch", false, "Fetch additional packages from registries")
-	timeoutFlag = flag.Duration("timeout", 2*time.Minute, "Timeout for registry fetches")
+	fetchFlag       = flag.Bool("fetch", false, "Fetch additional packages from registries")
+	timeoutFlag     = flag.Duration("timeout", 2*time.Minute, "Timeout for registry fetches")
+	toolVersionFlag = flag.String("tool-version", "", "Version every record names as its generator (default: git describe of the checkout)")
 )
 
 func main() {
 	flag.Parse()
+
+	// Settled before any record is made, and set as this process's version so
+	// that the records inferred from the registries, which take the running
+	// version, name it too. The Makefile and the update workflow run this with
+	// `go run` and no -X linker flag, which leaves the running version at
+	// "dev".
+	toolVersion, err := generatorVersion(*toolVersionFlag)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	version.Set(toolVersion, "", "")
 
 	var packages []types.PackageAnalysis
 	var stats DatabaseStats
@@ -59,6 +82,7 @@ func main() {
 		// Curated only
 		packages, stats = curatedOnly()
 	}
+	nameGenerator(packages, toolVersion)
 
 	// Sort by ecosystem then package name for consistent output
 	sort.Slice(packages, func(i, j int) bool {
@@ -169,4 +193,87 @@ func fetchAndMerge() ([]types.PackageAnalysis, DatabaseStats) {
 	fmt.Fprintf(os.Stderr, "Fetched %d new packages from registries\n", result.Stats.NewPackages)
 
 	return result.Packages, stats
+}
+
+// nameGenerator records on every package that this generator, at toolVersion,
+// wrote it into the database. The curated records set no version of their own,
+// and were written out with "toolVersion": "" beside "tool": "cryptodeps".
+func nameGenerator(packages []types.PackageAnalysis, toolVersion string) {
+	for i := range packages {
+		packages[i].Analysis.Tool = version.Name
+		packages[i].Analysis.ToolVersion = toolVersion
+	}
+}
+
+// devVersion is what pkg/version reports when no version was set. It names no
+// release and no commit, so no record is written with it.
+const devVersion = "dev"
+
+// generatorVersion returns the version every record names as its generator:
+// given, used as given when it is not empty, and otherwise what git describe
+// reports for the checkout in the current directory.
+func generatorVersion(given string) (string, error) {
+	if v := strings.TrimSpace(given); v != "" {
+		if v == devVersion {
+			return "", fmt.Errorf("--tool-version %q names no release and no commit; pass the version of the source being run, or leave the flag out to read it from git", v)
+		}
+		return v, nil
+	}
+	v, err := describeCheckout()
+	if err != nil {
+		return "", fmt.Errorf("cannot tell which version of the generator is running, so no record could name it (%v); run it in a git checkout of cryptodeps, or pass --tool-version", err)
+	}
+	return v, nil
+}
+
+// describeCheckout returns git describe of the checkout, matched against the
+// release tags only and without their leading "v": "1.4.0" on the commit
+// tagged v1.4.0, "1.4.0-3-g" and the abbreviated commit three commits after
+// it, or the abbreviated commit alone when no release tag is reachable. The
+// database release tags (db-v...) name no version of this code, and an
+// unrestricted git describe picks them first.
+//
+// "-dirty" is added when a Go file, go.mod or go.sum differs from that commit,
+// tracked or not, since the commit named did not produce such a database. Other
+// files are left out of the comparison: the Makefile and the update workflow
+// write the database into a tracked file through a shell redirect, which
+// empties it before this runs, so git describe --dirty would mark every run.
+func describeCheckout() (string, error) {
+	described, err := gitOutput("describe", "--tags", "--match", "v[0-9]*", "--always")
+	if err != nil {
+		return "", err
+	}
+	v := strings.TrimPrefix(described, "v")
+
+	changed, err := gitOutput("status", "--porcelain", "--untracked-files=all", "--",
+		":(top)*.go", ":(top)go.mod", ":(top)go.sum")
+	if err != nil {
+		return "", err
+	}
+	if changed != "" {
+		v += "-dirty"
+	}
+	return v, nil
+}
+
+// gitOutput runs git in the current directory and returns what it printed,
+// trimmed, or an error carrying what it wrote on stderr.
+//
+// git describe and git status read the local repository. They are started
+// through netguard because every program this module runs, other than tar and
+// unzip, is started there; TestNetworkUseGoesThroughNetguard holds that.
+func gitOutput(args ...string) (string, error) {
+	cmd, err := netguard.Command("git", args...)
+	if err != nil {
+		return "", err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return "", fmt.Errorf("git %s: %s", args[0], strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return "", fmt.Errorf("git %s: %w", args[0], err)
+	}
+	return strings.TrimSpace(string(out)), nil
 }

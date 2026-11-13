@@ -43,6 +43,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first; `cryptodeps status` then shows `Local cache: not downloaded`. The
   README and `docs/commands.md` now say so.
 
+- **Each dependency's `analysis.analysis` block in JSON output named a
+  different version from the report's own.** A record read from the
+  downloaded database read `"tool": "cryptodeps"` beside `"toolVersion": "dev"`
+  when it came from registry inference, or beside `"toolVersion": ""` when it
+  was curated, and a record read from the built-in database or from `--deep`
+  source analysis carried an empty tool and version too, while the top of the
+  same report named the release actually running it. The values came from the
+  database: `cmd/gendb`, the generator the update workflow runs, builds with
+  `go run` and no injected version, so every record it made by inference wrote
+  `"dev"` and every curated record an empty string. Each dependency's block now
+  names the scanner that wrote the report, the same `tool.name` and
+  `tool.version` as the top of the document, whichever database the record
+  came from or whether it was read from source; no other field of the report
+  changes. The generator now writes its own version into every record it
+  makes: what `git describe` reports for the checkout against the release
+  tags, without the leading `v`, with `-dirty` added when a Go source file,
+  `go.mod` or `go.sum` differs from that commit; or the value given with the
+  new `--tool-version` flag. When it can do neither, or is given `dev`, it
+  exits with an error and writes no database.
+
 ## [1.4.0] - 2026-10-18
 
 ### Fixed
