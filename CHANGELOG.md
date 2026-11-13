@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `go build` in a clone records no downloaded module and still reports
   `dev`. The GitHub Action installs the tool with `go install` too.
 
+- **The Action's `exit-code` output was described without the `fail-on`
+  input.** `action.yml` described it as `Exit code (0=clean, 1=vulnerable,
+  2=error, 3=partial)`. The Action passes `fail-on` to `cryptodeps analyze`,
+  and codes 0 and 3 depend on it: with `--offline --fail-on none`,
+  `examples/vulnerable-demo` exits 0 although it has quantum-vulnerable
+  findings, and with `--offline --fail-on any` a project whose only
+  dependency is `bcrypt` 5.1.1 exits 3 although its one finding is
+  quantum-safe. The description now states each code relative to `fail-on`,
+  as the `analyze` help does, and links to the exit-code table on the
+  Commands page.
+
 ## [1.4.0] - 2026-10-18
 
 ### Fixed
