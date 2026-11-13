@@ -361,8 +361,12 @@ func ToPackageAnalysis(pkg PackageInfo, algorithms []InferredAlgorithm) types.Pa
 		Ecosystem: pkg.Ecosystem,
 		Analysis: types.AnalysisMetadata{
 			Date: pkg.UpdatedAt,
-			// This record is produced by the running binary, so it is the one
-			// place where the scanner's own version is the honest provenance.
+			// This record is produced by cmd/gendb, the database generator,
+			// which sets its own version at startup before it builds a record.
+			// nameGenerator (cmd/gendb/main.go) overwrites this ToolVersion
+			// again for every record, curated and inferred alike, so a
+			// mismatch here would be harmless; it is still set correctly, as
+			// honest provenance for any other caller of ToPackageAnalysis.
 			Method:      "inferred",
 			Tool:        version.Name,
 			ToolVersion: version.Version(),

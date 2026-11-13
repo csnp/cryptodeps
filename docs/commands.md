@@ -1,6 +1,6 @@
 # Commands
 
-The `analyze`, `update`, `status` and `version` commands, the `analyze` flags, the report filters, how an argument is read as a local path or a GitHub repository, the exit codes and common workflows. Start with the [README](../README.md) if you are new to CryptoDeps.
+The `analyze`, `update`, `status` and `version` commands, the `analyze` flags, the report filters, how an argument is read as a local path or a GitHub repository, the database a scan uses, the exit codes and common workflows. Start with the [README](../README.md) if you are new to CryptoDeps.
 
 ## CLI Reference
 
@@ -93,6 +93,25 @@ with or without `--offline`. An argument that starts or ends with a space, or
 holds a tab or another character that does not print, is shown in double
 quotes, for example `Error: No file or directory named " ".`
 
+## The database a scan uses
+
+A scan reads the database built into the binary and, when the file exists,
+the downloaded copy at `~/.cryptodeps/crypto-database.json`. Where both have a
+record for a package, the downloaded record is used. `cryptodeps update`
+downloads the copy, and so does `analyze` without `--offline` when the copy is
+missing or more than 7 days old.
+
+`--offline` stops the download, but a copy downloaded earlier is still read:
+the scan uses the database already on the machine. To scan with only the
+built-in database, move or delete `~/.cryptodeps/crypto-database.json` first.
+`cryptodeps status` then shows `Local cache: not downloaded`, and the table
+report's database line starts `Database: built-in`. The next scan without
+`--offline` downloads the copy again.
+
+The table report names the database it used on that line, as `built-in`, or as
+`downloaded` with the copy's version and date, followed by the number of
+packages. The JSON report names it in `database.source`.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -135,7 +154,7 @@ cryptodeps analyze . --reachability=false
 # Analyze a specific manifest file
 cryptodeps analyze ./go.mod
 
-# Offline mode (cached database, no network connections)
+# No network connections: scan with the database already on this machine
 cryptodeps analyze . --offline
 
 # Update the crypto knowledge database

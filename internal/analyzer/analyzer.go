@@ -17,6 +17,7 @@ import (
 	"github.com/csnp/qramm-cryptodeps/internal/manifest"
 	"github.com/csnp/qramm-cryptodeps/pkg/output"
 	"github.com/csnp/qramm-cryptodeps/pkg/types"
+	"github.com/csnp/qramm-cryptodeps/pkg/version"
 )
 
 // Analyzer analyzes dependencies for cryptographic usage.
@@ -453,6 +454,7 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency, declaredIn string) ty
 				analysis.Crypto[i].Location = types.Location{File: declaredIn, Line: dep.Line}
 			}
 		}
+		nameScanner(analysis)
 		result.Analysis = analysis
 		result.InDatabase = true
 		return result
@@ -513,9 +515,25 @@ func (a *Analyzer) analyzeDependency(dep types.Dependency, declaredIn string) ty
 		// Labelled here, as a database finding is labelled in Lookup, so that a
 		// finding read from the package says so in every format.
 		analysis.LabelFindings()
+		nameScanner(analysis)
 		result.Analysis = analysis
 		result.DeepAnalyzed = true
 	}
 
 	return result
+}
+
+// nameScanner sets a dependency's analysis to name this scanner and its
+// version, the tool and version at the top of every report format.
+//
+// A record otherwise carried what wrote it, and the JSON report printed that
+// beside its own version: "dev" on an inferred record of the downloaded
+// database, whose generator ran without a version, an empty version on a
+// curated record of that database and on a built-in record, and an empty tool
+// and version on a package read by source analysis. Lookup returns a copy of
+// the database record and source analysis builds a new one, so the database
+// keeps what it said.
+func nameScanner(analysis *types.PackageAnalysis) {
+	analysis.Analysis.Tool = version.Name
+	analysis.Analysis.ToolVersion = version.Version()
 }
