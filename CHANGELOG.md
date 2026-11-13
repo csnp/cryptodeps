@@ -47,13 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   different version from the report's own.** A record read from the
   downloaded database read `"tool": "cryptodeps"` beside `"toolVersion": "dev"`
   when it came from registry inference, or beside `"toolVersion": ""` when it
-  was curated, and a record read from the built-in database or from `--deep`
-  source analysis carried an empty tool and version too, while the top of the
-  same report named the release actually running it. The values came from the
-  database: `cmd/gendb`, the generator the update workflow runs, builds with
-  `go run` and no injected version, so every record it made by inference wrote
-  `"dev"` and every curated record an empty string. Each dependency's block now
-  names the scanner that wrote the report, the same `tool.name` and
+  was curated. A record read from the built-in database read
+  `"tool": "cryptodeps"` beside `"toolVersion": ""` as well, and one read by
+  `--deep` source analysis carried an empty tool and an empty version, while the
+  top of the same report named the release actually running it. The values came
+  from the database: `cmd/gendb`, the generator the update workflow runs, builds
+  with `go run` and no injected version, so every record it made by inference
+  wrote `"dev"` and every curated record an empty string. Each dependency's
+  block now names the scanner that wrote the report, the same `tool.name` and
   `tool.version` as the top of the document, whichever database the record
   came from or whether it was read from source; no other field of the report
   changes. The generator now writes its own version into every record it
