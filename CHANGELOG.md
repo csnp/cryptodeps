@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A binary installed with `go install` reported its version as `dev`.**
+  For the binary that
+  `go install github.com/csnp/qramm-cryptodeps/cmd/cryptodeps@v1.3.1` builds,
+  `cryptodeps version` prints `cryptodeps dev`, and JSON `tool.version`, the
+  SARIF driver version and the CBOM tool version read `dev`. When no version
+  is set through `-ldflags` at build time, the version is now taken from the
+  build information the go command records for a module it downloaded, as
+  `go install` does for a module version and `go tool` does for a module
+  version that `go.mod` requires. A tag is reported without its leading `v`,
+  and a commit as the pseudo-version the go command records for it. A
+  `go build` in a clone records no downloaded module and still reports
+  `dev`. The GitHub Action installs the tool with `go install` too.
+
 ## [1.4.0] - 2026-10-18
 
 ### Fixed
