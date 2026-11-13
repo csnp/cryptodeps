@@ -33,6 +33,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the `analyze` help does, and links to the exit-code table on the
   Commands page.
 
+- **The 1.3.0 release notes gave a workaround for the database download that
+  does not hold.** Under Known limitations they said "Pass `--offline` to use
+  only the database built into the binary". `--offline` stops the download,
+  but a scan with it still reads `~/.cryptodeps/crypto-database.json` when
+  `cryptodeps update` or an earlier scan without `--offline` downloaded it,
+  and where both databases have a record for a package, the downloaded record
+  is used. To scan with only the built-in database, move or delete that file
+  first; `cryptodeps status` then shows `Local cache: not downloaded`. The
+  README and `docs/commands.md` now say so.
+
 ## [1.4.0] - 2026-10-18
 
 ### Fixed
