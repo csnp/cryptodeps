@@ -176,6 +176,20 @@ cryptodeps analyze /path/to/monorepo
 cryptodeps analyze /path/to/monorepo --no-workspaces
 ```
 
+### Scan without network access
+
+`--offline` makes no network connections, so it does not download the database. The scan uses the database already on this machine: the one built into the binary, and `~/.cryptodeps/crypto-database.json` if `cryptodeps update` or an earlier scan without `--offline` downloaded it. Where both have a record for a package, the downloaded record is used.
+
+To scan with only the built-in database, move or delete `~/.cryptodeps/crypto-database.json` first:
+
+```bash
+mv ~/.cryptodeps/crypto-database.json ~/.cryptodeps/crypto-database.json.bak
+cryptodeps status                # shows: Local cache: not downloaded
+cryptodeps analyze . --offline   # the report shows: Database: built-in
+```
+
+The next scan without `--offline` downloads the file again. The `Database:` line at the top of the table report, and `database.source` in the JSON report, name the database a scan used. More in [docs/commands.md](docs/commands.md#the-database-a-scan-uses).
+
 ### Run it in GitHub Actions
 
 ```yaml
@@ -231,7 +245,7 @@ The last step exits 1 when it finds quantum-vulnerable cryptography, which fails
 
 ## Documentation
 
-- [Commands](docs/commands.md): the `analyze`, `update`, `status` and `version` commands, the `analyze` flags, report filters, exit codes and common workflows.
+- [Commands](docs/commands.md): the `analyze`, `update`, `status` and `version` commands, the `analyze` flags, report filters, the database a scan uses, exit codes and common workflows.
 - [Output formats](docs/output-formats.md): table, JSON, CBOM, SARIF and Markdown, with SARIF and CBOM examples.
 - [CI/CD recipes](docs/ci.md): GitHub Actions and GitLab CI, and the exit codes a pipeline sees.
 - [How it works](docs/how-it-works.md): how the code is organized, from the command-line entry point to the crypto database.

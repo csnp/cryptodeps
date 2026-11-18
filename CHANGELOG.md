@@ -22,6 +22,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `go build` in a clone records no downloaded module and still reports
   `dev`. The GitHub Action installs the tool with `go install` too.
 
+- **The Action's `exit-code` output was described without the `fail-on`
+  input.** `action.yml` described it as `Exit code (0=clean, 1=vulnerable,
+  2=error, 3=partial)`. The Action passes `fail-on` to `cryptodeps analyze`,
+  and codes 0 and 3 depend on it: with `--offline --fail-on none`,
+  `examples/vulnerable-demo` exits 0 although it has quantum-vulnerable
+  findings, and with `--offline --fail-on any` a project whose only
+  dependency is `bcrypt` 5.1.1 exits 3 although its one finding is
+  quantum-safe. The description now states each code relative to `fail-on`,
+  as the `analyze` help does, and links to the exit-code table on the
+  Commands page.
+
+- **The 1.3.0 release notes gave a workaround for the database download that
+  does not hold.** Under Known limitations they said "Pass `--offline` to use
+  only the database built into the binary". `--offline` stops the download,
+  but a scan with it still reads `~/.cryptodeps/crypto-database.json` when
+  `cryptodeps update` or an earlier scan without `--offline` downloaded it,
+  and where both databases have a record for a package, the downloaded record
+  is used. To scan with only the built-in database, move or delete that file
+  first; `cryptodeps status` then shows `Local cache: not downloaded`. The
+  README and `docs/commands.md` now say so.
+
+- **Each dependency's `analysis.analysis` block in JSON output named a
+  different version from the report's own.** A record read from the
+  downloaded database read `"tool": "cryptodeps"` beside `"toolVersion": "dev"`
+  when it came from registry inference, or beside `"toolVersion": ""` when it
+  was curated. A record read from the built-in database read
+  `"tool": "cryptodeps"` beside `"toolVersion": ""` as well, and one read by
+  `--deep` source analysis carried an empty tool and an empty version, while the
+  top of the same report named the release actually running it. The values came
+  from the database: `cmd/gendb`, the generator the update workflow runs, builds
+  with `go run` and no injected version, so every record it made by inference
+  wrote `"dev"` and every curated record an empty string. Each dependency's
+  block now names the scanner that wrote the report, the same `tool.name` and
+  `tool.version` as the top of the document, whichever database the record
+  came from or whether it was read from source; no other field of the report
+  changes. The generator now writes its own version into every record it
+  makes: what `git describe` reports for the checkout against the release
+  tags, without the leading `v`, with `-dirty` added when a Go source file,
+  `go.mod` or `go.sum` differs from that commit; or the value given with the
+  new `--tool-version` flag. When it can do neither, or is given `dev`, it
+  exits with an error and writes no database.
+
 ## [1.4.0] - 2026-10-18
 
 ### Fixed
