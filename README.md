@@ -1,16 +1,11 @@
 # CryptoDeps
 
-**Quantum-Safe Dependency Analysis for Your Software Supply Chain**
+[![CI](https://github.com/csnp/cryptodeps/actions/workflows/ci.yml/badge.svg)](https://github.com/csnp/cryptodeps/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-Find the cryptography your dependencies bring in, see which of it quantum computers will break, and tell apart what your code actually calls from what is merely available to it.
+[Website](https://qramm.org) · [Docs](https://qramm.org/learn/cryptodeps-guide.html)
 
-[![CI](https://github.com/csnp/qramm-cryptodeps/actions/workflows/ci.yml/badge.svg)](https://github.com/csnp/qramm-cryptodeps/actions/workflows/ci.yml)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/csnp/qramm-cryptodeps)](go.mod)
-
-[Why CryptoDeps](docs/USE-CASES.md#why-cryptodeps) | [Quick Start](#quick-start) | [What It Finds](#what-it-finds) | [Full Documentation](#documentation) | [Patterns](PATTERNS.md) | [Contributing](CONTRIBUTING.md)
-
----
+Find the cryptography your dependencies bring in, see which of it a quantum computer could break, and tell apart what your code actually calls from what is merely available to it.
 
 ## Quick start
 
