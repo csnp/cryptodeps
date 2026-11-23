@@ -139,6 +139,12 @@ type CryptoUsage struct {
 }
 
 // AnalysisMetadata contains information about how the analysis was performed.
+//
+// Tool and ToolVersion name the build that wrote the document this record sits
+// in. In a scan report that is the scanner, which the report's own top-level
+// tool field also names (see nameScanner in internal/analyzer/analyzer.go); in
+// a database written by cmd/gendb it is that generator (see nameGenerator in
+// cmd/gendb/main.go).
 type AnalysisMetadata struct {
 	Date        time.Time `json:"date" yaml:"date"`
 	Method      string    `json:"method" yaml:"method"` // "database", "ast", "signature"

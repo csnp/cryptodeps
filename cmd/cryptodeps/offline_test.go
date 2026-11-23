@@ -94,13 +94,20 @@ func startConnectionLog(t *testing.T) (string, *connectionLog) {
 // ignores the variable.
 func runCLI(t *testing.T, proxy string, args ...string) (stdout, stderr string, code int) {
 	t.Helper()
+	return runCLIWithHome(t, proxy, t.TempDir(), args...)
+}
+
+// runCLIWithHome is runCLI with HOME set to home, for a run that reads what an
+// earlier run left there, such as a downloaded database.
+func runCLIWithHome(t *testing.T, proxy, home string, args ...string) (stdout, stderr string, code int) {
+	t.Helper()
 	cmd := exec.Command(os.Args[0], args...)
 	cmd.Dir = t.TempDir()
 	proxyURL := "http://" + proxy
 	cmd.Env = []string{
 		runCLIEnv + "=1",
 		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + t.TempDir(),
+		"HOME=" + home,
 		"TMPDIR=" + os.TempDir(),
 		"GOCOVERDIR=" + t.TempDir(),
 		"HTTPS_PROXY=" + proxyURL,

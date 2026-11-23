@@ -50,7 +50,22 @@ outputs:
     description: 'Total dependencies using cryptography'
     value: ${{ steps.analyze.outputs.crypto }}
   exit-code:
-    description: 'Exit code (0=clean, 1=vulnerable, 2=error, 3=partial)'
+    description: >-
+      Exit code of cryptodeps analyze. Codes 0, 1 and 3 depend on the fail-on
+      threshold; code 2 does not.
+      0: no finding reached the fail-on threshold. Under fail-on none a scan
+      exits 0 whatever it finds.
+      1: quantum-vulnerable findings detected, under every fail-on threshold
+      except none.
+      2: analysis error, such as a manifest that was found but could not be
+      read or a path input that names no local file or directory (the action
+      runs with --offline), or a format or fail-on input that is not one of
+      the accepted values.
+      3: findings reached the fail-on partial or fail-on any threshold and the
+      scan found no quantum-vulnerable finding. Under fail-on any that
+      includes a project whose cryptography is all quantum-safe.
+      See https://github.com/csnp/cryptodeps/blob/main/docs/commands.md#exit-codes
+      for a table per threshold.
     value: ${{ steps.analyze.outputs.exit_code }}
 
 runs:

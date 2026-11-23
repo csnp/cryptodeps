@@ -24,9 +24,10 @@ type JSONFormatter struct {
 // to attribute a result to a scanner version; without it a stored report cannot
 // be told apart from one produced by a build with different detection rules.
 //
-// This is deliberately not the same field as a dependency's
-// analysis.toolVersion, which records who produced that database record, not who
-// ran the scan.
+// Each dependency's analysis.tool and analysis.toolVersion name the same
+// build: the analyzer sets them on every dependency it reports, whatever the
+// database record it read there named (see nameScanner in
+// internal/analyzer/analyzer.go).
 type jsonTool struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
